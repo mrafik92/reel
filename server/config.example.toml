@@ -1,0 +1,6 @@
+# Copy to config.toml. Env overrides: REEL_BIND, REEL_DATA_DIR, REEL_DATABASE_PATH, REEL_TMDB_API_KEY
+bind = "0.0.0.0:8420"
+data_dir = "./data"
+# Defaults to <data_dir>/reel.db when omitted
+# database_path = "./data/reel.db"
+# tmdb_api_key = "your-tmdb-key"   # prefer REEL_TMDB_API_KEY env

@@ -1,0 +1,167 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Reel API",
+    "description": "",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/events": {
+      "get": {
+        "summary": "WebSocket stream of [`ServerEvent`]s as JSON text frames.",
+        "operationId": "events",
+        "responses": {
+          "101": {
+            "description": "WebSocket upgrade; frames are JSON ServerEvent"
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "summary": "Liveness check.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "description": "Health response.",
+        "required": [
+          "status",
+          "version"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "RequestState": {
+        "type": "string",
+        "description": "Request lifecycle state (SPEC §7.1).",
+        "enum": [
+          "requested",
+          "approved",
+          "searching",
+          "not_found",
+          "queued",
+          "downloading",
+          "stalled",
+          "importing",
+          "available",
+          "failed",
+          "declined"
+        ]
+      },
+      "ServerEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Download/request progress; `progress` is 0..1.",
+            "required": [
+              "request_id",
+              "tmdb_id",
+              "state",
+              "progress",
+              "type"
+            ],
+            "properties": {
+              "eta_seconds": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "minimum": 0
+              },
+              "progress": {
+                "type": "number",
+                "format": "float"
+              },
+              "request_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "speed_bps": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "minimum": 0
+              },
+              "state": {
+                "$ref": "#/components/schemas/RequestState"
+              },
+              "tmdb_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "request_progress"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Library scan progress.",
+            "required": [
+              "library_id",
+              "scanned",
+              "total",
+              "type"
+            ],
+            "properties": {
+              "library_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "scanned": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "total": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "scan_progress"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Server-to-client event."
+      }
+    }
+  }
+}

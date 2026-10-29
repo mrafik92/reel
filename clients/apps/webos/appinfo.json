@@ -1,0 +1,11 @@
+{
+  "id": "dev.reel.app",
+  "version": "0.0.1",
+  "vendor": "Reel",
+  "type": "web",
+  "main": "index.html",
+  "title": "Reel",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "uiRevision": 2
+}

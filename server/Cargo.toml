@@ -1,0 +1,37 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.86"
+
+[workspace.dependencies]
+reel-core = { path = "crates/core" }
+reel-scanner = { path = "crates/scanner" }
+reel-metadata = { path = "crates/metadata" }
+reel-playback = { path = "crates/playback" }
+reel-iptv = { path = "crates/iptv" }
+reel-requests = { path = "crates/requests" }
+reel-auth = { path = "crates/auth" }
+
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+figment = { version = "0.10", features = ["toml", "env"] }
+http-body-util = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-axum = "0.2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
