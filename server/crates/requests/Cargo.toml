@@ -10,3 +10,15 @@ workspace = true
 
 [dependencies]
 reel-core.workspace = true
+reel-metadata.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+dashmap = "6"
+
+[dev-dependencies]
+wiremock = "=0.6.4"
