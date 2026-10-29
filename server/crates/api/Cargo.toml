@@ -35,7 +35,11 @@ tracing-subscriber.workspace = true
 utoipa.workspace = true
 utoipa-axum.workspace = true
 sqlx.workspace = true
+tower.workspace = true
+base64 = "0.22"
+async-trait = "0.1"
 
 [dev-dependencies]
 http-body-util.workspace = true
 tower.workspace = true
+tempfile = "3"

@@ -10,3 +10,17 @@ workspace = true
 
 [dependencies]
 reel-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "time", "sync"] }
+tracing.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+strsim = "0.11"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+dashmap = "6"
+
+[dev-dependencies]
+wiremock = "=0.6.4"
+tempfile = "3"

@@ -10,6 +10,48 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/direct/{file_id}": {
+      "get": {
+        "summary": "Serve the original file with HTTP Range support.",
+        "operationId": "direct",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "description": "Media file id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Full file",
+            "content": {
+              "video/*": {}
+            }
+          },
+          "206": {
+            "description": "Partial content"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Range not satisfiable"
+          }
+        }
+      }
+    },
     "/api/v1/events": {
       "get": {
         "summary": "WebSocket stream of [`ServerEvent`]s as JSON text frames.",
@@ -38,10 +80,500 @@
           }
         }
       }
+    },
+    "/api/v1/home": {
+      "get": {
+        "summary": "Home screen: continue watching, recently added, and one row per library.",
+        "operationId": "home",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Home"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/images/{kind}/{id}": {
+      "get": {
+        "summary": "Resized, cached image (`poster`, `backdrop` or `person`).",
+        "operationId": "image",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "poster | backdrop | person",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Item id (poster/backdrop) or person id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "w",
+            "in": "query",
+            "description": "Target width in px (snapped up to an allowed size); omitted = original.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image bytes",
+            "content": {
+              "image/jpeg": {}
+            }
+          },
+          "304": {
+            "description": "Not modified"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/items/{id}": {
+      "get": {
+        "summary": "Item detail with files, streams, cast and genres.",
+        "operationId": "get_item",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Item id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/items/{id}/children": {
+      "get": {
+        "summary": "Children: show → seasons, season → episodes (ordered). Empty for leaf items.",
+        "operationId": "item_children",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Item id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ItemSummary"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/libraries": {
+      "get": {
+        "summary": "List libraries.",
+        "operationId": "list_libraries",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Library"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a library and start scanning it in the background.",
+        "operationId": "create_library",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLibrary"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Library"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/{id}/items": {
+      "get": {
+        "summary": "Top-level items (movies or shows) of a library, keyset-paginated.",
+        "operationId": "library_items",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Library id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "`title` (default, A→Z), `added` (newest first) or `year` (newest first).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 50, max 200).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/{id}/scan": {
+      "post": {
+        "summary": "Trigger a library scan (runs in the background).",
+        "operationId": "scan_library",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Library id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Scan started"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/search": {
+      "get": {
+        "summary": "Library search over movie and show titles.",
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search text (case-insensitive substring; prefix matches rank first).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max results (default 50, max 200).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ItemSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AudioStream": {
+        "type": "object",
+        "required": [
+          "index",
+          "codec",
+          "channels",
+          "default"
+        ],
+        "properties": {
+          "channels": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "codec": {
+            "type": "string"
+          },
+          "default": {
+            "type": "boolean"
+          },
+          "index": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CastMember": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "character": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "photo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CreateLibrary": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "paths"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/LibraryKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "Hdr": {
+        "type": "string",
+        "enum": [
+          "none",
+          "hdr10",
+          "hlg",
+          "dv"
+        ]
+      },
       "Health": {
         "type": "object",
         "description": "Health response.",
@@ -55,6 +587,333 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "Home": {
+        "type": "object",
+        "required": [
+          "continue_watching",
+          "recently_added",
+          "rows"
+        ],
+        "properties": {
+          "continue_watching": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemSummary"
+            }
+          },
+          "recently_added": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemSummary"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HomeRow"
+            }
+          }
+        }
+      },
+      "HomeRow": {
+        "type": "object",
+        "required": [
+          "library_id",
+          "title",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemSummary"
+            }
+          },
+          "library_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "ItemDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ItemSummary"
+          },
+          {
+            "type": "object",
+            "required": [
+              "genres",
+              "cast",
+              "children_count",
+              "files"
+            ],
+            "properties": {
+              "cast": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CastMember"
+                }
+              },
+              "children_count": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "content_rating": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MediaFile"
+                }
+              },
+              "genres": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "overview": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "rating": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "runtime_s": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64"
+              },
+              "tmdb_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64"
+              }
+            }
+          }
+        ]
+      },
+      "ItemKind": {
+        "type": "string",
+        "enum": [
+          "movie",
+          "show",
+          "season",
+          "episode"
+        ]
+      },
+      "ItemPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemSummary"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor for the next page; absent on the last page."
+          }
+        }
+      },
+      "ItemSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "played",
+          "added_at"
+        ],
+        "properties": {
+          "added_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix epoch seconds."
+          },
+          "backdrop_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "episode_no": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ItemKind"
+          },
+          "parent_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "played": {
+            "type": "boolean"
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "progress": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Watch progress 0..1 (movies/episodes with a saved position)."
+          },
+          "season_no": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "Library": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "paths",
+          "item_count"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "item_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Top-level items (movies or shows)."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LibraryKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "LibraryKind": {
+        "type": "string",
+        "enum": [
+          "movies",
+          "shows"
+        ]
+      },
+      "MediaFile": {
+        "type": "object",
+        "required": [
+          "id",
+          "container",
+          "duration_s",
+          "size",
+          "url",
+          "audio",
+          "subtitles"
+        ],
+        "properties": {
+          "audio": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AudioStream"
+            }
+          },
+          "container": {
+            "type": "string"
+          },
+          "duration_s": {
+            "type": "number",
+            "format": "double"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "subtitles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubtitleStream"
+            }
+          },
+          "url": {
+            "type": "string",
+            "description": "`/api/v1/direct/{id}`"
+          },
+          "video": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VideoStream"
+              }
+            ]
           }
         }
       },
@@ -161,6 +1020,72 @@
           }
         ],
         "description": "Server-to-client event."
+      },
+      "SubtitleStream": {
+        "type": "object",
+        "required": [
+          "index",
+          "codec",
+          "forced",
+          "external"
+        ],
+        "properties": {
+          "codec": {
+            "type": "string"
+          },
+          "external": {
+            "type": "boolean"
+          },
+          "forced": {
+            "type": "boolean"
+          },
+          "index": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "VideoStream": {
+        "type": "object",
+        "required": [
+          "codec",
+          "width",
+          "height",
+          "hdr",
+          "bit_depth"
+        ],
+        "properties": {
+          "bit_depth": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "codec": {
+            "type": "string"
+          },
+          "hdr": {
+            "$ref": "#/components/schemas/Hdr"
+          },
+          "height": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "width": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       }
     }
   }

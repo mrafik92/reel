@@ -118,6 +118,27 @@ epg_programs(channel_tvg_id, start, stop, title, sub_title, description, categor
 - **Admin**: users, invites, limits, arr servers, iptv sources, sessions (`DELETE` to kill), hw accel status, logs
 - **Events**: `GET /events` (WebSocket)
 
+### 4.1 Phase 1 response shapes (JSON, snake_case)
+
+```ts
+Library      { id, name, kind: "movies"|"shows", paths: string[], item_count }
+ItemSummary  { id, kind: "movie"|"show"|"season"|"episode", title, year?, poster_url?, backdrop_url?,
+               season_no?, episode_no?, parent_id?, progress?: number /*0..1*/, played: boolean, added_at }
+ItemDetail   = ItemSummary & { overview?, runtime_s?, rating?, content_rating?, genres: string[], tmdb_id?,
+               cast: { name, character?, photo_url? }[], children_count,
+               files: { id, container, duration_s, size, url /* /api/v1/direct/{id} */,
+                        video?: { codec, width, height, hdr: "none"|"hdr10"|"hlg"|"dv", bit_depth },
+                        audio: { index, codec, channels, language?, title?, default }[],
+                        subtitles: { index, codec, language?, title?, forced, external }[] }[] }
+Page<T>      { items: T[], next_cursor?: string }
+Home         { continue_watching: ItemSummary[], recently_added: ItemSummary[],
+               rows: { library_id, title, items: ItemSummary[] }[] }
+```
+Routes: `GET/POST /libraries`, `POST /libraries/{id}/scan`, `GET /libraries/{id}/items?sort=title|added|year&cursor&limit` (→ `Page<ItemSummary>`),
+`GET /items/{id}`, `GET /items/{id}/children` (→ `ItemSummary[]`), `GET /home`, `GET /search?q=&limit=` (→ `ItemSummary[]`, movies+shows, library only in phase 1),
+`GET /images/{poster|backdrop|person}/{id}?w=`, `GET /direct/{fileId}` (Range).
+Images URLs are relative (`/api/v1/images/poster/{item_id}?w=342`).
+
 ## 5. Playback engine
 
 1. Client sends a **device profile**: supported containers, video codecs (+profile/level/HDR/bit depth),
@@ -269,3 +290,11 @@ TV series: same mechanics via Sonarr; ring shows aggregate season progress, deta
 - IPTV source type(s): supporting both M3U and Xtream from the start.
 - Final project name.
 - Optional Jellyfin-compatible API shim to bridge iOS (Infuse/Swiftfin) before a native iOS app.
+
+## 12. Known gaps / backlog
+- Renamed/moved files are treated as delete + add → metadata & watch state lost. Fix: match vanished+new files by
+  (size, duration, stream fingerprint) within a scan and re-point `media_files.path`.
+- Multi-episode files (`S01E02E03`) create one item for the first episode only; needs a file↔episode join table.
+- Toolchain: local rustc 1.86 blocks some deps (wiremock pinned `=0.6.4`); `rustup update` recommended.
+- Local `.nfo`/art enrichment only runs when a TMDB key is configured (it lives inside `TmdbEnricher`); split out a
+  client-less local enricher.

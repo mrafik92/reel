@@ -5,6 +5,6 @@ pub mod db;
 pub mod error;
 pub mod events;
 
-pub use config::Config;
+pub use config::{Config, LibraryConfig};
 pub use error::{Error, Result};
 pub use events::{RequestState, ServerEvent};

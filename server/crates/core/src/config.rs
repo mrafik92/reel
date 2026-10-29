@@ -21,6 +21,20 @@ pub struct Config {
     pub database_path: Option<PathBuf>,
     /// TMDB API key (prefer the `REEL_TMDB_API_KEY` env var).
     pub tmdb_api_key: Option<String>,
+    /// Directory with the built web client; served with SPA fallback when set.
+    pub web_dir: Option<PathBuf>,
+    /// Libraries created on boot if no library with the same name exists.
+    #[serde(default)]
+    pub libraries: Vec<LibraryConfig>,
+}
+
+/// Bootstrap library definition (`[[libraries]]` in the TOML file).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LibraryConfig {
+    pub name: String,
+    /// `movies` or `shows`.
+    pub kind: String,
+    pub paths: Vec<PathBuf>,
 }
 
 impl Default for Config {
@@ -30,6 +44,8 @@ impl Default for Config {
             data_dir: PathBuf::from("./data"),
             database_path: None,
             tmdb_api_key: None,
+            web_dir: None,
+            libraries: Vec::new(),
         }
     }
 }
