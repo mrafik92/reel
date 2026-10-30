@@ -269,7 +269,7 @@ pub struct ChannelPatch {
 
 pub async fn update_channel(pool: &SqlitePool, id: i64, p: &ChannelPatch) -> Result<()> {
     let cur = get_channel(pool, id, None).await?;
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if let Some(e) = p.enabled {
         sqlx::query("UPDATE channels SET enabled = ? WHERE id = ?")
             .bind(i64::from(e))
@@ -342,7 +342,7 @@ pub async fn get_aliases(pool: &SqlitePool, channel_id: i64) -> Result<Vec<(i64,
 
 pub async fn set_aliases(pool: &SqlitePool, channel_id: i64, aliases: &[(i64, i64)]) -> Result<()> {
     get_channel(pool, channel_id, None).await?;
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     sqlx::query("DELETE FROM channel_aliases WHERE channel_id = ?")
         .bind(channel_id)
         .execute(&mut *tx)

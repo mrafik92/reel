@@ -961,7 +961,7 @@ async fn refresh_sidecars(pool: &SqlitePool, file_id: i64, subs: &[SubFile]) -> 
         return Ok(());
     }
     debug!(file_id, "sidecar subtitles changed");
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     sqlx::query("DELETE FROM streams WHERE file_id = ? AND external_path IS NOT NULL")
         .bind(file_id)
         .execute(&mut *tx)
@@ -980,7 +980,7 @@ async fn store_file(
     created: &mut Vec<i64>,
     forced: Option<(i64, Vec<i64>)>,
 ) -> Result<bool> {
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let mut new_created = Vec::new();
     let (file_id, is_new) = match &job.existing {
         Some(ex) => {
@@ -1142,7 +1142,7 @@ async fn ensure_links(
         .bind(file_id)
         .fetch_one(pool)
         .await?;
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let mut new_created = Vec::new();
     link_extra_episodes(&mut tx, lib.id, file_id, primary, p, &mut new_created).await?;
     tx.commit().await?;

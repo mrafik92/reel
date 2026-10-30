@@ -216,7 +216,7 @@ impl Ingest {
     pub async fn refresh_channels(&self, src: &Source) -> Result<ChannelReport> {
         let (incoming, epg_hint, max_conn) = self.gather(src).await?;
         let now = now_unix();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let existing: HashMap<String, (i64, bool, bool, bool)> =
             sqlx::query_as::<_, (i64, String, i64, i64, i64)>(
                 "SELECT id, ext_id, name_custom, number_custom, missing FROM channels WHERE source_id = ?",
@@ -359,7 +359,7 @@ impl Ingest {
             return Ok(0);
         }
         let n = chans.len();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         for c in chans.drain(..) {
             let first = c.names.first().cloned().unwrap_or_else(|| c.id.clone());
             sqlx::query(
@@ -392,7 +392,7 @@ impl Ingest {
 
     async fn insert_programmes(&self, batch: Vec<Programme>) -> Result<usize> {
         let mut inserted = 0;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         for chunk in batch.chunks(100) {
             let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
                 "INSERT INTO epg_programs (channel_tvg_id, start, stop, title, sub_title, \

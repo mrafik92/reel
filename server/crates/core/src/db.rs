@@ -20,7 +20,7 @@ pub async fn connect(path: &Path) -> Result<SqlitePool> {
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal)
         .foreign_keys(true)
-        .busy_timeout(Duration::from_secs(5));
+        .busy_timeout(Duration::from_secs(30));
     let pool = SqlitePoolOptions::new().connect_with(opts).await?;
     migrate(&pool).await?;
     Ok(pool)

@@ -569,7 +569,7 @@ impl AuthService {
         let username = validate_username(&nu.username)?;
         validate_password(&nu.password)?;
         let hash = self.hash_pw(&nu.password).await?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let id = self
             .insert_user(
                 &mut tx,
@@ -643,7 +643,7 @@ impl AuthService {
             }
             None => None,
         };
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query("UPDATE users SET username = ?, role = ?, disabled = ? WHERE id = ?")
             .bind(&username)
             .bind(p.role.unwrap_or(cur.role).as_str())
@@ -832,7 +832,7 @@ impl AuthService {
             }
         };
         let hash = self.hash_pw(password).await?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let uid = self
             .insert_user(
                 &mut tx,

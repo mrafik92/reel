@@ -85,7 +85,7 @@ pub async fn map_channels(pool: &SqlitePool) -> Result<usize> {
     )
     .fetch_all(pool)
     .await?;
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let mut mapped = 0;
     for (id, name, tvg_id, tvg_name, current) in rows {
         let found = tvg_id

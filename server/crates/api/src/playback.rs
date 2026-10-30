@@ -599,7 +599,7 @@ pub async fn mark_played(
 ) -> ApiResult<StatusCode> {
     let ids = leaf_ids(&st, &u.user, id).await?;
     let ts = now();
-    let mut tx = st.db.begin().await?;
+    let mut tx = st.db.begin_with("BEGIN IMMEDIATE").await?;
     for i in ids {
         sqlx::query(
             "INSERT INTO watch_state (user_id, item_id, position_s, played, play_count, last_played_at) \
@@ -631,7 +631,7 @@ pub async fn mark_unplayed(
     Path(id): Path<i64>,
 ) -> ApiResult<StatusCode> {
     let ids = leaf_ids(&st, &u.user, id).await?;
-    let mut tx = st.db.begin().await?;
+    let mut tx = st.db.begin_with("BEGIN IMMEDIATE").await?;
     for i in ids {
         sqlx::query("DELETE FROM watch_state WHERE user_id = ? AND item_id = ?")
             .bind(u.id())
