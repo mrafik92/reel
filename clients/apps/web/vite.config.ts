@@ -69,7 +69,9 @@ function mockMedia(): Plugin {
 
 export default defineConfig({
   plugins: [solid(), mockMedia()],
-  base: "./", // relative paths so the bundle works inside webOS/Tizen packages
+  // Web (served by reel-server, deep links like /item/42) needs absolute asset paths; the
+  // webOS/Tizen packages load from file:// and need relative ones (package.sh sets VITE_TARGET=tv).
+  base: process.env.VITE_TARGET === "tv" ? "./" : "/",
   server: {
     proxy: { "/api": { target: "http://localhost:8420", changeOrigin: true, ws: true } },
   },
