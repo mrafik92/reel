@@ -208,9 +208,21 @@ mod tests {
                     return;
                 };
                 tokio::spawn(async move {
-                    use tokio::io::AsyncWriteExt;
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    // Read the request head first; answering before the client has written its
+                    // request makes hyper fail with UnexpectedMessage on Linux.
+                    let mut buf = [0u8; 1024];
+                    let mut seen = Vec::new();
+                    while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match s.read(&mut buf).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => seen.extend_from_slice(&buf[..n]),
+                        }
+                    }
                     let _ = s
-                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                        )
                         .await;
                 });
             }
