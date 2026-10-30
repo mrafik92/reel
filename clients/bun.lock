@@ -8,6 +8,10 @@
         "typescript": "^5.6.0",
       },
     },
+    "apps/tizen": {
+      "name": "@reel/tizen",
+      "version": "0.0.1",
+    },
     "apps/web": {
       "name": "@reel/web",
       "version": "0.0.0",
@@ -25,6 +29,10 @@
         "vite": "^5.4.0",
         "vite-plugin-solid": "^2.10.0",
       },
+    },
+    "apps/webos": {
+      "name": "@reel/webos",
+      "version": "0.0.1",
     },
     "packages/sdk": {
       "name": "@reel/sdk",
@@ -157,9 +165,13 @@
 
     "@reel/sdk": ["@reel/sdk@workspace:packages/sdk"],
 
+    "@reel/tizen": ["@reel/tizen@workspace:apps/tizen"],
+
     "@reel/ui": ["@reel/ui@workspace:packages/ui"],
 
     "@reel/web": ["@reel/web@workspace:apps/web"],
+
+    "@reel/webos": ["@reel/webos@workspace:apps/webos"],
 
     "@rollup/rollup-android-arm-eabi": ["@rollup/rollup-android-arm-eabi@4.66.0", "", { "os": "android", "cpu": "arm" }, "sha512-7y4XeoUHPecjfUDRmap8U0q6bjfLAPn7uOGT8BKyqy8uNDOjsGS8rlBhOx6sZLVwwjN6hapvGl2mW9/IS6UNww=="],
 

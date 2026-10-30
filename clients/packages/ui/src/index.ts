@@ -12,3 +12,5 @@ export { Row, type RowProps } from "./components/Row";
 export { VirtualGrid, type VirtualGridProps } from "./components/VirtualGrid";
 export { Sheet, type SheetProps, type SheetOption } from "./components/Sheet";
 export { Backdrop } from "./components/Backdrop";
+export * from "./platform";
+export { DiscoverCard, type DiscoverCardProps, type DiscoverCardData, type Availability } from "./components/DiscoverCard";

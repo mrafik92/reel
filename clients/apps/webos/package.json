@@ -1,0 +1,9 @@
+{
+  "name": "@reel/webos",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "icons": "bun scripts/gen-icons.ts",
+    "package": "bash scripts/package.sh"
+  }
+}
