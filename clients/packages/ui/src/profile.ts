@@ -11,13 +11,28 @@ export interface DeviceProfile {
   audio: AudioCodec[];
   containers: string[];
   maxHeight?: number;
+  /** Highest decodable bit depth per video codec (e.g. HEVC Main = 8, Main 10 = 10). */
+  bitDepth?: Partial<Record<VideoCodec, number>>;
 }
 
+// 8-bit probes. HEVC strings follow the RFC 6381 form browsers actually match
+// (profile.compat.tier+level.constraints): Main @ L4.0 = hvc1.1.6.L120.90.
 const VIDEO_MIME: Record<VideoCodec, string[]> = {
-  h264: ['video/mp4; codecs="avc1.640028"'],
-  hevc: ['video/mp4; codecs="hvc1.1.6.L120.B0"', 'video/mp4; codecs="hev1.1.6.L120.B0"'],
+  h264: ['video/mp4; codecs="avc1.640028"', 'video/mp4; codecs="avc1.4d401f"'],
+  hevc: [
+    'video/mp4; codecs="hvc1.1.6.L120.90"',
+    'video/mp4; codecs="hev1.1.6.L120.90"',
+    'video/mp4; codecs="hvc1.1.6.L93.B0"',
+    'video/mp4; codecs="hev1.1.6.L93.B0"',
+  ],
   av1: ['video/mp4; codecs="av01.0.08M.08"'],
   vp9: ['video/webm; codecs="vp9"', 'video/mp4; codecs="vp09.00.40.08"'],
+};
+// 10-bit probes: HEVC Main 10, AV1 Main 10-bit, VP9 profile 2.
+const VIDEO_MIME_10: Partial<Record<VideoCodec, string[]>> = {
+  hevc: ['video/mp4; codecs="hvc1.2.4.L120.90"', 'video/mp4; codecs="hev1.2.4.L120.90"', 'video/mp4; codecs="hvc1.2.4.L153.B0"'],
+  av1: ['video/mp4; codecs="av01.0.08M.10"'],
+  vp9: ['video/mp4; codecs="vp09.02.40.10"', 'video/webm; codecs="vp09.02.40.10"'],
 };
 const AUDIO_MIME: Record<AudioCodec, string[]> = {
   aac: ['audio/mp4; codecs="mp4a.40.2"'],
@@ -26,23 +41,50 @@ const AUDIO_MIME: Record<AudioCodec, string[]> = {
   opus: ['audio/webm; codecs="opus"', 'audio/mp4; codecs="opus"'],
 };
 
+let probeEl: HTMLVideoElement | undefined;
+function videoEl(): HTMLVideoElement | undefined {
+  if (!probeEl && typeof document !== "undefined") probeEl = document.createElement("video");
+  return probeEl;
+}
+
+/**
+ * MSE first (hls.js path: Chrome/Edge/Firefox, incl. Chrome's HEVC on macOS/Windows with hardware
+ * support), then `canPlayType` — which is what counts for Safari's native HLS and TV browsers.
+ */
 function supports(mimes: string[]): boolean {
   const ms = typeof MediaSource !== "undefined" ? MediaSource : undefined;
-  let el: HTMLVideoElement | undefined;
   return mimes.some((m) => {
-    if (ms && typeof ms.isTypeSupported === "function" && ms.isTypeSupported(m)) return true;
-    if (!el && typeof document !== "undefined") el = document.createElement("video");
+    try {
+      if (ms && typeof ms.isTypeSupported === "function" && ms.isTypeSupported(m)) return true;
+    } catch {
+      /* odd MIME strings can throw on old engines */
+    }
+    const el = videoEl();
     return !!el && el.canPlayType(m) !== "";
   });
 }
 
+/** True when the browser plays HLS itself (Safari, iOS, most TV browsers). */
+export function hasNativeHls(): boolean {
+  const el = videoEl();
+  return !!el && el.canPlayType("application/vnd.apple.mpegurl") !== "";
+}
+
 export function detectWebProfile(platform: DeviceProfile["platform"] = "web"): DeviceProfile {
-  const video = (Object.keys(VIDEO_MIME) as VideoCodec[]).filter((k) => supports(VIDEO_MIME[k]));
+  const bitDepth: Partial<Record<VideoCodec, number>> = {};
+  const video: VideoCodec[] = [];
+  (Object.keys(VIDEO_MIME) as VideoCodec[]).forEach((k) => {
+    const eight = supports(VIDEO_MIME[k]);
+    const ten = !!VIDEO_MIME_10[k] && supports(VIDEO_MIME_10[k]!);
+    if (!eight && !ten) return;
+    video.push(k);
+    bitDepth[k] = ten ? 10 : 8;
+  });
   const audio = (Object.keys(AUDIO_MIME) as AudioCodec[]).filter((k) => supports(AUDIO_MIME[k]));
   const containers = ["mp4"];
   if (supports(['video/webm; codecs="vp9"', 'video/webm; codecs="vp8"'])) containers.push("webm");
   if (supports(["video/x-matroska"])) containers.push("mkv");
-  return { platform, video, audio, containers };
+  return { platform, video, audio, containers, bitDepth };
 }
 
 // ---------------------------------------------------------------------------------------------

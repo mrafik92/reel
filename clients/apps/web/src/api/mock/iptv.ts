@@ -13,15 +13,40 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const latency = (lo = 90, hi = 260) => sleep(lo + Math.random() * (hi - lo));
 const nowS = () => Math.floor(Date.now() / 1000);
 
-function emptyFlag(): boolean {
+/** `?iptv=empty` (no provider) / `?iptv=big` (11,950 channels, 175 groups, no guide) — sticky per tab. */
+function mode(): "empty" | "big" | "normal" {
   try {
     const q = new URLSearchParams(location.search).get("iptv");
-    if (q === "empty") sessionStorage.setItem("reel.iptv", "empty");
+    if (q === "empty" || q === "big") sessionStorage.setItem("reel.iptv", q);
     else if (q) sessionStorage.removeItem("reel.iptv");
-    return sessionStorage.getItem("reel.iptv") === "empty";
+    const v = sessionStorage.getItem("reel.iptv");
+    return v === "empty" || v === "big" ? v : "normal";
   } catch {
-    return false;
+    return "normal";
   }
+}
+
+const BIG_WORDS = ["Africa", "Arabic", "Sports", "Kids", "Movies", "News", "Music", "Docs", "Series", "Premium", "Local", "Religious", "Comedy", "Classic", "World"];
+const BIG_LANDS = ["UK", "France", "Germany", "Egypt", "Saudi", "Morocco", "Turkey", "India", "USA", "Canada", "Spain", "Italy"];
+
+/** Shape of a real Xtream provider: thousands of channels, many groups, no favourites, no EPG. */
+function buildBig(): Chan[] {
+  const r = rng(42);
+  const out: Chan[] = [];
+  let id = 1;
+  for (let g = 0; g < 175; g++) {
+    const name = `${BIG_WORDS[g % BIG_WORDS.length]} ${BIG_LANDS[Math.floor(g / BIG_WORDS.length) % BIG_LANDS.length]}${g >= 180 ? " " + g : ""} - مجموعة ${g + 1}`;
+    const n = g === 174 ? 11950 - (id - 1) : 20 + Math.floor(r() * 90);
+    for (let i = 0; i < n && id <= 11950; i++) {
+      const cname = `${name.split(" - ")[0]} ${i + 1}${r() > 0.7 ? " FHD" : r() > 0.5 ? " HD" : ""}`;
+      out.push({
+        ch: { id, name: cname, number: id, group: name, logo_url: id % 3 ? logo(cname, id) : null, favorite: false, has_epg: false, catchup: false },
+        admin: { id, source_id: 1, name: cname, number: id, group: name, enabled: true, missing: false, catchup: false, aliases: [], epg_channel_id: null, epg_manual: false, tvg_id: null },
+      });
+      id++;
+    }
+  }
+  return out;
 }
 
 /** mulberry32 — tiny deterministic PRNG so the guide is stable across calls. */
@@ -156,8 +181,9 @@ function schedule(c: Chan): Program[] {
 const compact = (p: Program): Program => ({ start: p.start, stop: p.stop, title: p.title, sub_title: p.sub_title, category: p.category });
 
 export function createMockIptv(): IptvApi {
-  const empty = emptyFlag();
-  const chans: Chan[] = empty ? [] : buildChannels();
+  const m = mode();
+  const empty = m === "empty";
+  const chans: Chan[] = empty ? [] : m === "big" ? buildBig() : buildChannels();
   const byId = new Map(chans.map((c) => [c.ch.id, c]));
   const need = (id: number) => {
     const c = byId.get(id);
@@ -185,6 +211,12 @@ export function createMockIptv(): IptvApi {
 
   // ---- sessions + hub simulation -------------------------------------------------
   const sessions = new Map<string, LiveSession>();
+  // Big mode: someone (you, on another screen) is already watching channel 3 on a 1-connection plan.
+  const busyChannel = 3;
+  let bigFree = false;
+  if (m === "big") {
+    sessions.set("tv-1", { id: "tv-1", user_id: 7, username: "sam", channel_id: busyChannel, channel_name: chans[busyChannel - 1]!.ch.name, mode: "passthrough", started_at: nowS() - 900, idle_s: 0, connections: 1, hls: null });
+  }
   const warm = new Map<number, number>(); // channel → since
   let sid = 1;
   const metrics = (chId: number): ChannelMetrics => {
@@ -259,7 +291,30 @@ export function createMockIptv(): IptvApi {
       const c = need(id);
       // Warm channels zap faster — like the real hub's GOP cache.
       await latency(warm.has(id) ? 40 : 220, warm.has(id) ? 120 : 620);
-      if (c.ch.number === 13) throw new ApiError(429, "Provider connection limit reached: Harbour IPTV allows 2 connections and both are in use.");
+      const takeover = !!(body as { takeover?: boolean }).takeover;
+      // Big mode: a 1-connection plan, held by another user (admin → 409 + holders; takeover frees it).
+      if (m === "big" && !bigFree && c.ch.id !== busyChannel) {
+        if (!takeover)
+          throw Object.assign(new ApiError(409, "All 1 connection(s) of this provider are in use by other users. Retry with takeover=true to stop their stream."), {
+            body: {
+              takeover: true,
+              holders: [{ user_id: 7, username: "sam", session_id: "tv-1", channel_id: busyChannel, channel_name: byId.get(busyChannel)?.ch.name ?? "?", since: nowS() - 900 }],
+            },
+          });
+        sessions.delete("tv-1");
+        bigFree = true;
+      }
+      // Channel 13: both connections held by another user — the admin 409 with holders (new contract).
+      if (c.ch.number === 13 && !takeover)
+        throw Object.assign(new ApiError(409, "All 2 connection(s) of this provider are in use by other users. Retry with takeover=true to stop their stream."), {
+          body: {
+            takeover: true,
+            holders: [
+              { user_id: 7, username: "sam", session_id: "x-1", channel_id: 111, channel_name: "Arena One", since: nowS() - 600 },
+              { user_id: 7, username: "sam", session_id: "x-2", channel_id: 121, channel_name: "Cine Classics", since: nowS() - 300 },
+            ],
+          },
+        });
       if (c.ch.number === 27) throw new ApiError(503, "Channel did not deliver a stream");
       const id2 = `live-${(sid++).toString(36)}-${id}`;
       if (!warm.has(id)) warm.set(id, nowS());
@@ -275,7 +330,9 @@ export function createMockIptv(): IptvApi {
     async stop(s) {
       await latency(30, 80);
       const x = sessions.get(s);
+      if (!x) throw new ApiError(404, "Live session not found");
       sessions.delete(s);
+      if (s === "tv-1") bigFree = true;
       // Previous channel stays warm for a grace period.
       if (x) setTimeout(() => !Array.from(sessions.values()).some((y) => y.channel_id === x.channel_id) && warm.delete(x.channel_id), 45_000);
     },
@@ -384,7 +441,7 @@ export function createMockIptv(): IptvApi {
       sessions.forEach((s) => (s.idle_s = Math.min(8, t - s.started_at)));
       return {
         transcode: { encoder: "vaapi", fell_back_to_software: false },
-        sources: sources.map((s) => ({ source_id: s.id, open_connections: s.id === 1 ? warm.size : 0, max_connections: s.max_connections ?? null })),
+        sources: sources.map((s) => ({ source_id: s.id, open_connections: s.id === 1 ? warm.size + (m === "big" && !bigFree ? 1 : 0) : 0, max_connections: s.max_connections ?? null })),
         channels: Array.from(warm.keys()).map(metrics),
         sessions: Array.from(sessions.values()),
       };

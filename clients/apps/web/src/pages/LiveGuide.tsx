@@ -4,11 +4,12 @@ import { Icon, onBack, onRemoteKey } from "@reel/ui";
 import "../styles/live.css";
 import { iptv, type IptvChannel, type Program } from "../api/iptv";
 import { href } from "../lib/mode";
+import { isAdmin } from "../lib/auth";
 import { ErrorState } from "../components/States";
 import { ChannelLogo } from "../components/live/ChannelLogo";
 import { Filters } from "../components/live/Filters";
 import {
-  channelByNumber, channels, channelsError, clock, filter, filterKey, filtered, fmtDay, fmtRange, fmtTime, loadChannels, nowSec, progressOf, setFilter,
+  channelById, channelByNumber, channelsError, clock, filter, filterKey, filteredList, loadAll, loadState, fmtDay, fmtRange, fmtTime, loadChannels, nowSec, progressOf, setFilter,
 } from "../components/live/store";
 
 // Geometry (rem) — converted to px with the live root font size (TV scales rem with the viewport).
@@ -47,13 +48,13 @@ export default function LiveGuide(): JSX.Element {
   return (
     <div class="guide-page">
       <Switch>
-        <Match when={channelsError()}>
+        <Match when={loadState() === "error"}>
           <div class="page"><ErrorState error={channelsError()} onRetry={() => void loadChannels(true)} title="Couldn't load the guide" /></div>
         </Match>
-        <Match when={!channels()}>
+        <Match when={loadState() === "loading"}>
           <div class="guide guide--loading" aria-busy="true"><span class="spinner" /></div>
         </Match>
-        <Match when={channels()!.length === 0}>
+        <Match when={loadState() === "empty"}>
           <div class="page">
             <div class="state">
               <p class="eyebrow eyebrow--accent">Guide</p>
@@ -63,7 +64,7 @@ export default function LiveGuide(): JSX.Element {
             </div>
           </div>
         </Match>
-        <Match when={channels()!.length > 0}>
+        <Match when={loadState() === "ready"}>
           <Grid />
         </Match>
       </Switch>
@@ -91,7 +92,7 @@ function Grid(): JSX.Element {
   const headPx = () => HEAD_REM * px();
   const xOf = (t: number) => chPx() + (t - origin) * pps();
 
-  const rows = createMemo(() => filtered());
+  const rows = createMemo(() => filteredList() ?? []);
   const rowIndex = createMemo(() => {
     const m = new Map<number, number>();
     rows().forEach((c, i) => m.set(c.id, i));
@@ -105,6 +106,8 @@ function Grid(): JSX.Element {
   const nChunks = () => Math.ceil(span() / CHUNK);
   const isLoaded = (ch: number, chunk: number) => !!loaded.get(ch)?.has(chunk);
 
+  /** Programmes received so far (any channel) — 0 means the provider has no guide yet. */
+  let progTotal = 0;
   const merge = (ch: number, list: Program[]) => {
     const cur = progs.get(ch) ?? [];
     const seen = new Set(cur.map((p) => p.start));
@@ -118,6 +121,7 @@ function Grid(): JSX.Element {
     });
     if (changed) cur.sort((a, b) => a.start - b.start);
     progs.set(ch, cur);
+    progTotal += list.length;
   };
 
   let fetchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -276,6 +280,24 @@ function Grid(): JSX.Element {
   };
   createEffect(on([rowRange, timeRange, span, rows], scheduleFetch));
 
+  /** Everything in view has loaded and none of it has a programme. */
+  const emptyView = createMemo(() => {
+    rev();
+    const rl = rows();
+    if (!rl.length) return false;
+    const [r0, r1] = rowRange();
+    const [t0, t1] = timeRange();
+    const c0 = Math.max(0, Math.floor((t0 - origin) / CHUNK));
+    const c1 = Math.min(nChunks() - 1, Math.floor((t1 - origin) / CHUNK));
+    for (let i = r0; i < r1; i++) {
+      const id = rl[i]!.id;
+      for (let c = c0; c <= c1; c++) if (!isLoaded(id, c)) return false;
+      if ((progs.get(id) ?? []).length) return false;
+    }
+    return true;
+  });
+  const providerHasNoGuide = () => (rev(), progTotal === 0);
+
   // ---- focus model --------------------------------------------------------------------
   /** Time cursor: vertical moves keep it, so short programmes don't make focus drift. */
   let cursorT = nowSec();
@@ -425,13 +447,21 @@ function Grid(): JSX.Element {
 
   // Number entry jumps to a channel row.
   let digitTimer: ReturnType<typeof setTimeout> | undefined;
-  const jumpToNumber = () => {
+  const jumpToNumber = async () => {
     const n = Number(digits());
     setDigits("");
     let c = channelByNumber(n);
-    if (!c) return;
-    if (rowIndex().get(c.id) == null) setFilter({ kind: "all" });
-    c = channelByNumber(n)!;
+    if (!c || rowIndex().get(c.id) == null) {
+      // Not in this group: switch to every channel (needs the full list).
+      try {
+        await loadAll();
+      } catch {
+        return;
+      }
+      c = channelByNumber(n);
+      if (!c) return;
+      if (rowIndex().get(c.id) == null) setFilter({ kind: "all" });
+    }
     const row = rowIndex().get(c.id);
     if (row == null) return;
     // Land on what's on now.
@@ -480,7 +510,7 @@ function Grid(): JSX.Element {
       if (k === "digit") {
         setDigits((d) => (d.length >= 4 ? "" : d) + String(e.digit ?? 0));
         if (digitTimer) clearTimeout(digitTimer);
-        digitTimer = setTimeout(jumpToNumber, 1200);
+        digitTimer = setTimeout(() => void jumpToNumber(), 1200);
         return true;
       }
       return false;
@@ -534,7 +564,7 @@ function Grid(): JSX.Element {
           <a class="btn btn--sm" href={href("/live")}><Icon name="live" /> <span>Channels</span></a>
         </div>
       </header>
-      <Filters class="guide__filters" />
+      <Filters class="guide__filters" label={false} />
       <Preview cell={focused()} />
 
       <div
@@ -594,6 +624,27 @@ function Grid(): JSX.Element {
           </Show>
         </div>
       </div>
+
+      <Show when={!filteredList()}>
+        <div class="guide__empty guide__empty--loading" role="status"><span class="spinner" /> <span>Loading channels…</span></div>
+      </Show>
+      <Show when={filteredList() && emptyView()}>
+        <div class="guide__empty" role="status">
+          <Icon name="clock" class="guide__empty-icon" />
+          <h2>{providerHasNoGuide() ? "No guide data for this provider yet" : "No guide data for these channels"}</h2>
+          <p>
+            {providerHasNoGuide()
+              ? "Your provider hasn't sent a TV guide yet, so there's nothing to show here. Reel loads it together with the channel list — the grid fills in after the next refresh. Live TV works in the meantime."
+              : "These channels don't have programme information from your provider. Try another group, or just watch."}
+          </p>
+          <div class="actions actions--center">
+            <a class="btn btn--primary btn--sm" href={href("/live")}><Icon name="live" /> <span>Watch Live TV</span></a>
+            <Show when={isAdmin()}>
+              <a class="btn btn--sm" href={href("/admin/iptv")}><Icon name="gear" /> <span>Live TV settings</span></a>
+            </Show>
+          </div>
+        </div>
+      </Show>
 
       <Show when={digits()}>
         <div class="numentry numentry--guide" role="status">
@@ -703,7 +754,7 @@ function GuideRow(props: {
 
 /** The strip above the grid describing the focused programme. */
 function Preview(props: { cell?: Cell }): JSX.Element {
-  const ch = () => (props.cell ? (channels() ?? []).find((c) => c.id === props.cell!.ch) : undefined);
+  const ch = () => (props.cell ? channelById(props.cell.ch) : undefined);
   return (
     <div class="guide__preview" aria-live="polite">
       <Show when={props.cell && ch()} fallback={<p class="guide__preview-hint">Arrows to browse · OK for details · 0–9 jump to a channel</p>}>
@@ -729,7 +780,7 @@ function Preview(props: { cell?: Cell }): JSX.Element {
 
 function Details(props: { cell: Cell; onClose: () => void; onWatch: () => void }): JSX.Element {
   let box!: HTMLDivElement;
-  const ch = () => (channels() ?? []).find((c) => c.id === props.cell.ch);
+  const ch = () => channelById(props.cell.ch);
   const [full] = createResource(
     () => props.cell,
     async (c) => {

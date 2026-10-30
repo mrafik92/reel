@@ -3,7 +3,7 @@
  * stops the previous session first (the server keeps that channel warm for its grace period).
  */
 import { createSignal } from "solid-js";
-import { AvPlayAdapter, createPlayerAdapter, mediaUrl, platform, type PlayerAdapter } from "@reel/ui";
+import { AvPlayAdapter, createPlayerAdapter, detectDeviceProfile, mediaUrl, platform, type DeviceProfile, type PlayerAdapter } from "@reel/ui";
 import { ApiError } from "../../api/http";
 import { iptv, type IptvChannel, type TuneBody, type TuneResponse } from "../../api/iptv";
 import { clientInfo } from "../../lib/device";
@@ -16,6 +16,20 @@ export interface TuneError {
   /** Worth retrying the same channel. */
   retry: boolean;
   kind: "limit" | "offair" | "gone" | "offline" | "playback" | "other";
+  /** 429 from the provider budget: channels currently holding the connections. */
+  watching?: string[];
+  /** 429 from the provider budget (vs. the user's own stream limit). */
+  provider?: boolean;
+  /** Admins (409): the other users' sessions holding every connection — can be taken over. */
+  holders?: Holder[];
+}
+
+export interface Holder {
+  session_id: string;
+  user_id: number;
+  username?: string | null;
+  channel_id?: number;
+  channel_name: string;
 }
 
 export interface ZapSample {
@@ -31,26 +45,93 @@ export interface ZapSample {
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
-/** Native TV players take the raw MPEG-TS; browsers get HLS (fMP4, audio fixed up when needed). */
-export function tuneBody(): TuneBody {
-  if (platform === "webos" || platform === "tizen") return { mode: "passthrough", preset: platform };
-  return { mode: "hls", preset: clientInfo().preset };
+type WireProfile = NonNullable<TuneBody["profile"]>;
+
+/** Browser probe → the server's DeviceProfile, so HLS can copy every codec this browser decodes (HEVC included). */
+function fromWebProbe(p: DeviceProfile): WireProfile {
+  const depth = p.bitDepth ?? {};
+  const video = p.video.map((codec) => ({
+    codec,
+    max_bit_depth: depth[codec] ?? (codec === "h264" ? 8 : 10),
+    hdr: [] as never[],
+  }));
+  const audio: { codec: string; max_channels: number }[] = p.audio.map((codec) => ({ codec, max_channels: codec === "aac" || codec === "opus" ? 8 : 6 }));
+  if (!audio.some((a) => a.codec === "mp3")) audio.push({ codec: "mp3", max_channels: 2 });
+  return {
+    name: `${clientInfo().preset}-live`,
+    player: typeof MediaSource !== "undefined" ? "mse" : "native",
+    containers: ["mp4"],
+    video,
+    audio,
+    subtitles: { text: ["vtt"], image: [] },
+    max_width: 3840,
+    max_height: 2160,
+  } as unknown as WireProfile;
 }
+
+/**
+ * Native TV players take the raw MPEG-TS (passthrough); browsers get HLS. Either way the real device
+ * profile goes along so the server only transcodes what this device can't decode.
+ */
+export function tuneBody(): TuneBody {
+  let raw: ReturnType<typeof detectDeviceProfile> | undefined;
+  try {
+    raw = detectDeviceProfile();
+  } catch {
+    raw = undefined;
+  }
+  if (platform === "webos" || platform === "tizen") {
+    if (raw && "profile" in raw) return { mode: "passthrough", profile: raw.profile as unknown as WireProfile };
+    return { mode: "passthrough", preset: raw && "preset" in raw ? raw.preset : platform };
+  }
+  const body: TuneBody = { mode: "hls", preset: clientInfo().preset };
+  if (raw && "video" in raw) body.profile = fromWebProbe(raw);
+  return body;
+}
+
+const plan = (max?: number) => (max ? `Your TV plan allows ${max} stream${max === 1 ? "" : "s"}` : "Your TV plan's streams are all in use");
 
 export function friendlyTuneError(e: unknown): TuneError {
   const msg = e instanceof Error ? e.message : "";
   if (e instanceof ApiError) {
-    if (e.status === 429) {
-      const user = /user|your|per.?user|stream limit|streams? allowed/i.test(msg) && !/provider|source|connection/i.test(msg);
+    const body = (e as ApiError & { body?: Record<string, unknown> }).body;
+    const maxOf = (m: string) => Number((/All (\d+) connection/i.exec(m) ?? /\((\d+) concurrent\)/i.exec(m) ?? [])[1]) || undefined;
+    // Admins: every connection is held by other users → they can take it over.
+    if (e.status === 409 && body && Array.isArray(body.holders)) {
+      const holders = (body.holders as Holder[]).filter((h) => h && h.session_id);
+      const max = maxOf(msg) ?? (holders.length || undefined);
+      const who = holders.map((h) => `${h.username ?? "Someone"} is watching ${h.channel_name}`).join(" · ");
       return {
         kind: "limit",
+        provider: true,
         retry: true,
-        title: user ? "You're at your stream limit" : "Every provider connection is in use",
-        body:
-          (msg && msg !== "Too many requests — try again shortly" ? msg.replace(/\.?$/, ". ") : "") +
-          (user
-            ? "Stop watching on another screen, then try again."
-            : "Someone else is watching on another channel. Switch to a channel already playing, or try again when they stop."),
+        holders,
+        watching: holders.map((h) => h.channel_name),
+        title: who ? `${plan(max)} — ${who}` : plan(max),
+        body: "Take over to stop their stream and watch this channel here, or wait until they're done.",
+      };
+    }
+    if (e.status === 429) {
+      const user = /reached your limit|concurrent stream\(s\)|stream limit/i.test(msg) && !/provider|source|connection/i.test(msg);
+      if (user)
+        return {
+          kind: "limit",
+          retry: true,
+          title: "You're at your stream limit",
+          body: "Your account can only play so many streams at once. Stop watching on another screen, then try again.",
+        };
+      // Other viewers hold the provider's connections (non-admins get no names). Older servers
+      // said "connection limit of source 1 reached (1 concurrent); in use by: MBC Masr FHD".
+      const by = /in use by:\s*(.+)$/i.exec(msg);
+      const watching = by ? by[1]!.split(/,\s*/).map((x) => x.trim()).filter(Boolean) : undefined;
+      const max = maxOf(msg);
+      return {
+        kind: "limit",
+        provider: true,
+        retry: true,
+        watching,
+        title: watching?.length ? `${plan(max)} — someone is watching ${watching.join(", ")}` : plan(max),
+        body: "Someone else is watching another channel right now. Try again when they're done, or ask an admin to free the connection.",
       };
     }
     if (e.status === 503)
@@ -71,8 +152,9 @@ export interface Tuner {
   unmute: () => void;
   nativePlane: () => boolean;
   samples: () => ZapSample[];
-  tune: (c: IptvChannel) => Promise<void>;
-  retry: () => void;
+  tune: (c: IptvChannel, o?: { takeover?: boolean }) => Promise<void>;
+  /** `takeover`: admins stop the other users' streams holding the provider connections. */
+  retry: (o?: { takeover?: boolean }) => void;
   stop: (keepalive?: boolean) => void;
   dispose: () => void;
 }
@@ -112,6 +194,7 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
   const endSession = (keepalive = false) => {
     const s = session();
     setSession(undefined);
+    if (s) forgetSession(s.session_id);
     if (s) return iptv.stop(s.session_id, keepalive).catch(() => undefined);
     return Promise.resolve();
   };
@@ -123,7 +206,7 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     return Promise.race([new Promise<void>((r) => v.requestVideoFrameCallback!(() => r())), sleep(4000)]);
   };
 
-  const tune = async (c: IptvChannel): Promise<void> => {
+  const tune = async (c: IptvChannel, o: { takeover?: boolean } = {}): Promise<void> => {
     const my = ++gen;
     const t0 = now();
     last = c;
@@ -131,12 +214,12 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     setError(undefined);
     setPhase("tuning");
     setBuffering(true);
-    // Free our slot before asking for a new one (user stream limits); don't wait long.
-    await Promise.race([endSession(), sleep(700)]);
+    // Release our slot before asking for a new one; wait at most 500 ms.
+    await Promise.race([endSession(), sleep(500)]);
     if (my !== gen) return;
     let r: TuneResponse;
     try {
-      r = await iptv.tune(c.id, tuneBody());
+      r = await iptv.tune(c.id, o.takeover ? ({ ...tuneBody(), takeover: true } as TuneBody) : tuneBody());
     } catch (e) {
       if (my !== gen) return;
       // The previous session is already stopped: don't leave its last frames running.
@@ -156,6 +239,7 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     }
     const apiMs = now() - t0;
     setSession(r);
+    rememberSession(r);
     const a = ensureAdapter();
     if (!a) return;
     const v = video();
@@ -199,8 +283,8 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
       }
       setMuted(false);
     },
-    retry: () => {
-      if (last) void tune(last);
+    retry: (o) => {
+      if (last) void tune(last, o);
     },
     stop: (keepalive) => {
       gen++;
@@ -215,4 +299,34 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
       adapter = undefined;
     },
   };
+}
+
+// ---- this browser's last live session (to offer "stop the other stream" after a reload) ----
+const SESSION_KEY = "reel.live.session";
+export interface OwnSession {
+  id: string;
+  channel: string;
+}
+function rememberSession(r: TuneResponse): void {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ id: r.session_id, channel: r.channel_name }));
+  } catch {
+    /* ignore */
+  }
+}
+export function forgetSession(id?: string): void {
+  try {
+    const cur = ownSession();
+    if (!id || (cur && cur.id === id)) localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+export function ownSession(): OwnSession | undefined {
+  try {
+    const v = JSON.parse(localStorage.getItem(SESSION_KEY) || "null") as OwnSession | null;
+    return v && v.id ? v : undefined;
+  } catch {
+    return undefined;
+  }
 }

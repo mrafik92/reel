@@ -8,13 +8,16 @@ import { isAdmin } from "../lib/auth";
 import { toast } from "../lib/toast";
 import { ErrorState } from "../components/States";
 import { ChannelList, type ChannelListApi } from "../components/live/ChannelList";
+import { ChannelRail } from "../components/live/ChannelRail";
 import { NowPlaying, NumberEntry, ZapStats } from "../components/live/Overlays";
-import { Filters } from "../components/live/Filters";
-import { createTuner } from "../components/live/tuner";
+import { ChannelSearch, Filters } from "../components/live/Filters";
+import { createTuner, forgetSession, ownSession, type TuneError } from "../components/live/tuner";
 import {
-  channelById, channelByNumber, channels, channelsError, filter, filtered, fmtRange, fmtTime, lastChannel, loadChannels,
-  rememberChannel, toggleFavorite, nowSec, clock, ensureNow, filterKey,
+  allChannels, channelById, channelByNumber, channelsError, current, favourites, filter, filtered, filterLabel, fmtRange, fmtTime,
+  lastChannel, loadAll, loadChannels, loadState, query, rememberChannel, setQuery, toggleFavorite, nowSec, clock, ensureNow, filterKey,
+  totalChannels,
 } from "../components/live/store";
+import { currentUser } from "../lib/auth";
 
 const STATS_KEY = "reel.live.stats";
 const ZAP_DEBOUNCE = 320;
@@ -29,16 +32,16 @@ export default function LiveTV(): JSX.Element {
   return (
     <div class="live-page">
       <Switch>
-        <Match when={channelsError()}>
+        <Match when={loadState() === "error"}>
           <div class="page"><ErrorState error={channelsError()} onRetry={() => void loadChannels(true)} title="Couldn't load your channels" /></div>
         </Match>
-        <Match when={!channels()}>
+        <Match when={loadState() === "loading"}>
           <LiveSkeleton />
         </Match>
-        <Match when={channels()!.length === 0}>
+        <Match when={loadState() === "empty"}>
           <LiveEmpty />
         </Match>
-        <Match when={channels()!.length > 0}>
+        <Match when={loadState() === "ready"}>
           <Watch />
         </Match>
       </Switch>
@@ -61,21 +64,30 @@ function Watch(): JSX.Element {
   let listApi: ChannelListApi | undefined;
   let miniApi: ChannelListApi | undefined;
   const tuner = createTuner(() => video);
+  const [tunedCh, setTunedCh] = createSignal<IptvChannel>();
+  const [numWait, setNumWait] = createSignal(false);
 
-  const tuned = () => channelById(tuner.channelId());
+  const tuned = () => channelById(tuner.channelId()) ?? tunedCh();
   /** What the overlays describe: the zap target while it's pending, else the tuned channel. */
   const shown = () => pending() ?? tuned();
   // Tizen's AVPlay draws on a full-screen plane behind the page: no windowed preview there.
   const isFull = () => full() || (tuner.nativePlane() && tuner.phase() !== "idle");
+  /** What's in the side list: search results or the current group / favourites. */
+  const shownList = () => current();
+  /** What Up/Down zaps through: the visible list if the tuned channel is in it, else the first list that has it. */
   const list = createMemo(() => {
-    const f = filtered();
     const id = tuner.channelId();
-    return id == null || f.some((c) => c.id === id) || !f.length ? (f.length ? f : channels()!) : channels()!;
+    const cands = [current(), filtered(), favourites(), allChannels()];
+    if (id != null) for (const l of cands) if (l && l.some((c) => c.id === id)) return l;
+    for (const l of cands) if (l && l.length) return l;
+    return [] as IptvChannel[];
   });
   const maxDigits = createMemo(() => {
+    const a = allChannels();
     let m = 0;
-    (channels() ?? []).forEach((c) => c.number != null && c.number > m && (m = c.number));
-    return Math.min(4, Math.max(1, String(m).length));
+    if (a) a.forEach((c) => c.number != null && c.number > m && (m = c.number));
+    else m = totalChannels();
+    return Math.min(5, Math.max(1, String(m).length));
   });
 
   // Overlays need now/next even for channels that aren't on screen in the list.
@@ -92,7 +104,8 @@ function Watch(): JSX.Element {
     osdTimer = setTimeout(() => setOsd(false), ms);
   };
   const tuneNow = (c: IptvChannel) => {
-    rememberChannel(c.id);
+    rememberChannel(c);
+    setTunedCh(c);
     setPending(undefined);
     showOsd();
     void tuner.tune(c);
@@ -129,6 +142,21 @@ function Watch(): JSX.Element {
     if (digitTimer) clearTimeout(digitTimer);
     const n = Number(digits());
     const c = channelByNumber(n);
+    if (!c && !allChannels()) {
+      // Numbers need the full list, which may still be loading.
+      setNumWait(true);
+      void loadAll()
+        .then(() => {
+          setNumWait(false);
+          if (digits() === String(n)) commitDigits();
+        })
+        .catch(() => {
+          setNumWait(false);
+          setMissing(true);
+          digitTimer = setTimeout(clearDigits, 1400);
+        });
+      return;
+    }
     if (!c) {
       setMissing(true);
       digitTimer = setTimeout(clearDigits, 1400);
@@ -193,17 +221,33 @@ function Watch(): JSX.Element {
   // ---- first tune: ?ch= from the guide, else the last channel, else the top of the list ----
   let started = false;
   createEffect(() => {
-    const l = channels();
-    if (started || !l || !l.length) return;
-    started = true;
+    if (started) return;
     const want = Number(params.ch) || undefined;
-    const c = channelById(want) ?? channelById(lastChannel()) ?? list()[0] ?? l[0]!;
+    const c = channelById(want) ?? lastChannel() ?? list()[0];
+    if (!c) return; // wait for a list
+    started = true;
     tuneNow(c);
     if (want) {
       setParams({ ch: undefined }, { replace: true });
       enterFull();
-    } else requestAnimationFrame(() => listApi?.reveal(c.id, true));
+    }
   });
+  // Land the remote on the tuned channel's card (or the first one) once the row has rendered.
+  let landed = false;
+  createEffect(() => {
+    const l = shownList();
+    if (landed || !l || !l.length) return;
+    landed = true;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const a = document.activeElement;
+        if (isFull() || (a && a !== document.body && a.tagName !== "MAIN")) return;
+        const id = tuner.channelId() ?? tunedCh()?.id;
+        listApi?.reveal(id != null && l.some((c) => c.id === id) ? id : l[0]!.id, true);
+      }),
+    );
+  });
+
   // Guide → Watch while already on /live.
   createEffect(on(() => params.ch, (ch) => {
     if (!started || !ch) return;
@@ -252,8 +296,9 @@ function Watch(): JSX.Element {
         case "left": openMini(); return true;
         case "right": showOsd(8000); return true;
         case "enter":
-          if (tuner.error()?.retry) tuner.retry();
-          else openMini();
+          // With an error card up, OK goes to its buttons.
+          if (tuner.error()) return false;
+          openMini();
           return true;
         case "stop": exitFull(); return true;
       }
@@ -270,6 +315,10 @@ function Watch(): JSX.Element {
       }
       if (isFull()) {
         exitFull();
+        return true;
+      }
+      if (query()) {
+        setQuery("");
         return true;
       }
       return false;
@@ -308,39 +357,8 @@ function Watch(): JSX.Element {
   };
 
   return (
-    <div class="live" classList={{ "is-full": isFull(), "is-native": tuner.nativePlane(), "has-mini": mini() }}>
-      <aside class="live__side" aria-label="Channels">
-        <header class="live__head">
-          <div>
-            <p class="eyebrow eyebrow--accent">Live TV</p>
-            <h1 class="live__title">
-              Channels <span class="live__count">{list().length}</span>
-            </h1>
-          </div>
-          <a class="btn btn--sm" href={href("/live/guide")}>
-            <Icon name="grid" /> <span>Guide</span>
-          </a>
-        </header>
-        <Filters />
-        <ChannelList
-          class="live__list"
-          channels={filtered()}
-          resetKey={filterKey(filter())}
-          activeId={tuner.channelId()}
-          pendingId={pending()?.id ?? digitTarget()?.id}
-          onPick={pick}
-          controller={(a) => (listApi = a)}
-          rowRem={4.6}
-          empty={
-            <div class="chlist__empty">
-              <Icon name="star" />
-              <p>{filter().kind === "favorites" ? "No favourites yet. Press the yellow button (or M) while watching to add one." : "No channels in this group."}</p>
-            </div>
-          }
-        />
-      </aside>
-
-      <section class="live__stage" data-nav-scroll="y">
+    <div class="live live--rows" classList={{ "is-full": isFull(), "is-native": tuner.nativePlane(), "has-mini": mini() }}>
+      <section class="live__hero">
         <div
           ref={screen}
           class="live__screen"
@@ -371,13 +389,15 @@ function Watch(): JSX.Element {
                 <Icon name="alert" />
                 <h2>{e().title}</h2>
                 <p>{e().body}</p>
-                <Show when={!isFull()} fallback={<p class="live__hint">{e().retry ? "OK to try again · ▲▼ another channel" : "▲▼ another channel"}</p>}>
-                  <div class="actions actions--center">
-                    <Show when={e().retry}>
-                      <button type="button" class="btn btn--primary btn--sm" onClick={() => tuner.retry()}><Icon name="retry" /> <span>Try again</span></button>
-                    </Show>
-                  </div>
-                </Show>
+                <div class="actions actions--center">
+                  <Show when={e().provider}>
+                    <StopOther error={e()} onStopped={() => setTimeout(() => tuner.retry(), 700)} onTakeover={() => tuner.retry({ takeover: true })} />
+                  </Show>
+                  <Show when={e().retry}>
+                    <button type="button" class="btn btn--sm" classList={{ "btn--primary": !e().provider }} onClick={() => tuner.retry()}><Icon name="retry" /> <span>Try again</span></button>
+                  </Show>
+                </div>
+                <Show when={isFull()}><p class="live__hint">▲▼ another channel · Back for the list</p></Show>
               </div>
             )}
           </Show>
@@ -418,24 +438,62 @@ function Watch(): JSX.Element {
           </Show>
         </div>
 
-        <Show when={!isFull() && shown()}>
-          {(c) => (
-            <div class="live__info">
+        <div class="live__info">
+          <div class="live__infohead">
+            <p class="eyebrow eyebrow--accent">Live TV</p>
+            <a class="btn btn--sm" href={href("/live/guide")}><Icon name="grid" /> <span>Guide</span></a>
+          </div>
+          <Show when={!isFull() && shown()} fallback={<p class="nowp__none">Pick a channel below to start watching.</p>}>
+            {(c) => (
               <NowPlaying channel={c()} variant="panel" tuning={!!pending()}>
                 <div class="nowp__actions">
                   <button type="button" class="btn btn--primary btn--sm" onClick={enterFull}><Icon name="fullscreen" /> <span>Full screen</span></button>
                   <button type="button" class="btn btn--sm" aria-pressed={c().favorite} onClick={() => void fav(c())}>
-                    <Icon name="star" /> <span>{c().favorite ? "Favourite" : "Add to favourites"}</span>
+                    <Icon name="star" /> <span>{c().favorite ? "Favourite" : "Favourite it"}</span>
                   </button>
                   <button type="button" class="btn btn--sm btn--quiet" aria-pressed={stats()} onClick={toggleStats}>
                     <Icon name="activity" /> <span>Zap timing</span>
                   </button>
                 </div>
               </NowPlaying>
-              <Later channel={c()} />
-            </div>
-          )}
-        </Show>
+            )}
+          </Show>
+        </div>
+      </section>
+
+      <section class="live__rows" aria-label="Channels">
+        <Filters />
+        <div class="chanrow">
+          <div class="rowlabel rowlabel--split">
+            <p class="rowlabel__title">
+              <span dir="auto">{query() ? "Search results" : filterLabel()}</span>{" "}
+              <small>{shownList() ? shownList()!.length.toLocaleString() : "…"}</small>
+            </p>
+            <ChannelSearch class="livesearch--row" />
+          </div>
+          <Show when={shownList()} fallback={<RailLoading />}>
+            <ChannelRail
+              channels={shownList()!}
+              resetKey={`${filterKey(filter())}|${query()}`}
+              activeId={tuner.phase() === "error" ? undefined : tuner.channelId()}
+              pendingId={pending()?.id ?? digitTarget()?.id}
+              onPick={pick}
+              controller={(a) => (listApi = a)}
+              empty={
+                <>
+                  <Icon name={query() ? "search" : "star"} />
+                  <p>
+                    {query()
+                      ? `No channels match “${query()}”.`
+                      : filter().kind === "favorites"
+                        ? "No favourites yet. Pick a group, then press the yellow button (or M) while watching to add one."
+                        : "No channels in this group."}
+                  </p>
+                </>
+              }
+            />
+          </Show>
+        </div>
       </section>
 
       <Show when={mini()}>
@@ -464,47 +522,21 @@ function Watch(): JSX.Element {
   );
 }
 
-/** The next few programmes on the tuned channel. */
-function Later(props: { channel: IptvChannel }): JSX.Element {
-  const [data] = createResource(
-    () => props.channel.id,
-    async (id) => {
-      const from = nowSec();
-      const g = await iptv.epg({ from, to: from + 8 * 3600, channels: [id] });
-      return (g.channels[0]?.programs ?? []).filter((p) => p.start > from).slice(1, 5);
-    },
-  );
-  return (
-    <Show when={data()?.length}>
-      <div class="later">
-        <p class="eyebrow">Later on {props.channel.name}</p>
-        <ol class="later__list">
-          <For each={data()}>
-            {(p) => (
-              <li>
-                <span class="later__time">{fmtRange(p)}</span>
-                <span class="later__title">{p.title}</span>
-              </li>
-            )}
-          </For>
-        </ol>
-      </div>
-    </Show>
-  );
-}
-
 function LiveSkeleton(): JSX.Element {
   return (
-    <div class="live is-skeleton" aria-busy="true" aria-label="Loading channels">
-      <aside class="live__side">
-        <header class="live__head"><div><span class="skel skel--text" style={{ width: "6rem" }} /><span class="skel skel--title" style={{ width: "12rem", height: "2.4rem", "margin-top": "0.6rem" }} /></div></header>
-        <div class="chlist">
-          {Array.from({ length: 9 }, () => (
-            <div class="chrow chrow--skel"><span class="skel" style={{ width: "100%", height: "100%" }} /></div>
-          ))}
+    <div class="live live--rows is-skeleton" aria-busy="true" aria-label="Loading channels">
+      <section class="live__hero">
+        <div class="live__screen skel" />
+        <div class="live__info">
+          <span class="skel skel--text" style={{ width: "6rem" }} />
+          <span class="skel skel--title" style={{ width: "70%", height: "2.4rem", "margin-top": "1.4rem" }} />
+          <span class="skel skel--text" style={{ width: "50%", "margin-top": "1rem" }} />
         </div>
-      </aside>
-      <section class="live__stage"><div class="live__screen skel" /></section>
+      </section>
+      <section class="live__rows">
+        <div class="grouprow"><p class="rowlabel"><span>Groups</span></p><div class="livefilters"><span class="skel" style={{ width: "60%", height: "2.35rem" }} /></div></div>
+        <div class="chanrow"><div class="rowlabel rowlabel--split"><span class="skel skel--text" style={{ width: "10rem" }} /></div><RailLoading /></div>
+      </section>
     </div>
   );
 }
@@ -579,4 +611,88 @@ function writeFlag(k: string, v: boolean): void {
   } catch {
     /* ignore */
   }
+}
+
+function RailLoading(): JSX.Element {
+  return (
+    <div class="chrail" aria-busy="true" aria-label="Loading channels">
+      <div class="chrail__track">
+        {Array.from({ length: 8 }, (_v, i) => (
+          <div class="chcard chcard--skel" style={{ left: `${i * 15.5}rem`, width: "14.5rem" }}><span class="skel" /></div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Stop the other stream":
+ * - admins on the new contract (409 + holders): take the connection over (`takeover: true`);
+ * - older servers (429 "in use by: …"): admins stop the matching live session from the hub;
+ * - everyone: a stream this browser left running (e.g. after a reload).
+ */
+function StopOther(props: { error: TuneError; onStopped: () => void; onTakeover: () => void }): JSX.Element {
+  const [busy, setBusy] = createSignal(false);
+  const [target] = createResource(
+    () => props.error,
+    async (err) => {
+      const me = currentUser()?.id;
+      if (err.holders?.length) {
+        const h = err.holders[0]!;
+        const mine = err.holders.every((x) => x.user_id === me);
+        return { id: "", channel: err.holders.map((x) => x.channel_name).join(", "), mine, who: h.username ?? "another viewer", takeover: true };
+      }
+      const names = err.watching ?? [];
+      if (isAdmin()) {
+        try {
+          const list = await iptv.liveSessions();
+          const hits = list.filter((s) => !names.length || names.indexOf(s.channel_name) >= 0);
+          const mine = hits.find((s) => s.user_id === me);
+          const pick = mine ?? hits[0];
+          if (pick) return { id: pick.id, channel: pick.channel_name, mine: !!mine, who: pick.username ?? `user ${pick.user_id}`, takeover: false };
+        } catch {
+          /* fall through */
+        }
+      }
+      const own = ownSession();
+      if (own && (!names.length || names.indexOf(own.channel) >= 0)) return { id: own.id, channel: own.channel, mine: true, who: "", takeover: false };
+      return undefined;
+    },
+  );
+  const stop = async () => {
+    const t = target();
+    if (!t || busy()) return;
+    if (t.takeover) return props.onTakeover();
+    setBusy(true);
+    try {
+      await iptv.stop(t.id);
+      forgetSession(t.id);
+      toast(`Stopped ${t.channel}`, "success", 2000);
+      props.onStopped();
+    } catch (e) {
+      // Already gone: the slot frees up on its own.
+      if (e instanceof Error && /not found/i.test(e.message)) props.onStopped();
+      else toast(e instanceof Error ? e.message : "Couldn't stop that stream", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Show when={target()}>
+      {(t) => (
+        <button type="button" class="btn btn--primary btn--sm" data-autofocus aria-disabled={busy() ? "true" : undefined} onClick={() => void stop()}>
+          <Icon name="x" />
+          <span>
+            {busy()
+              ? "Stopping…"
+              : t().mine
+                ? `Stop the other stream (${t().channel})`
+                : t().takeover
+                  ? "Take over"
+                  : `Stop ${t().who}'s stream (${t().channel})`}
+          </span>
+        </button>
+      )}
+    </Show>
+  );
 }

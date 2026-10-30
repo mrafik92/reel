@@ -6,6 +6,8 @@ export class ApiError extends Error {
     message: string,
     /** Seconds, from `Retry-After` (429 lockouts and limits). */
     public retryAfter?: number,
+    /** Parsed JSON error body, when the server sent one (extra fields beyond `error`). */
+    public body?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -89,15 +91,17 @@ export async function request<T>(method: string, path: string, o: RequestOptions
   }
   if (!res.ok) {
     let msg = "";
+    let body: Record<string, unknown> | undefined;
     try {
       const b = (await res.json()) as { error?: string };
       msg = b && b.error ? b.error : "";
+      if (b && typeof b === "object") body = b as Record<string, unknown>;
     } catch {
       /* not JSON */
     }
     const ra = Number(res.headers.get("Retry-After"));
     if (res.status === 401 && o.auth !== false) unauthorized?.();
-    throw new ApiError(res.status, msg || FRIENDLY[res.status] || `Server error (${res.status})`, isFinite(ra) && ra > 0 ? ra : undefined);
+    throw new ApiError(res.status, msg || FRIENDLY[res.status] || `Server error (${res.status})`, isFinite(ra) && ra > 0 ? ra : undefined, body);
   }
   if (res.status === 204 || res.status === 202) return undefined as T;
   const text = await res.text();
