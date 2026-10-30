@@ -6,6 +6,7 @@ import {
 } from "@reel/ui";
 import { api } from "../api";
 import { usePageFocus } from "../lib/focus";
+import { itemActivity } from "../lib/downloads";
 import { isAdmin } from "../lib/auth";
 import { itemHref, libraryHref } from "../lib/links";
 import { EmptyState, ErrorState, FirstRun } from "../components/States";
@@ -149,7 +150,7 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
               captionRem={tv ? 3 : 3.1}
               gapRem={tv ? 1.25 : 1.5}
               onRange={onRange}
-              renderItem={(it, i) => <PosterCard item={it} href={itemHref(it)} autofocus={i() === 0} />}
+              renderItem={(it, i) => <PosterCard item={it} href={itemHref(it)} autofocus={i() === 0} activity={itemActivity(it.id)} />}
               renderPlaceholder={() => (
                 <div class="card card--poster is-placeholder">
                   <div class="card__frame skel" />

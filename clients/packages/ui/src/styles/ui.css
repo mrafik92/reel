@@ -900,3 +900,21 @@ html[data-input="pointer"] .pill--play:focus:not(:hover) {
   color: var(--accent-ink);
   transform: none;
 }
+
+/* Corner ring: library item with arr activity (new episodes, upgrades) */
+.card__activity {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  padding: 0.15rem;
+  border-radius: 50%;
+  background: rgba(var(--bg-rgb), 0.8);
+  box-shadow: 0 0.2rem 0.8rem rgba(0, 0, 0, 0.5);
+}
+.card__activity .ring__pct {
+  font-size: 0.95em;
+}
+.card__activity .ring__pct small,
+.card__activity .ring__pct-icon {
+  display: none;
+}

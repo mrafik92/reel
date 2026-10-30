@@ -5,6 +5,7 @@ import {
 } from "@reel/ui";
 import { api } from "../api";
 import { usePageFocus } from "../lib/focus";
+import { itemActivity } from "../lib/downloads";
 import { ErrorState, SkeletonRow, FirstRun } from "../components/States";
 import { itemHref, libraryHref, playHref } from "../lib/links";
 
@@ -133,7 +134,7 @@ export default function Home(): JSX.Element {
                   <Show when={h().recently_added.length}>
                     <Row title="Recently added" index={idx().ra}>
                       <For each={h().recently_added}>
-                        {(it) => <PosterCard item={it} href={itemHref(it)} onFocus={onCardFocus} />}
+                        {(it) => <PosterCard item={it} href={itemHref(it)} onFocus={onCardFocus} activity={itemActivity(it.id)} />}
                       </For>
                     </Row>
                   </Show>
@@ -147,7 +148,7 @@ export default function Home(): JSX.Element {
                           action={lib ? { label: "See all", href: libraryHref(lib) } : undefined}
                         >
                           <For each={row.items}>
-                            {(it) => <PosterCard item={it} href={itemHref(it)} onFocus={onCardFocus} />}
+                            {(it) => <PosterCard item={it} href={itemHref(it)} onFocus={onCardFocus} activity={itemActivity(it.id)} />}
                           </For>
                         </Row>
                       );

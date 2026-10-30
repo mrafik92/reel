@@ -31,6 +31,8 @@ export interface DiscoverCardProps {
   onPlay: () => void;
   onRetry?: () => void;
   autofocus?: boolean;
+  /** Replaces "year · Series" under the title (e.g. the character played). */
+  subtitle?: string;
 }
 
 const ACTIVE = { searching: 1, queued: 1, downloading: 1, stalled: 1, importing: 1, approved: 1, requested: 1, failed: 1, not_found: 1 };
@@ -115,8 +117,7 @@ export function DiscoverCard(props: DiscoverCardProps): JSX.Element {
         <div class="card__caption">
           <span class="card__title">{c().title}</span>
           <span class="card__sub">
-            {c().year ?? ""}
-            {c().media_type === "tv" ? (c().year ? " · Series" : "Series") : ""}
+            {props.subtitle ?? `${c().year ?? ""}${c().media_type === "tv" ? (c().year ? " · Series" : "Series") : ""}`}
           </span>
         </div>
       </button>

@@ -4,17 +4,20 @@ import {
   Backdrop, focusElement, focusFirst, formatEta, formatRuntime, formatSpeed, Icon, Img, onBack, ProgressRing, RING_LABEL,
 } from "@reel/ui";
 import { api, type DiscoverCard, type MediaType } from "../api";
-import { downloads } from "../lib/downloads";
+import { progressFor } from "../lib/downloads";
 import { canAutoAdd } from "../lib/auth";
 import { isBusy, useRequestActions } from "../lib/requests";
 import { ErrorState } from "./States";
+import { RatingsStrip, ReviewsSection, useReviews } from "./Reviews";
+import { CastTile } from "./Cast";
 
 /** TMDB title detail (SPEC §7.1): availability, live ring, season picker, Add / Play / Retry. */
 export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: DiscoverCard; onClose: () => void }): JSX.Element {
   const [d] = createResource(() => [props.media, props.tmdbId] as const, ([m, id]) => api.discoverDetail(m, id));
   const card = () => d()?.card ?? props.seed;
+  const reviews = useReviews(() => ({ media: props.media, tmdbId: props.tmdbId }));
   const actions = useRequestActions();
-  const dl = () => downloads.get(props.tmdbId);
+  const dl = () => progressFor(props.tmdbId);
   const state = () => dl()?.state;
   const available = () => state() === "available" || (!dl() && card()?.status === "available");
   const active = () => !!state() && state() !== "available" && state() !== "declined";
@@ -77,6 +80,7 @@ export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: 
                           <Show when={d()?.genres.length}><span>{d()!.genres.slice(0, 3).join(" / ")}</span></Show>
                           <Show when={c().vote_average}><span class="meta__rating"><Icon name="star" filled /> {c().vote_average!.toFixed(1)}</span></Show>
                         </p>
+                        <RatingsStrip data={reviews()} />
                         <p class="dsheet__status">
                           <Show when={available()}><span class="avail avail--available avail--inline"><Icon name="check" /> In your library</span></Show>
                           <Show when={!available() && !active() && c().status === "partially"}><span class="avail avail--partially avail--inline">Partly in your library</span></Show>
@@ -128,7 +132,7 @@ export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: 
                           <Icon name="play" /> <span>Play</span>
                         </button>
                       </Show>
-                      <Show when={failed() && dl()}>
+                      <Show when={failed() && dl()?.request_id}>
                         <button type="button" class="btn btn--primary btn--lg" data-autofocus onClick={() => void actions.retry(dl()!.request_id, c().title)}>
                           <Icon name="retry" /> <span>Try again</span>
                         </button>
@@ -155,6 +159,18 @@ export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: 
                     <Show when={!canAutoAdd() && !available() && !active()}>
                       <p class="dsheet__fine">Requests are reviewed by your server's admin before downloading.</p>
                     </Show>
+                    <Show when={d()?.cast?.length}>
+                      <div class="dsheet__cast">
+                        <p class="eyebrow">Cast</p>
+                        <div class="row__scroller dsheet__cast-scroll" data-nav-scroll="x" data-nav-group>
+                          <div class="row__track">
+                            <For each={d()!.cast!.slice(0, 15)}>{(c) => <CastTile c={c} />}</For>
+                          </div>
+                        </div>
+                      </div>
+                    </Show>
+
+                    <ReviewsSection data={reviews()} compact limit={3} />
                   </>
                 )}
               </Show>

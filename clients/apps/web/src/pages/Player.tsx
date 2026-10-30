@@ -1,4 +1,4 @@
-import { createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
   Icon, Sheet, audioLabel, channelsLabel, createPlayerAdapter, episodeCode, focusElement, formatClock,
@@ -212,6 +212,11 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
       t.srclang = s.language ?? "";
       t.src = mediaUrl(s.url)!;
       t.setAttribute("data-index", String(s.index));
+      // Cues arrive when the VTT loads: lift them off the bottom edge.
+      t.addEventListener("load", () => {
+        enforceModes();
+        placeCues();
+      });
       video.appendChild(t);
     }
   }
@@ -219,6 +224,33 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
     Array.prototype.slice.call(video.querySelectorAll("track")).forEach((t: Element) => t.remove());
     setCue(null);
   }
+  /**
+   * Subtitle placement for <track> rendering (web + webOS): snap-to-lines with a
+   * negative line counts up from the bottom, so multi-line cues grow upwards.
+   * ≈2 lines (~9% of the height) above the edge normally, ~7 lines when the
+   * control bar is up so the two never collide.
+   */
+  function placeCues(): void {
+    if (!video) return;
+    const line = visible() || !playing() ? -7 : -3;
+    const tracks = video.textTracks;
+    for (let i = 0; i < tracks.length; i++) {
+      const cues = tracks[i]!.cues;
+      if (!cues) continue;
+      for (let j = 0; j < cues.length; j++) {
+        const c = cues[j] as VTTCue;
+        if (typeof c.line === "undefined") continue;
+        if (c.snapToLines !== true) c.snapToLines = true;
+        if (c.line !== line) c.line = line;
+      }
+    }
+  }
+  createEffect(() => {
+    visible();
+    playing();
+    placeCues();
+  });
+
   function applySubtitle(d: DecideResponse | undefined = session()): void {
     const want = sub();
     // Burned-in subs are part of the picture; nothing to toggle client-side.
@@ -227,11 +259,19 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
       adapter.selectTextTrack(want >= 0 ? String(want) : null);
       return;
     }
-    const tracks = video.textTracks;
+    enforceModes();
+    placeCues();
+  }
+  /** Exactly the chosen sidecar track shows. Chrome may auto-enable another
+   *  track of the same language once its VTT loads, so this re-runs on `change`. */
+  function enforceModes(): void {
+    if (!video || adapter?.selectTextTrack) return;
+    const want = session()?.decision.subtitle.type === "burn_in" ? -1 : sub();
     const els = video.querySelectorAll("track");
-    for (let i = 0; i < tracks.length; i++) {
-      const idx = els[i]?.getAttribute("data-index");
-      tracks[i]!.mode = idx != null && Number(idx) === want ? "showing" : "disabled";
+    for (let i = 0; i < els.length; i++) {
+      const el = els[i] as HTMLTrackElement;
+      const mode = Number(el.getAttribute("data-index")) === want ? "showing" : "disabled";
+      if (el.track.mode !== mode) el.track.mode = mode;
     }
   }
   const chooseSub = (v: number) => {
@@ -305,6 +345,14 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
       return;
     }
     void start(resumeAt());
+    // Tracks added by native adapters (webOS) get the same placement once their cues load.
+    const onAddTrack = (e: TrackEvent) => e.track && e.track.addEventListener("cuechange", placeCues);
+    video.textTracks.addEventListener("addtrack", onAddTrack as EventListener);
+    video.textTracks.addEventListener("change", enforceModes);
+    onCleanup(() => {
+      video.textTracks.removeEventListener("addtrack", onAddTrack as EventListener);
+      video.textTracks.removeEventListener("change", enforceModes);
+    });
     focusElement(playBtn, { smooth: false });
     poke();
 

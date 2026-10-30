@@ -48,3 +48,33 @@ export type HwAccelStatus = S["HwAccelStatus"];
 export type HwAccel = S["HwAccel"];
 export type CreateLibrary = S["CreateLibrary"];
 export type SessionDto = S["SessionDto"];
+
+// ---------------------------------------------------------------------------
+// People, reviews, downloads (server round 4).
+
+export type CastCredit = S["CastMember"];
+/** Discover detail; `cast` entries without `person_tmdb_id` are local (.nfo) only. */
+export type DiscoverDetailWithCast = DiscoverDetail;
+/** Discover card shape (incl. `library_item_id`) + role. `role`: "cast" | "crew". */
+export type PersonCredit = S["PersonCreditDto"];
+export type PersonDetail = S["PersonDto"];
+
+/** Known values; the wire type is a plain string, so UI code keeps a default branch. */
+export type RatingSource = "imdb" | "rotten_tomatoes" | "metacritic" | "tmdb";
+export type ReviewSource = "tmdb" | "trakt";
+export type LinkSource = "imdb" | "rotten_tomatoes" | "letterboxd" | "tmdb" | "trakt";
+export type Rating = S["RatingDto"];
+/** `created_at` is ISO-8601; `avatar_url` only for TMDB-hosted avatars (else initials). */
+export type Review = S["ReviewDto"];
+export type ReviewLink = S["ReviewLinkDto"];
+export type Reviews = S["ReviewsDto"];
+
+/** queued | downloading | stalled | importing | failed (typed as RequestState on the wire). */
+export type DownloadState = RequestState;
+/** One Radarr/Sonarr queue entry; `id` is `"{arr_server_id}:{queue_id}"`. */
+export type DownloadItem = S["DownloadDto"];
+/** Pushed on change, plus a final `items: []` when the queue drains. */
+export interface DownloadsEvent {
+  type: "downloads";
+  items: DownloadItem[];
+}

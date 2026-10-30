@@ -110,6 +110,8 @@ interface Rec {
   seed: number;
 }
 
+export type { Rec };
+
 export interface Db {
   libraries: Library[];
   byId: Map<number, Rec>;
@@ -125,7 +127,12 @@ function missingImage(kind: "poster" | "backdrop", id: number): string {
 const NOW = Date.UTC(2026, 9, 30, 20, 0, 0);
 const DAY = 86400_000;
 
-function castFor(seed: number, n: number): CastMember[] {
+/** Stable fake TMDB person id from a name (same person across films). */
+export function personId(name: string): number {
+  return 1_000_000 + (hash(name) % 900_000);
+}
+
+export function castFor(seed: number, n: number): CastMember[] {
   const r = rng(seed * 13 + 5);
   const out: CastMember[] = [];
   for (let i = 0; i < n; i++) {
@@ -133,7 +140,8 @@ function castFor(seed: number, n: number): CastMember[] {
     const character = r() > 0.35
       ? `${FIRST[Math.floor(r() * FIRST.length)]} ${LAST[Math.floor(r() * LAST.length)]}`
       : `${CHAR[Math.floor(r() * CHAR.length)]} ${LAST[Math.floor(r() * LAST.length)]}`;
-    out.push({ name, character, photo_url: r() > 0.12 ? headshotArt(name) : null });
+    // A few uncredited/NFO-only names have no TMDB id → not clickable.
+    out.push({ name, character, photo_url: r() > 0.12 ? headshotArt(name) : null, person_tmdb_id: r() > 0.08 ? personId(name) : null });
   }
   return out;
 }

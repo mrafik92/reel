@@ -67,8 +67,15 @@ export function useRequestActions() {
     }
   }
 
-  async function play(c: { title: string; year?: number | null; media_type: MediaType; tmdb_id: number }): Promise<void> {
+  async function play(c: { title: string; year?: number | null; media_type: MediaType; tmdb_id: number; library_item_id?: number | null }): Promise<void> {
+    // Cards carry the library movie/show id when available — no lookup needed.
+    if (c.library_item_id) {
+      const ref = { id: c.library_item_id, kind: c.media_type === "tv" ? ("show" as const) : ("movie" as const) };
+      navigate(toPath(ref.kind === "movie" ? playHref(ref) : itemHref(ref)));
+      return;
+    }
     try {
+      // Older servers / just-imported titles: find it by title + tmdb_id.
       const it = await findLibraryItem(c);
       if (!it) {
         toast(`“${c.title}” is still being added to your library — try again in a moment`);

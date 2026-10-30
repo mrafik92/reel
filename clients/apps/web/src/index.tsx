@@ -5,6 +5,7 @@ import "./styles/fonts.css";
 import "@reel/ui/src/styles/ui.css";
 import "./styles/app.css";
 import "./styles/features.css";
+import "./styles/people.css";
 import { HASH_ROUTING, TV } from "./lib/mode";
 import { Shell } from "./app/Shell";
 import Home from "./pages/Home";
@@ -16,6 +17,8 @@ const Player = lazy(() => import("./pages/Player"));
 const Search = lazy(() => import("./pages/Search"));
 const Discover = lazy(() => import("./pages/Discover"));
 const Requests = lazy(() => import("./pages/Requests"));
+const Downloads = lazy(() => import("./pages/Downloads"));
+const Person = lazy(() => import("./pages/Person"));
 const Admin = lazy(() => import("./pages/admin/Admin"));
 const DevRings = lazy(() => import("./pages/DevRings"));
 const NotFound = lazy(() => import("./pages/NotFound"));
@@ -38,6 +41,8 @@ function Routes() {
       <Route path="/search" component={Search} />
       <Route path="/discover" component={Discover} />
       <Route path="/requests" component={Requests} />
+      <Route path="/downloads" component={Downloads} />
+      <Route path="/person/:id" component={Person} />
       <Route path="/admin/:section?" component={Admin} />
       <Route path="/dev/rings" component={DevRings} />
       <Route path="*" component={NotFound} />

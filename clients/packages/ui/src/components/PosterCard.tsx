@@ -3,7 +3,7 @@ import type { ItemSummary } from "../types";
 import type { DownloadProgress } from "../progress";
 import { episodeCode, formatEta, formatSpeed } from "../format";
 import { Img } from "./Img";
-import { ProgressRing, RING_LABEL } from "./ProgressRing";
+import { ProgressRing, RING_LABEL, type RingState } from "./ProgressRing";
 import { Icon } from "./Icon";
 
 export interface PosterCardProps {
@@ -18,6 +18,11 @@ export interface PosterCardProps {
   /** Live download state (SPEC §7.1); renders the ring overlay. */
   download?: DownloadProgress;
   onRetry?: () => void;
+  /**
+   * Background activity on an item that's already in the library (new episodes,
+   * an upgrade): a small corner ring instead of the full overlay.
+   */
+  activity?: { state: RingState; progress: number };
   onFocus?: (item: ItemSummary) => void;
   onClick?: (e: MouseEvent) => void;
   /** Initial focus for the page. */
@@ -66,7 +71,7 @@ export function PosterCard(props: PosterCardProps): JSX.Element {
         }
         props.onClick?.(e);
       }}
-      aria-label={`${it().title}${sub() ? ", " + sub() : ""}${dl() ? ", " + RING_LABEL[dl()!.state] : ""}`}
+      aria-label={`${it().title}${sub() ? ", " + sub() : ""}${dl() ? ", " + RING_LABEL[dl()!.state] : props.activity ? `, ${RING_LABEL[props.activity.state]} ${Math.round(props.activity.progress * 100)}%` : ""}`}
     >
       <div class="card__frame">
         <Img
@@ -80,7 +85,14 @@ export function PosterCard(props: PosterCardProps): JSX.Element {
             </div>
           }
         />
-        <Show when={it().played && !dlActive()}>
+        <Show when={props.activity && !dlActive() && props.activity}>
+          {(a) => (
+            <span class={`card__activity card__activity--${a().state}`} title={`${RING_LABEL[a().state]} ${Math.round(a().progress * 100)}%`}>
+              <ProgressRing state={a().state} progress={a().progress} size="2.4rem" />
+            </span>
+          )}
+        </Show>
+        <Show when={it().played && !dlActive() && !props.activity}>
           <span class="card__played" title="Watched">
             <Icon name="check" />
           </span>

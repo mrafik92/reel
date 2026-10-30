@@ -12,6 +12,10 @@ import { usePageFocus } from "../lib/focus";
 import { playHref } from "../lib/links";
 import { getTrackPrefs, setTrackPrefs } from "../lib/playback";
 import { ErrorState } from "../components/States";
+import { RatingsStrip, ReviewsSection, useReviews } from "../components/Reviews";
+import { CastTile } from "../components/Cast";
+import { href } from "../lib/mode";
+import { itemActivity } from "../lib/downloads";
 
 type Picker = "audio" | "sub" | "version" | null;
 
@@ -125,6 +129,13 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
   const progress = () => (!played() && it().progress && it().progress! > 0.005 ? it().progress! : 0);
   const runtime = () => it().runtime_s ?? file()?.duration_s;
   const tags = () => fileTags(file());
+  // Ratings & reviews exist for films and whole series (not seasons/episodes).
+  const reviews = useReviews(() =>
+    it().tmdb_id && (it().kind === "movie" || it().kind === "show")
+      ? { media: it().kind === "show" ? "tv" : "movie", tmdbId: it().tmdb_id! }
+      : undefined,
+  );
+  const activity = () => itemActivity(it().id);
 
   return (
     <>
@@ -146,6 +157,16 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
           </Show>
           <Show when={played()}><span class="meta__watched"><Icon name="check" /> Watched</span></Show>
         </p>
+        <RatingsStrip data={reviews()} />
+        <Show when={activity()}>
+          {(a) => (
+            <p class="detail__activity">
+              <span class="pulse" aria-hidden="true" />
+              {a().state === "downloading" ? `Downloading${a().count > 1 ? ` ${a().count} files` : ""} · ${Math.floor(a().progress * 100)}%` : a().state === "importing" ? "Importing new files" : a().state === "queued" ? "Queued for download" : a().state === "stalled" ? "Download stalled" : "Download failed"}
+              <a href={href("/downloads")}>See downloads</a>
+            </p>
+          )}
+        </Show>
         <Show when={tags().length}>
           <ul class="tags" aria-label="Video and audio">
             <For each={tags()}>{(t) => <li class="tag" classList={{ "tag--hdr": /HDR|Dolby Vision|HLG/.test(t) }}>{t}</li>}</For>
@@ -259,20 +280,13 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
         <Row title="Cast" variant="cast">
           <For each={it().cast.slice(0, 20)}>
             {(c) => (
-              <div class="person" tabindex="0" data-focusable data-fid={"p:" + c.name}>
-                <Img
-                  class="person__photo"
-                  src={c.photo_url}
-                  width={185}
-                  fallback={<span class="person__initials">{c.name.split(" ").map((w) => w.charAt(0)).join("").slice(0, 2)}</span>}
-                />
-                <span class="person__name">{c.name}</span>
-                <Show when={c.character}><span class="person__role">{c.character}</span></Show>
-              </div>
+              <CastTile c={c} />
             )}
           </For>
         </Row>
       </Show>
+
+      <ReviewsSection data={reviews()} />
 
       <Show when={it().files.length}>
         <section class="tech" data-nav-anchor>

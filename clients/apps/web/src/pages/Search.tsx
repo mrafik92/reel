@@ -4,6 +4,7 @@ import { Icon, PosterCard, focusElement } from "@reel/ui";
 import { api, ApiError, type DiscoverCard } from "../api";
 import { itemHref } from "../lib/links";
 import { usePageFocus } from "../lib/focus";
+import { itemActivity } from "../lib/downloads";
 import { primeFromCards } from "../lib/downloads";
 import { EmptyState, ErrorState } from "../components/States";
 import { DiscoverTile, useDiscoverSheet } from "../components/Discover";
@@ -110,7 +111,7 @@ export default function Search(): JSX.Element {
           <section class="search__section">
             <h2 class="section-title">In your library</h2>
             <div class="results-grid" data-nav-group="free">
-              <For each={library()}>{(it) => <PosterCard item={it} href={itemHref(it)} />}</For>
+              <For each={library()}>{(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} />}</For>
             </div>
           </section>
         </Show>

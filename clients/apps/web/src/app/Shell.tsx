@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "@solidjs/router";
 import { Icon, initTvNavigation, isFileOrigin, onBack, type IconName } from "@reel/ui";
 import { MOCK, TV, href } from "../lib/mode";
 import { authStatus, bootError, bootstrap, currentUser, isAdmin, logout, onAuthChange } from "../lib/auth";
-import { connectEvents, disconnectEvents, downloads } from "../lib/downloads";
+import { connectEvents, disconnectEvents, downloads, queueSummary } from "../lib/downloads";
 import { Toaster } from "../components/Toaster";
 import { ErrorState } from "../components/States";
 
@@ -24,6 +24,7 @@ const NAV: NavItem[] = [
   { path: "/discover", label: "Discover", icon: "compass", match: (p) => p.indexOf("/discover") === 0 },
   { path: "/search", label: "Search", icon: "search", match: (p) => p.indexOf("/search") === 0 },
   { path: "/requests", label: "Requests", icon: "inbox", match: (p) => p.indexOf("/requests") === 0 },
+  { path: "/downloads", label: "Downloads", icon: "download", match: (p) => p.indexOf("/downloads") === 0 },
   // Next: Live TV (IPTV guide + zapping). Flip `hidden` when the route lands.
   { path: "/live", label: "Live TV", icon: "live", match: (p) => p.indexOf("/live") === 0, hidden: true },
 ];
@@ -147,9 +148,22 @@ export function Shell(props: ParentProps): JSX.Element {
                   <li>
                     <a class="rail__link" href={href(n.path)} aria-current={n.match(loc.pathname) ? "page" : undefined}>
                       <Icon name={n.icon} class="rail__icon" />
-                      <span class="rail__label">{n.label}</span>
+                      <Show when={n.path === "/downloads" && queueSummary().active}>
+                        {(a) => <MiniRing progress={a().progress} state={a().state} />}
+                      </Show>
+                      <span class="rail__label">
+                        {n.label}
+                        <Show when={n.path === "/downloads" && queueSummary().active}>
+                          {(a) => <small class="rail__sub">{Math.floor(a().progress * 100)}% · {queueSummary().count} active</small>}
+                        </Show>
+                      </span>
                       <Show when={n.path === "/requests" && activeCount()}>
                         <span class="rail__count" aria-label={`${activeCount()} active`}>{activeCount()}</span>
+                      </Show>
+                      <Show when={n.path === "/downloads" && queueSummary().count + queueSummary().failed}>
+                        <span class="rail__count" classList={{ "rail__count--bad": !queueSummary().count && queueSummary().failed > 0 }} aria-label={`${queueSummary().count} downloading`}>
+                          {queueSummary().count || "!"}
+                        </span>
                       </Show>
                     </a>
                   </li>
@@ -191,5 +205,16 @@ export function Shell(props: ParentProps): JSX.Element {
       <Toaster />
       <div class="grain" aria-hidden="true" />
     </div>
+  );
+}
+
+/** Aggregate download progress drawn around the nav icon. */
+function MiniRing(props: { progress: number; state: string }): JSX.Element {
+  const C = 2 * Math.PI * 21;
+  return (
+    <svg class={`rail__ring rail__ring--${props.state}`} viewBox="0 0 48 48" aria-hidden="true">
+      <circle cx="24" cy="24" r="21" class="rail__ring-track" />
+      <circle cx="24" cy="24" r="21" class="rail__ring-arc" stroke-dasharray={`${C} ${C}`} stroke-dashoffset={C * (1 - props.progress)} transform="rotate(-90 24 24)" />
+    </svg>
   );
 }

@@ -625,6 +625,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/downloads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything in the Radarr/Sonarr queues (including downloads not started from Reel). Admins see
+         *     all; other users only downloads of their own requests. Snapshot cached ~2 s server-side; the
+         *     same data is pushed as `{"type":"downloads","items":[…]}` on `/events` while anything is active.
+         */
+        get: operations["list_downloads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -1049,6 +1070,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/people/{tmdb_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A person from TMDB with their filmography as discovery cards. */
+        get: operations["get_person"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/playback/{file_id}/decide": {
         parameters: {
             query?: never;
@@ -1183,6 +1221,26 @@ export interface paths {
         put?: never;
         /** Search again for a `not_found` / `failed` / `stalled` request. */
         post: operations["retry_request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/reviews/{media}/{tmdb_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ratings (TMDB; IMDb / Rotten Tomatoes / Metacritic with an OMDb key), user reviews (TMDB; Trakt
+         *     with a client id) and outbound links for a title.
+         */
+        get: operations["get_reviews"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1477,6 +1535,11 @@ export interface components {
         CastMember: {
             character?: string | null;
             name: string;
+            /**
+             * Format: int64
+             * @description TMDB person id; open `/people/{id}`.
+             */
+            person_tmdb_id?: number | null;
             photo_url?: string | null;
         };
         ChannelMetricsDto: {
@@ -1669,6 +1732,11 @@ export interface components {
         };
         DiscoverCardDto: {
             backdrop_url?: string | null;
+            /**
+             * Format: int64
+             * @description Library item (movie or show) holding this title, when it is in the library.
+             */
+            library_item_id?: number | null;
             media_type: components["schemas"]["MediaTypeDto"];
             overview?: string | null;
             poster_url?: string | null;
@@ -1685,6 +1753,8 @@ export interface components {
         };
         DiscoverDetailDto: {
             card: components["schemas"]["DiscoverCardDto"];
+            /** @description Top-billed cast (max 20). */
+            cast: components["schemas"]["CastMember"][];
             genres: string[];
             imdb_id?: string | null;
             /** Format: int64 */
@@ -1711,6 +1781,54 @@ export interface components {
             password_set: boolean;
             url: string;
             username?: string | null;
+        };
+        /** @description One Radarr/Sonarr queue record (also the `items` of the `downloads` WebSocket event). */
+        DownloadDto: {
+            arr_name: string;
+            /** Format: int64 */
+            arr_server_id: number;
+            /** Format: int64 */
+            episode?: number | null;
+            episode_title?: string | null;
+            error?: string | null;
+            /** Format: int64 */
+            eta_seconds?: number | null;
+            /** @description `"{arr_server_id}:{queue_id}"` */
+            id: string;
+            /** Format: int64 */
+            library_item_id?: number | null;
+            /** @description `movie` | `tv` */
+            media_type: components["schemas"]["MediaTypeDto"];
+            poster_url?: string | null;
+            /**
+             * Format: float
+             * @description 0..1
+             */
+            progress: number;
+            release_title?: string | null;
+            /**
+             * Format: int64
+             * @description Reel request this belongs to, if any.
+             */
+            request_id?: number | null;
+            /** Format: int64 */
+            season?: number | null;
+            /** Format: int64 */
+            size_bytes?: number | null;
+            /** Format: int64 */
+            sizeleft_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description Needs a torrent client configured (admin → download clients).
+             */
+            speed_bps?: number | null;
+            /** @description queued | downloading | stalled | importing | failed */
+            state: components["schemas"]["RequestState"];
+            title: string;
+            /** Format: int64 */
+            tmdb_id?: number | null;
+            /** Format: int64 */
+            tvdb_id?: number | null;
         };
         EpgChannel: {
             /** Format: int64 */
@@ -2057,6 +2175,26 @@ export interface components {
             role?: null | components["schemas"]["RoleDto"];
             username?: string | null;
         };
+        PersonCreditDto: components["schemas"]["DiscoverCardDto"] & {
+            character?: string | null;
+            job?: string | null;
+            /** @description `cast` | `crew` */
+            role: string;
+        };
+        PersonDto: {
+            biography?: string | null;
+            birthday?: string | null;
+            /** @description Filmography, newest first (cast preferred over crew for the same title). */
+            credits: components["schemas"]["PersonCreditDto"][];
+            deathday?: string | null;
+            imdb_id?: string | null;
+            known_for_department?: string | null;
+            name: string;
+            photo_url?: string | null;
+            place_of_birth?: string | null;
+            /** Format: int64 */
+            tmdb_id: number;
+        };
         PlaybackDecision: {
             audio: components["schemas"]["AudioAction"];
             /** Format: int64 */
@@ -2130,6 +2268,18 @@ export interface components {
             id: number;
             name: string;
         };
+        RatingDto: {
+            label: string;
+            /** Format: double */
+            score_100?: number | null;
+            /** @description `imdb` | `rotten_tomatoes` | `metacritic` | `tmdb` */
+            source: string;
+            url?: string | null;
+            /** @description Display value, e.g. `7.8/10`, `94%`. */
+            value: string;
+            /** Format: int64 */
+            votes?: number | null;
+        };
         RequestDto: {
             /** Format: int64 */
             approved_by?: number | null;
@@ -2163,6 +2313,32 @@ export interface components {
          * @enum {string}
          */
         RequestState: "requested" | "approved" | "searching" | "not_found" | "queued" | "downloading" | "stalled" | "importing" | "available" | "failed" | "declined";
+        ReviewDto: {
+            author: string;
+            avatar_url?: string | null;
+            /** @description Plain text / light markdown. */
+            content: string;
+            /** @description ISO-8601 timestamp. */
+            created_at: string;
+            /**
+             * Format: double
+             * @description 0..10
+             */
+            rating?: number | null;
+            /** @description `tmdb` | `trakt` */
+            source: string;
+            url?: string | null;
+        };
+        ReviewLinkDto: {
+            /** @description `imdb` | `rotten_tomatoes` | `letterboxd` | `tmdb` | `trakt` */
+            source: string;
+            url: string;
+        };
+        ReviewsDto: {
+            links: components["schemas"]["ReviewLinkDto"][];
+            ratings: components["schemas"]["RatingDto"][];
+            reviews: components["schemas"]["ReviewDto"][];
+        };
         /** @enum {string} */
         RoleDto: "admin" | "user";
         RootFolderDto: {
@@ -3881,6 +4057,25 @@ export interface operations {
             };
         };
     };
+    list_downloads: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadDto"][];
+                };
+            };
+        };
+    };
     events: {
         parameters: {
             query?: {
@@ -4744,6 +4939,45 @@ export interface operations {
             };
         };
     };
+    get_person: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description TMDB person id */
+                tmdb_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description TMDB not configured */
+            424: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     decide_playback: {
         parameters: {
             query?: never;
@@ -5060,6 +5294,47 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_reviews: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description movie | tv */
+                media: string;
+                /** @description TMDB id */
+                tmdb_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewsDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description TMDB not configured */
+            424: {
                 headers: {
                     [name: string]: unknown;
                 };

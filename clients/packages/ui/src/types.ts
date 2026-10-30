@@ -42,6 +42,8 @@ export interface CastMember {
   name: string;
   character?: string | null;
   photo_url?: string | null;
+  /** TMDB person id → `/person/{id}` (absent for unmatched/NFO-only cast). */
+  person_tmdb_id?: number | null;
 }
 
 export interface VideoStreamInfo {

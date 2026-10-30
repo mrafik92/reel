@@ -103,7 +103,9 @@ export function moveFocus(dir: Direction, opts: { repeat?: boolean } = {}): bool
   const scope = activeScope();
   const cur = document.activeElement as HTMLElement | null;
   if (!cur || cur === document.body || !scope.contains(cur) || !isVisible(cur)) {
-    return focusFirst(scope);
+    // Lost focus (content re-rendered): resume in the page, not the side rail.
+    const main = scope === document.body ? document.querySelector("main") : null;
+    return (main && focusFirst(main)) || focusFirst(scope);
   }
   const target = findNext(cur, dir, scope);
   if (!target) return false;

@@ -7,6 +7,7 @@ import type {
   CreateNotification, CreateRequest, CreateUser, DecideRequest, DecideResponse, DiscoverCard, DiscoverDetail,
   DiscoverList, DiscoverPage, DownloadClient, HwAccelStatus, InviteDto, InviteInfo, LoginResponse, Me, MediaType,
   NotificationTarget, PatchUser, ProgressDto, RequestDto, RequestState, SetupStatus, UpdateArrServer, UserDto,
+  DiscoverDetailWithCast, PersonDetail, Reviews, DownloadItem,
 } from "./types";
 
 export { ApiError, getToken, setToken, onUnauthorized } from "./http";
@@ -55,7 +56,13 @@ export interface Api {
   // Discover & requests
   discover(list: DiscoverList, media?: "movie" | "tv" | "all", page?: number): Promise<DiscoverPage>;
   discoverSearch(q: string, media?: "movie" | "tv" | "all"): Promise<DiscoverCard[]>;
-  discoverDetail(media: MediaType, tmdbId: number): Promise<DiscoverDetail>;
+  discoverDetail(media: MediaType, tmdbId: number): Promise<DiscoverDetailWithCast>;
+  /** Person + filmography (newest first), each credit with availability. */
+  person(tmdbId: number): Promise<PersonDetail>;
+  /** Ratings (IMDb/RT/Metacritic/TMDB), reviews, external links. */
+  reviews(media: MediaType, tmdbId: number): Promise<Reviews>;
+  /** All Radarr/Sonarr queue activity. */
+  downloads(): Promise<DownloadItem[]>;
   requests(o?: { status?: RequestState; limit?: number; offset?: number }): Promise<RequestDto[]>;
   activeRequests(): Promise<ProgressDto[]>;
   createRequest(b: CreateRequest): Promise<RequestDto>;
@@ -124,6 +131,9 @@ const httpApi: Api = {
   discover: (list, media = "all", page = 1) => http.get(`/discover/${list}`, { media, page }),
   discoverSearch: (q, media = "all") => http.get("/discover/search", { q, media }),
   discoverDetail: (media, id) => http.get(`/discover/${media}/${id}`),
+  person: (id) => http.get(`/people/${id}`),
+  reviews: (media, id) => http.get(`/reviews/${media}/${id}`),
+  downloads: () => http.get("/downloads"),
   requests: (o = {}) => http.get("/requests", { status: o.status, limit: o.limit, offset: o.offset }),
   activeRequests: () => http.get("/requests/active"),
   createRequest: (b) => http.post("/requests", b),
@@ -184,6 +194,7 @@ export function invalidate(prefix = ""): void {
 const READS: Partial<Record<keyof Api, number>> = {
   libraries: TTL, libraryItems: TTL, item: TTL, children: TTL, home: TTL, search: TTL,
   discover: 5 * 60_000, discoverDetail: 5 * 60_000, discoverSearch: 60_000,
+  person: 10 * 60_000, reviews: 30 * 60_000,
 };
 
 function wrap(): Api {

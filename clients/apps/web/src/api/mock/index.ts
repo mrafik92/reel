@@ -8,6 +8,8 @@ import type {
 } from "../types";
 import { buildDb, detail, home, importTitle, tmdbIndex, SAMPLE_VIDEO } from "./fixtures";
 import { buildTmdb, type TmdbEntry } from "./discover";
+import { castOfTmdb, createQueue, mockPerson, mockReviews } from "./extras";
+import type { DownloadItem } from "../types";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const latency = () => sleep(120 + Math.random() * 220);
@@ -128,6 +130,32 @@ export function createMockApi(): MockApi {
     });
   }, 500);
 
+  // Radarr/Sonarr queue: Reel's own requests plus unrelated arr activity.
+  const queue = createQueue(db);
+  const downloadList = (): DownloadItem[] => {
+    const fromRequests: DownloadItem[] = [];
+    sims.forEach((s) => {
+      const st = s.req.status;
+      if (st !== "queued" && st !== "downloading" && st !== "stalled" && st !== "importing" && st !== "failed") return;
+      const size = 3.8e9;
+      const speed = st === "downloading" ? Math.round(9e6 + Math.sin(s.t / 3) * 3e6) : null;
+      fromRequests.push({
+        id: `${s.req.media_type === "tv" ? 2 : 1}:${5000 + s.req.id}`, arr_server_id: s.req.media_type === "tv" ? 2 : 1, arr_name: s.req.media_type === "tv" ? "Sonarr" : "Radarr",
+        media_type: s.req.media_type, title: s.req.title ?? "", tmdb_id: s.req.tmdb_id, state: st, progress: s.progress,
+        size_bytes: size, sizeleft_bytes: Math.round(size * (1 - s.progress)), speed_bps: speed,
+        eta_seconds: speed ? Math.round((size * (1 - s.progress)) / speed) : null, request_id: s.req.id, poster_url: s.req.poster_url,
+        release_title: `${(s.req.title ?? "").replace(/\s+/g, ".")}.2160p.WEB-DL.DDP5.1.HEVC-GRP`,
+        season: s.req.media_type === "tv" ? 1 : null, episode: s.req.media_type === "tv" ? 1 : null,
+      });
+    });
+    return fromRequests.concat(queue.list());
+  };
+  setInterval(() => queue.tick(), 1000);
+  setInterval(() => {
+    const items = downloadList();
+    if (items.length) handlers.forEach((h) => h({ type: "downloads", items } as unknown as ReelEvent));
+  }, 2000);
+
   const addRequest = (card: TmdbEntry, user: { id: number; name: string }, status: RequestState, extra: Partial<Sim> = {}) => {
     const req: RequestDto = {
       id: nextReq++, user_id: user.id, media_type: card.media_type, tmdb_id: card.tmdb_id, title: card.title,
@@ -158,7 +186,8 @@ export function createMockApi(): MockApi {
   const cardOf = (c: TmdbEntry): DiscoverCard => {
     const sim = Array.from(sims.values()).find((s) => s.req.tmdb_id === c.tmdb_id);
     const { genres: _g, runtime_minutes: _r, seasons: _s, lists: _l, ...card } = c;
-    return { ...card, progress: sim ? progressDto(sim) : null };
+    const lib = tmdbIndex(db).get(c.tmdb_id);
+    return { ...card, progress: sim ? progressDto(sim) : null, ...(lib ? { library_item_id: lib } : {}) };
   };
 
   // ---- Admin fixtures ----------------------------------------------------------
@@ -352,6 +381,7 @@ export function createMockApi(): MockApi {
           hits.push({
             tmdb_id: r.tmdb_id, media_type: r.summary.kind === "show" ? "tv" : "movie", title: r.summary.title, year: r.summary.year,
             poster_url: r.summary.poster_url, backdrop_url: r.summary.backdrop_url, overview: r.overview, status: idx.has(r.tmdb_id) ? "available" : "none",
+            library_item_id: idx.get(r.tmdb_id),
             vote_average: r.rating ?? null, progress: null,
           });
         }
@@ -361,13 +391,28 @@ export function createMockApi(): MockApi {
     async discoverDetail(media, tid) {
       await latency();
       const c = tmdb.find((x) => x.tmdb_id === tid && x.media_type === media);
-      if (c) return { card: cardOf(c), genres: c.genres, runtime_minutes: c.runtime_minutes, seasons: c.seasons };
+      if (c) return { card: cardOf(c), genres: c.genres, runtime_minutes: c.runtime_minutes, seasons: c.seasons, cast: castOfTmdb(c) };
       const lib = Array.from(db.byId.values()).find((r) => r.tmdb_id === tid);
       if (!lib) throw new ApiError(404, "Not found on TMDB");
       return {
-        card: { tmdb_id: tid, media_type: media, title: lib.summary.title, year: lib.summary.year, poster_url: lib.summary.poster_url, backdrop_url: lib.summary.backdrop_url, overview: lib.overview, status: "available", vote_average: lib.rating ?? null, progress: null },
+        card: { tmdb_id: tid, media_type: media, title: lib.summary.title, year: lib.summary.year, poster_url: lib.summary.poster_url, backdrop_url: lib.summary.backdrop_url, overview: lib.overview, status: "available", vote_average: lib.rating ?? null, progress: null, library_item_id: lib.summary.id },
         genres: lib.genres, runtime_minutes: lib.runtime_s ? Math.round(lib.runtime_s / 60) : null, seasons: lib.childIds.map((_c, i) => i + 1),
+        cast: lib.cast,
       };
+    },
+    async person(pid) {
+      await latency();
+      return need(mockPerson(db, tmdb, pid, cardOf), "Person");
+    },
+    async reviews(media, tid) {
+      await sleep(250 + Math.random() * 300);
+      const lib = Array.from(db.byId.values()).find((r) => r.tmdb_id === tid);
+      const cat = tmdb.find((x) => x.tmdb_id === tid);
+      return mockReviews(media, tid, lib?.rating ?? cat?.vote_average);
+    },
+    async downloads() {
+      await sleep(60);
+      return downloadList();
     },
     async requests(o = {}) {
       await latency();
