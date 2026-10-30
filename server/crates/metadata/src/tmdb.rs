@@ -315,6 +315,18 @@ impl CombinedCredit {
     }
 }
 
+/// Entry of `/search/person`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PersonResult {
+    pub id: i64,
+    #[serde(default)]
+    pub name: String,
+    pub profile_path: Option<String>,
+    pub known_for_department: Option<String>,
+    #[serde(default)]
+    pub known_for: Vec<SearchResult>,
+}
+
 /// `/{movie|tv}/{id}/reviews`
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ReviewsPage {
@@ -382,9 +394,19 @@ impl TmdbClient {
         path: &str,
         params: &[(&str, String)],
     ) -> Result<T> {
+        self.get_cached_for(path, params, CACHE_TTL).await
+    }
+
+    /// Memoised GET with an explicit lifetime (entries are dropped lazily).
+    async fn get_cached_for<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        params: &[(&str, String)],
+        ttl: Duration,
+    ) -> Result<T> {
         let key = format!("{path}?{params:?}");
         if let Some(hit) = self.cache.get(&key) {
-            if hit.0.elapsed() < CACHE_TTL {
+            if hit.0.elapsed() < ttl {
                 if let Ok(v) = serde_json::from_value(hit.1.clone()) {
                     return Ok(v);
                 }
@@ -392,7 +414,8 @@ impl TmdbClient {
         }
         let v: serde_json::Value = self.get(path, params).await?;
         if self.cache.len() > 2000 {
-            self.cache.retain(|_, (t, _)| t.elapsed() < CACHE_TTL);
+            self.cache
+                .retain(|_, (t, _)| t.elapsed() < Duration::from_secs(86_400));
         }
         self.cache.insert(key, (Instant::now(), v.clone()));
         serde_json::from_value(v)
@@ -404,6 +427,48 @@ impl TmdbClient {
         self.get_cached(
             &format!("/person/{id}"),
             &[("append_to_response", "combined_credits,external_ids".into())],
+        )
+        .await
+    }
+
+    /// `/{movie|tv}/{id}/recommendations`, cached 24 h.
+    pub async fn recommendations(&self, tv: bool, id: i64) -> Result<Paged<SearchResult>> {
+        let kind = if tv { "tv" } else { "movie" };
+        self.get_cached_for(
+            &format!("/{kind}/{id}/recommendations"),
+            &[],
+            Duration::from_secs(86_400),
+        )
+        .await
+    }
+
+    /// `/{movie|tv}/{id}/similar`, cached 24 h.
+    pub async fn similar(&self, tv: bool, id: i64) -> Result<Paged<SearchResult>> {
+        let kind = if tv { "tv" } else { "movie" };
+        self.get_cached_for(
+            &format!("/{kind}/{id}/similar"),
+            &[],
+            Duration::from_secs(86_400),
+        )
+        .await
+    }
+
+    /// Search movies (`tv = false`) or TV, cached 10 min (typing-friendly).
+    pub async fn search_cached(&self, tv: bool, query: &str) -> Result<Paged<SearchResult>> {
+        self.get_cached_for(
+            if tv { "/search/tv" } else { "/search/movie" },
+            &[("query", query.to_string())],
+            Duration::from_secs(600),
+        )
+        .await
+    }
+
+    /// People search, cached 10 min.
+    pub async fn search_person(&self, query: &str) -> Result<Paged<PersonResult>> {
+        self.get_cached_for(
+            "/search/person",
+            &[("query", query.to_string())],
+            Duration::from_secs(600),
         )
         .await
     }

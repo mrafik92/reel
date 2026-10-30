@@ -1,6 +1,7 @@
 //! API: axum routes, OpenAPI, WebSocket; backs the `reel-server` binary.
 
 pub mod auth;
+mod browse;
 pub mod dto;
 pub mod enrich;
 pub mod error;
@@ -522,6 +523,10 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(requests::approve_request))
         .routes(routes!(requests::decline_request))
         .routes(routes!(requests::retry_request))
+        .routes(routes!(browse::list_genres))
+        .routes(routes!(browse::browse_lanes))
+        .routes(routes!(browse::pick))
+        .routes(routes!(browse::search_all))
         .routes(routes!(extras::get_person))
         .routes(routes!(extras::get_reviews))
         .routes(routes!(extras::list_downloads))

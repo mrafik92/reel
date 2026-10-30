@@ -106,6 +106,15 @@ pub struct ItemSummary {
     pub played: bool,
     /// Unix epoch seconds.
     pub added_at: i64,
+    /// Community rating 0–10 (list endpoints only; see `ItemDetail.rating` for the detail view).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<f64>,
+    /// Runtime in seconds (list endpoints only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_s: Option<i64>,
+    /// Genre names (list endpoints only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genres: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

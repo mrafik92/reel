@@ -1570,6 +1570,52 @@
         }
       }
     },
+    "/api/v1/browse/lanes": {
+      "get": {
+        "summary": "Personalised browse lanes (per user: watch state; cached TMDB recommendations).",
+        "operationId": "browse_lanes",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "query",
+            "description": "Library to build lanes for (default: the first library you can see).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Lane"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/direct/{file_id}": {
       "get": {
         "summary": "Serve the original file with HTTP Range support.",
@@ -1895,6 +1941,52 @@
             "description": "WebSocket upgrade; frames are JSON ServerEvent"
           },
           "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/genres": {
+      "get": {
+        "summary": "Genres with item counts, most common first.",
+        "operationId": "list_genres",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "query",
+            "description": "Restrict to one library (default: every library you can see).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GenreCount"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -2895,7 +2987,7 @@
     },
     "/api/v1/libraries/{id}/items": {
       "get": {
-        "summary": "Top-level items (movies or shows) of a library, keyset-paginated.",
+        "summary": "Top-level items (movies or shows) of a library, keyset-paginated, with optional filters.",
         "operationId": "library_items",
         "parameters": [
           {
@@ -2910,9 +3002,9 @@
           },
           {
             "name": "sort",
-            "in": "query",
-            "description": "`title` (default, A→Z), `added` (newest first) or `year` (newest first).",
-            "required": false,
+            "in": "path",
+            "description": "`title` (default, A→Z), `added` (newest first), `year` (newest first), `rating` (best\nfirst), `runtime` (shortest first) or `random` (stable for a given `seed`).",
+            "required": true,
             "schema": {
               "type": [
                 "string",
@@ -2922,9 +3014,9 @@
           },
           {
             "name": "cursor",
-            "in": "query",
+            "in": "path",
             "description": "Opaque cursor from a previous page's `next_cursor`.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": [
                 "string",
@@ -2934,9 +3026,98 @@
           },
           {
             "name": "limit",
-            "in": "query",
+            "in": "path",
             "description": "Page size (default 50, max 200).",
-            "required": false,
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "genre",
+            "in": "path",
+            "description": "Genre name; repeat the parameter or use a comma list. All given genres must match.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "year_from",
+            "in": "path",
+            "description": "Earliest release year.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "year_to",
+            "in": "path",
+            "description": "Latest release year.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "min_rating",
+            "in": "path",
+            "description": "Minimum rating (0–10).",
+            "required": true,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "max_runtime_min",
+            "in": "path",
+            "description": "Maximum runtime in minutes.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "unwatched",
+            "in": "path",
+            "description": "Only items the current user has not (fully) watched.",
+            "required": true,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "seed",
+            "in": "path",
+            "description": "Seed for `sort=random` (integer; same seed = same order, so pagination is stable).",
+            "required": true,
             "schema": {
               "type": [
                 "integer",
@@ -3175,6 +3356,84 @@
           },
           "424": {
             "description": "TMDB not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pick": {
+      "get": {
+        "summary": "One random movie/show matching the filters (\"Surprise me\").",
+        "operationId": "pick",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "query",
+            "description": "Restrict to one library",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "genre",
+            "in": "query",
+            "description": "Genre(s), comma list or repeated",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "max_runtime_min",
+            "in": "query",
+            "description": "Maximum runtime in minutes",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "min_rating",
+            "in": "query",
+            "description": "Minimum rating 0-10",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "unwatched",
+            "in": "query",
+            "description": "Only unwatched",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing matches",
             "content": {
               "application/json": {
                 "schema": {
@@ -3731,6 +3990,51 @@
                   "items": {
                     "$ref": "#/components/schemas/ItemSummary"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/search/all": {
+      "get": {
+        "summary": "One search box for everything: your library (titles and cast), episodes, people and TMDB.",
+        "operationId": "search_all",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search text.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max library results (default 20, max 100).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchAll"
                 }
               }
             }
@@ -5843,6 +6147,23 @@
           }
         }
       },
+      "GenreCount": {
+        "type": "object",
+        "required": [
+          "name",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Movies/shows (top-level items) with this genre."
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "Hdr": {
         "type": "string",
         "enum": [
@@ -6430,6 +6751,16 @@
             ],
             "format": "int64"
           },
+          "genres": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Genre names (list endpoints only)."
+          },
           "id": {
             "type": "integer",
             "format": "int64"
@@ -6461,6 +6792,22 @@
             "format": "double",
             "description": "Watch progress 0..1 (movies/episodes with a saved position)."
           },
+          "rating": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Community rating 0–10 (list endpoints only; see `ItemDetail.rating` for the detail view)."
+          },
+          "runtime_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Runtime in seconds (list endpoints only)."
+          },
           "season_no": {
             "type": [
               "integer",
@@ -6479,6 +6826,60 @@
             "format": "int64"
           }
         }
+      },
+      "Lane": {
+        "type": "object",
+        "required": [
+          "key",
+          "title",
+          "kind",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemSummary"
+            },
+            "description": "At most 20 items."
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LaneKind"
+          },
+          "see_all": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SeeAll"
+              }
+            ]
+          },
+          "subtitle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "LaneKind": {
+        "type": "string",
+        "enum": [
+          "because_you_watched",
+          "top_unwatched",
+          "short",
+          "new",
+          "genre",
+          "rediscover"
+        ]
       },
       "Library": {
         "type": "object",
@@ -7044,6 +7445,48 @@
           }
         }
       },
+      "PersonHit": {
+        "type": "object",
+        "required": [
+          "tmdb_id",
+          "name",
+          "known_for",
+          "in_library_count"
+        ],
+        "properties": {
+          "in_library_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Movies/shows in your library they are credited on."
+          },
+          "known_for": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Titles this person is known for (library titles for local matches)."
+          },
+          "known_for_department": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "photo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tmdb_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "PlaybackDecision": {
         "type": "object",
         "required": [
@@ -7565,6 +8008,62 @@
           },
           "path": {
             "type": "string"
+          }
+        }
+      },
+      "SearchAll": {
+        "type": "object",
+        "required": [
+          "library",
+          "episodes",
+          "people",
+          "discover"
+        ],
+        "properties": {
+          "discover": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscoverCardDto"
+            },
+            "description": "TMDB movies/shows that are not in your library (status/progress as in discovery)."
+          },
+          "episodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemSummary"
+            },
+            "description": "Episode title matches (≤ 10)."
+          },
+          "library": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemSummary"
+            },
+            "description": "Movies and shows: title matches first, then cast/crew-name matches."
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonHit"
+            },
+            "description": "Library cast/crew merged with TMDB people."
+          }
+        }
+      },
+      "SeeAll": {
+        "type": "object",
+        "required": [
+          "library_id",
+          "query"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "query": {
+            "type": "string",
+            "description": "Query string for `GET /libraries/{library_id}/items`."
           }
         }
       },

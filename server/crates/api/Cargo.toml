@@ -37,6 +37,7 @@ utoipa-axum.workspace = true
 sqlx.workspace = true
 tower.workspace = true
 base64 = "0.22"
+form_urlencoded = "1"
 async-trait = "0.1"
 
 futures-util = "0.3"

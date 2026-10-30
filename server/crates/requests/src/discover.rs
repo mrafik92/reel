@@ -229,24 +229,62 @@ impl Discovery {
 
     /// Search movies and TV (or one type), most popular first.
     pub async fn search(&self, query: &str, media: Option<MediaType>) -> Result<Vec<DiscoverCard>> {
+        self.search_impl(query, media, false).await
+    }
+
+    /// [`Self::search`] with the TMDB responses cached for 10 minutes (as-you-type search).
+    pub async fn search_cached(
+        &self,
+        query: &str,
+        media: Option<MediaType>,
+    ) -> Result<Vec<DiscoverCard>> {
+        self.search_impl(query, media, true).await
+    }
+
+    /// TMDB people search (cached 10 min).
+    pub async fn search_people(
+        &self,
+        query: &str,
+    ) -> Result<Vec<reel_metadata::tmdb::PersonResult>> {
+        Ok(self.tmdb()?.search_person(query).await?.results)
+    }
+
+    async fn search_impl(
+        &self,
+        query: &str,
+        media: Option<MediaType>,
+        cached: bool,
+    ) -> Result<Vec<DiscoverCard>> {
         let t = self.tmdb()?;
         let mut all: Vec<(MediaType, SearchResult)> = vec![];
         if media != Some(MediaType::Tv) {
             all.extend(
-                t.search_movie(query, None)
-                    .await?
-                    .results
-                    .into_iter()
-                    .map(|r| (MediaType::Movie, r)),
+                async {
+                    if cached {
+                        t.search_cached(false, query).await
+                    } else {
+                        t.search_movie(query, None).await
+                    }
+                }
+                .await?
+                .results
+                .into_iter()
+                .map(|r| (MediaType::Movie, r)),
             );
         }
         if media != Some(MediaType::Movie) {
             all.extend(
-                t.search_tv(query, None)
-                    .await?
-                    .results
-                    .into_iter()
-                    .map(|r| (MediaType::Tv, r)),
+                async {
+                    if cached {
+                        t.search_cached(true, query).await
+                    } else {
+                        t.search_tv(query, None).await
+                    }
+                }
+                .await?
+                .results
+                .into_iter()
+                .map(|r| (MediaType::Tv, r)),
             );
         }
         all.sort_by(|a, b| {

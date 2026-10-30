@@ -3,7 +3,7 @@
 use axum::{
     Json,
     body::Body,
-    extract::{Path, Query, Request, State},
+    extract::{Path, Query, RawQuery, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -31,23 +31,31 @@ const IMG_TTL: i64 = 2 * 86_400;
 const IMG_QUANTUM: i64 = 86_400;
 
 /// Columns + joins producing an [`ItemSummary`] (see [`summary_from_row`]) for user `uid`.
-fn summary_select(uid: i64) -> String {
+/// SQL expression: 1 if user `uid` has watched item `i` (every episode, for shows/seasons).
+pub(crate) fn played_expr(uid: i64) -> String {
     format!(
-        "SELECT i.id, i.kind, i.title, i.year, i.poster, i.backdrop, \
-    i.season_no, i.episode_no, i.parent_id, i.added_at, w.position_s, \
-    CASE WHEN i.kind IN ('show','season') THEN COALESCE((SELECT count(*) > 0 AND \
+        "CASE WHEN i.kind IN ('show','season') THEN COALESCE((SELECT count(*) > 0 AND \
         sum(CASE WHEN COALESCE(cw.played, 0) = 1 THEN 0 ELSE 1 END) = 0 \
         FROM media_items c LEFT JOIN watch_state cw ON cw.item_id = c.id AND cw.user_id = {uid} \
         WHERE c.kind = 'episode' AND (c.parent_id = i.id OR c.parent_id IN \
             (SELECT id FROM media_items WHERE parent_id = i.id))), 0) \
-        ELSE COALESCE(w.played, 0) END AS played, \
-    CAST(COALESCE(i.runtime_s, (SELECT f.duration_s FROM media_files f WHERE f.item_id = i.id \
-        OR f.id IN (SELECT file_id FROM media_file_links WHERE item_id = i.id) \
-        ORDER BY f.part_no, f.id LIMIT 1)) AS REAL) AS dur"
+        ELSE COALESCE(w.played, 0) END"
     )
 }
 
-fn summary_from(uid: i64) -> String {
+pub(crate) fn summary_select(uid: i64) -> String {
+    format!(
+        "SELECT i.id, i.kind, i.title, i.year, i.poster, i.backdrop, \
+    i.season_no, i.episode_no, i.parent_id, i.added_at, w.position_s, i.rating AS s_rating, \
+    {} AS played, \
+    CAST(COALESCE(i.runtime_s, (SELECT f.duration_s FROM media_files f WHERE f.item_id = i.id \
+        OR f.id IN (SELECT file_id FROM media_file_links WHERE item_id = i.id) \
+        ORDER BY f.part_no, f.id LIMIT 1)) AS REAL) AS dur",
+        played_expr(uid)
+    )
+}
+
+pub(crate) fn summary_from(uid: i64) -> String {
     format!(
         " FROM media_items i LEFT JOIN watch_state w \
     ON w.item_id = i.id AND w.user_id = {uid}"
@@ -64,7 +72,7 @@ pub(crate) fn image_url(sg: &reel_auth::UrlSigner, kind: &str, id: i64, w: u32) 
     )
 }
 
-fn summary_from_row(r: &SqliteRow, sg: &reel_auth::UrlSigner) -> ItemSummary {
+pub(crate) fn summary_from_row(r: &SqliteRow, sg: &reel_auth::UrlSigner) -> ItemSummary {
     let id: i64 = r.get("id");
     let poster: Option<String> = r.get("poster");
     let backdrop: Option<String> = r.get("backdrop");
@@ -87,7 +95,56 @@ fn summary_from_row(r: &SqliteRow, sg: &reel_auth::UrlSigner) -> ItemSummary {
         progress,
         played: r.get::<i64, _>("played") != 0,
         added_at: r.get("added_at"),
+        rating: None,
+        runtime_s: None,
+        genres: None,
     }
+}
+
+/// Summaries for list endpoints: adds `rating`, `runtime_s` and `genres` (one batched genre query
+/// for the whole page).
+pub(crate) async fn summaries(
+    st: &AppState,
+    rows: &[SqliteRow],
+    sg: &reel_auth::UrlSigner,
+) -> ApiResult<Vec<ItemSummary>> {
+    let mut out: Vec<ItemSummary> = rows
+        .iter()
+        .map(|r| {
+            let mut s = summary_from_row(r, sg);
+            s.rating = r.get::<Option<f64>, _>("s_rating").filter(|x| *x > 0.0);
+            s.runtime_s = r
+                .get::<Option<f64>, _>("dur")
+                .filter(|d| *d > 0.0)
+                .map(|d| d.round() as i64);
+            s
+        })
+        .collect();
+    attach_genres(st, &mut out).await?;
+    Ok(out)
+}
+
+pub(crate) async fn attach_genres(st: &AppState, items: &mut [ItemSummary]) -> ApiResult<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let ids = serde_json::to_string(&items.iter().map(|i| i.id).collect::<Vec<_>>())
+        .unwrap_or_else(|_| "[]".into());
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT ig.item_id, g.name FROM item_genres ig JOIN genres g ON g.id = ig.genre_id \
+         WHERE ig.item_id IN (SELECT value FROM json_each(?)) ORDER BY g.name",
+    )
+    .bind(ids)
+    .fetch_all(&st.db)
+    .await?;
+    let mut by: std::collections::HashMap<i64, Vec<String>> = Default::default();
+    for (id, g) in rows {
+        by.entry(id).or_default().push(g);
+    }
+    for i in items {
+        i.genres = Some(by.remove(&i.id).unwrap_or_default());
+    }
+    Ok(())
 }
 
 // ───────────────────────── libraries ─────────────────────────
@@ -178,13 +235,29 @@ pub async fn scan_library(
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
+#[allow(dead_code)]
 pub struct ItemsQuery {
-    /// `title` (default, A→Z), `added` (newest first) or `year` (newest first).
+    /// `title` (default, A→Z), `added` (newest first), `year` (newest first), `rating` (best
+    /// first), `runtime` (shortest first) or `random` (stable for a given `seed`).
     pub sort: Option<String>,
     /// Opaque cursor from a previous page's `next_cursor`.
     pub cursor: Option<String>,
     /// Page size (default 50, max 200).
     pub limit: Option<i64>,
+    /// Genre name; repeat the parameter or use a comma list. All given genres must match.
+    pub genre: Option<String>,
+    /// Earliest release year.
+    pub year_from: Option<i64>,
+    /// Latest release year.
+    pub year_to: Option<i64>,
+    /// Minimum rating (0–10).
+    pub min_rating: Option<f64>,
+    /// Maximum runtime in minutes.
+    pub max_runtime_min: Option<i64>,
+    /// Only items the current user has not (fully) watched.
+    pub unwatched: Option<bool>,
+    /// Seed for `sort=random` (integer; same seed = same order, so pagination is stable).
+    pub seed: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -193,7 +266,7 @@ struct Cursor {
     id: i64,
 }
 
-/// Top-level items (movies or shows) of a library, keyset-paginated.
+/// Top-level items (movies or shows) of a library, keyset-paginated, with optional filters.
 #[utoipa::path(
     get,
     path = "/libraries/{id}/items",
@@ -204,8 +277,17 @@ pub async fn library_items(
     State(st): State<AppState>,
     u: AuthUser,
     Path(id): Path<i64>,
-    Query(q): Query<ItemsQuery>,
+    RawQuery(raw): RawQuery,
 ) -> ApiResult<Json<ItemPage>> {
+    let pairs = crate::browse::parse_pairs(raw.as_deref());
+    let one = |k: &str| {
+        pairs
+            .iter()
+            .rev()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.clone())
+    };
+    let filters = crate::browse::Filters::from_pairs(&pairs)?;
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM libraries WHERE id = ?")
         .bind(id)
         .fetch_optional(&st.db)
@@ -217,15 +299,44 @@ pub async fn library_items(
         summary_from(u.id()),
         st.signer(u.id()),
     );
-    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let limit = one("limit")
+        .and_then(|l| l.parse::<i64>().ok())
+        .unwrap_or(DEFAULT_LIMIT)
+        .clamp(1, MAX_LIMIT);
+    let seed: i64 = match one("seed") {
+        Some(s) => s
+            .parse()
+            .map_err(|_| ApiError::BadRequest("seed must be an integer".into()))?,
+        None => 0,
+    };
+    // multiplier per seed → a different permutation for every seed (mod a prime)
+    let mult: i64 = ((seed.rem_euclid(1_000_003) + 1) * 2_654_435_761) % 4_294_967_291;
     // (key expression, descending?, text key?)
-    let (key, desc, text) = match q.sort.as_deref().unwrap_or("title") {
-        "title" => ("COALESCE(i.sort_title, lower(i.title))", false, true),
-        "added" => ("i.added_at", true, false),
-        "year" => ("COALESCE(i.year, 0)", true, false),
+    let (key, desc, text) = match one("sort").as_deref().unwrap_or("title") {
+        "title" => (
+            "COALESCE(i.sort_title, lower(i.title))".to_string(),
+            false,
+            true,
+        ),
+        "added" => ("i.added_at".to_string(), true, false),
+        "year" => ("COALESCE(i.year, 0)".to_string(), true, false),
+        "rating" => (
+            "CAST(COALESCE(i.rating, 0) * 100 AS INTEGER)".to_string(),
+            true,
+            false,
+        ),
+        "runtime" => (
+            format!(
+                "COALESCE(CAST({} AS INTEGER), 999999999)",
+                crate::browse::RUNTIME_EXPR
+            ),
+            false,
+            false,
+        ),
+        "random" => (format!("((i.id * {mult}) % 4294967291)"), false, false),
         other => return Err(ApiError::BadRequest(format!("unknown sort '{other}'"))),
     };
-    let cursor = match q.cursor.as_deref() {
+    let cursor = match one("cursor").as_deref() {
         None | Some("") => None,
         Some(c) => Some(
             URL_SAFE_NO_PAD
@@ -238,15 +349,17 @@ pub async fn library_items(
     };
     let cmp = if desc { "<" } else { ">" };
     let dir = if desc { "DESC" } else { "ASC" };
+    let (fsql, fbinds) = filters.sql(u.id());
     let mut sql = format!(
         "{sel}, {key} AS sort_key{frm} \
-         WHERE i.library_id = ? AND i.kind IN ('movie','show')"
+         WHERE i.library_id = ? AND i.kind IN ('movie','show'){fsql}"
     );
     if cursor.is_some() {
         sql.push_str(&format!(" AND ({key} {cmp} ? OR ({key} = ? AND i.id > ?))"));
     }
     sql.push_str(&format!(" ORDER BY {key} {dir}, i.id ASC LIMIT ?"));
     let mut query = sqlx::query(&sql).bind(id);
+    query = crate::browse::bind_all(query, &fbinds);
     if let Some(c) = &cursor {
         query = if let Some(s) = c.k.as_str() {
             query.bind(s.to_string()).bind(s.to_string())
@@ -273,7 +386,7 @@ pub async fn library_items(
         None
     };
     Ok(Json(ItemPage {
-        items: rows.iter().map(|r| summary_from_row(r, &sg)).collect(),
+        items: summaries(&st, rows, &sg).await?,
         next_cursor,
     }))
 }
@@ -466,9 +579,7 @@ pub async fn item_children(
     .bind(id)
     .fetch_all(&st.db)
     .await?;
-    Ok(Json(
-        rows.iter().map(|r| summary_from_row(r, &sg)).collect(),
-    ))
+    Ok(Json(summaries(&st, &rows, &sg).await?))
 }
 
 // ───────────────────────── home / search ─────────────────────────
@@ -493,7 +604,7 @@ async fn recent_in(
         q = q.bind(l);
     }
     let rows = q.bind(ROW_LIMIT).fetch_all(&st.db).await?;
-    Ok(rows.iter().map(|r| summary_from_row(r, &sg)).collect())
+    summaries(st, &rows, &sg).await
 }
 
 /// Home screen: continue watching, recently added, and one row per visible library.
@@ -518,7 +629,7 @@ pub async fn home(State(st): State<AppState>, u: AuthUser) -> ApiResult<Json<Hom
     .bind(ROW_LIMIT)
     .fetch_all(&st.db)
     .await?;
-    let continue_watching = rows.iter().map(|r| summary_from_row(r, &sg)).collect();
+    let continue_watching = summaries(&st, &rows, &sg).await?;
     let libs: Vec<(i64, String)> = sqlx::query_as(&format!(
         "SELECT id, name FROM libraries WHERE {} ORDER BY id",
         vis_clause("id")
@@ -594,9 +705,7 @@ pub async fn search(
     .bind(q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT))
     .fetch_all(&st.db)
     .await?;
-    Ok(Json(
-        rows.iter().map(|r| summary_from_row(r, &sg)).collect(),
-    ))
+    Ok(Json(summaries(&st, &rows, &sg).await?))
 }
 
 // ───────────────────────── images ─────────────────────────
