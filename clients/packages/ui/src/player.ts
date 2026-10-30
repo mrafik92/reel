@@ -10,6 +10,10 @@ export interface PlayerEventMap {
   pause: undefined;
   ended: undefined;
   buffering: boolean;
+  /** Fired once metadata is known. */
+  ready: { durationSec: number };
+  /** Furthest buffered position ahead of the playhead. */
+  buffered: { endSec: number };
   error: { message: string; fatal: boolean };
 }
 
@@ -53,6 +57,15 @@ export class HlsJsAdapter implements PlayerAdapter {
     v.addEventListener("ended", () => this.ev.emit("ended", undefined));
     v.addEventListener("waiting", () => this.ev.emit("buffering", true));
     v.addEventListener("playing", () => this.ev.emit("buffering", false));
+    v.addEventListener("loadedmetadata", () => this.ev.emit("ready", { durationSec: v.duration || 0 }));
+    v.addEventListener("progress", () => {
+      const b = v.buffered;
+      let end = 0;
+      for (let i = 0; i < b.length; i++) {
+        if (b.start(i) <= v.currentTime + 0.5) end = Math.max(end, b.end(i));
+      }
+      this.ev.emit("buffered", { endSec: end });
+    });
     v.addEventListener("error", () =>
       this.ev.emit("error", { message: v.error?.message ?? "media error", fatal: true }));
   }
@@ -62,8 +75,10 @@ export class HlsJsAdapter implements PlayerAdapter {
     this.hls = undefined;
     const v = this.video;
     const isHls = /\.m3u8(\?|$)/.test(url);
-    const { default: Hls } = await import("hls.js");
-    if (isHls && Hls.isSupported()) {
+    const nativeHls = isHls && v.canPlayType("application/vnd.apple.mpegurl") !== "";
+    // hls.js is only fetched for HLS on MSE browsers; direct play stays lean.
+    const Hls = isHls && !nativeHls ? (await import("hls.js")).default : undefined;
+    if (Hls && Hls.isSupported()) {
       const hls = new Hls({
         startPosition: opts.startPositionSec ?? -1,
         xhrSetup: opts.headers
@@ -76,8 +91,15 @@ export class HlsJsAdapter implements PlayerAdapter {
       hls.loadSource(url);
       hls.attachMedia(v);
     } else {
-      v.src = url; // direct play or native HLS (Safari)
-      if (opts.startPositionSec) v.currentTime = opts.startPositionSec;
+      v.src = url; // direct play or native HLS (Safari, TV browsers)
+      const start = opts.startPositionSec;
+      if (start) {
+        const seek = () => {
+          v.removeEventListener("loadedmetadata", seek);
+          v.currentTime = start;
+        };
+        v.addEventListener("loadedmetadata", seek);
+      }
     }
     if (opts.autoplay) await this.play();
   }

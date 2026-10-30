@@ -1,28 +1,37 @@
 import { render } from "solid-js/web";
-import { createResource, Show } from "solid-js";
-import { createReelClient } from "@reel/sdk";
-import { detectWebProfile } from "@reel/ui";
+import { lazy } from "solid-js";
+import { HashRouter, Route, Router } from "@solidjs/router";
+import "./styles/fonts.css";
+import "@reel/ui/src/styles/ui.css";
+import "./styles/app.css";
+import { HASH_ROUTING, TV } from "./lib/mode";
+import { Shell } from "./app/Shell";
+import Home from "./pages/Home";
+import Library from "./pages/Library";
+import Item from "./pages/Item";
 
-const client = createReelClient(import.meta.env.VITE_REEL_URL ?? "");
+const Player = lazy(() => import("./pages/Player"));
+const Search = lazy(() => import("./pages/Search"));
+const DevRings = lazy(() => import("./pages/DevRings"));
+const NotFound = lazy(() => import("./pages/NotFound"));
 
-function App() {
-  const [health] = createResource(async () => {
-    const { data, error } = await client.GET("/api/v1/health");
-    if (error || !data) throw new Error("server unreachable");
-    return data;
-  });
-  const profile = detectWebProfile();
+const root = document.documentElement;
+if (TV) root.classList.add("tv");
+
+function Routes() {
   return (
-    <main>
-      <h1>Reel</h1>
-      <Show when={!health.loading} fallback={<p>Checking server…</p>}>
-        <Show when={!health.error} fallback={<p>Server: offline</p>}>
-          <p>Server: {health()?.status} (v{health()?.version})</p>
-        </Show>
-      </Show>
-      <pre>{JSON.stringify(profile)}</pre>
-    </main>
+    <>
+      <Route path="/" component={Home} />
+      <Route path="/movies" component={() => <Library kind="movies" />} />
+      <Route path="/shows" component={() => <Library kind="shows" />} />
+      <Route path="/item/:id" component={Item} />
+      <Route path="/play/:id" component={Player} />
+      <Route path="/search" component={Search} />
+      <Route path="/dev/rings" component={DevRings} />
+      <Route path="*" component={NotFound} />
+    </>
   );
 }
 
-render(() => <App />, document.getElementById("root")!);
+const R = HASH_ROUTING ? HashRouter : Router;
+render(() => <R root={Shell}>{Routes()}</R>, document.getElementById("root")!);
