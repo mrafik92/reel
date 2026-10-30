@@ -12,6 +12,7 @@ const DownloadClients = lazy(() => import("./DownloadClients"));
 const Notifications = lazy(() => import("./Notifications"));
 const Sessions = lazy(() => import("./Sessions"));
 const Hardware = lazy(() => import("./Hardware"));
+const Iptv = lazy(() => import("./Iptv"));
 
 const SECTIONS: { id: string; label: string; icon: IconName; blurb: string }[] = [
   { id: "libraries", label: "Libraries", icon: "folder", blurb: "Folders Reel scans" },
@@ -19,6 +20,7 @@ const SECTIONS: { id: string; label: string; icon: IconName; blurb: string }[] =
   { id: "arr", label: "Radarr & Sonarr", icon: "server", blurb: "Where requests go" },
   { id: "downloads", label: "Download clients", icon: "download", blurb: "Speed, peers, ETA" },
   { id: "notifications", label: "Notifications", icon: "bell", blurb: "Discord, Telegram, webhooks" },
+  { id: "iptv", label: "Live TV", icon: "live", blurb: "IPTV providers, channels, guide" },
   { id: "sessions", label: "Now playing", icon: "activity", blurb: "Active streams" },
   { id: "hardware", label: "Transcoding", icon: "chip", blurb: "Hardware acceleration" },
 ];
@@ -58,6 +60,7 @@ export default function Admin(): JSX.Element {
               <Match when={section() === "notifications"}><Notifications /></Match>
               <Match when={section() === "sessions"}><Sessions /></Match>
               <Match when={section() === "hardware"}><Hardware /></Match>
+              <Match when={section() === "iptv"}><Iptv /></Match>
             </Switch>
           </div>
         </div>

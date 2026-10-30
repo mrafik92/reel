@@ -20,6 +20,8 @@ const Requests = lazy(() => import("./pages/Requests"));
 const Downloads = lazy(() => import("./pages/Downloads"));
 const Person = lazy(() => import("./pages/Person"));
 const Admin = lazy(() => import("./pages/admin/Admin"));
+const LiveTV = lazy(() => import("./pages/LiveTV"));
+const LiveGuide = lazy(() => import("./pages/LiveGuide"));
 const DevRings = lazy(() => import("./pages/DevRings"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
@@ -43,6 +45,8 @@ function Routes() {
       <Route path="/requests" component={Requests} />
       <Route path="/downloads" component={Downloads} />
       <Route path="/person/:id" component={Person} />
+      <Route path="/live" component={LiveTV} />
+      <Route path="/live/guide" component={LiveGuide} />
       <Route path="/admin/:section?" component={Admin} />
       <Route path="/dev/rings" component={DevRings} />
       <Route path="*" component={NotFound} />
