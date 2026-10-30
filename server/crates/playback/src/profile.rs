@@ -85,6 +85,7 @@ impl DeviceProfile {
             "web_safari" => Some(web_safari()),
             "webos" => Some(webos()),
             "tizen" => Some(tizen()),
+            "dlna" => Some(dlna()),
             "android_exoplayer" => Some(android_exoplayer()),
             "chromecast" => Some(chromecast()),
             "airplay" => Some(airplay()),
@@ -98,6 +99,7 @@ impl DeviceProfile {
             "web_safari",
             "webos",
             "tizen",
+            "dlna",
             "android_exoplayer",
             "chromecast",
             "airplay",
@@ -280,6 +282,18 @@ pub fn tizen() -> DeviceProfile {
         max_height: 2160,
         max_bitrate_kbps: None,
     }
+}
+
+/// DLNA/UPnP MediaRenderer on a TV (LG webOS, Samsung Tizen, Sony …): progressive MP4/MKV/TS with
+/// H.264 or HEVC and AAC/AC3/EAC3/MP3. Subtitles are offered as a WebVTT sidecar only.
+pub fn dlna() -> DeviceProfile {
+    let mut p = tizen();
+    p.name = "dlna".into();
+    p.video.retain(|c| c.codec == "h264" || c.codec == "hevc");
+    p.audio
+        .retain(|c| ["aac", "ac3", "eac3", "mp3"].contains(&c.codec.as_str()));
+    p.subtitles.text = strs(&["vtt"]);
+    p
 }
 
 /// Android / Android TV Media3 ExoPlayer.

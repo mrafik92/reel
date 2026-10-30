@@ -187,6 +187,28 @@ hop; the admin API then rejects such source URLs with an explanation. Only `http
 are accepted. Limitation: for HLS-style providers (`.m3u8`), ffmpeg fetches the segments itself; only
 the playlist URL is checked, but ffmpeg is restricted to network protocols (no `file:`/`concat:`).
 
+## 6b. Play on TV (DLNA)
+
+Reel finds UPnP/DLNA MediaRenderers (LG webOS, Samsung Tizen, Sony, ...) by SSDP every minute, or you
+add a TV by IP (`POST /api/v1/admin/cast/devices {"ip":"192.168.1.40"}`, probes Samsung `:9197/dmr`,
+LG `:1x99/`, ... and is remembered in `/data/cast_devices.json`).
+
+1. **Compose:** SSDP needs host networking: `docker compose -f docker-compose.yml -f docker-compose.host.yml up -d`.
+   (Without it, add the TVs by IP: that needs no multicast.)
+2. **`.env`:** `REEL_CAST_BASE_URL=http://<LAN ip of the Reel host>:8420`. The TV fetches the media from this
+   address, so it must be reachable from the TV (not a name the TV cannot resolve).
+3. **Firewall (Proxmox CT / host firewall that drops LAN egress except allowed IPs).** Allow from the Reel
+   host to each TV (`<tv ip>`):
+   - UDP 1900 out to multicast `239.255.255.250` (SSDP search) and UDP in from the TV (replies come from
+     the TV to a random high UDP port: allow established/related, or UDP from `<tv ip>`);
+   - TCP out to the TV's UPnP ports for the description and SOAP control: Samsung `9197` (also `7676`, `55000`
+     on some models), LG `1x99` (observed: `1990` / `1199`-`1999`; check with `nmap -p 1000-2000 <tv ip>`),
+     Sony `52323`. Open the one your TV uses (shown by the `location` of its SSDP answer);
+   - TCP **in** from the TV to Reel `8420` (the TV downloads the video, subtitles and HLS playlists from Reel).
+4. Per-TV quirks: Samsung gets the subtitle as `sec:CaptionInfoEx` (WebVTT). LG webOS ignores sidecar subtitles
+   over DLNA. Live channels are sent as raw MPEG-TS; library/VOD files direct when the TV can play the
+   container/codecs, otherwise as an HLS playlist.
+
 ## 7. Troubleshooting
 
 * `docker compose logs reel` — `RUST_LOG=debug` for more.

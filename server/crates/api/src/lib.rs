@@ -2,6 +2,7 @@
 
 pub mod auth;
 mod browse;
+pub mod cast;
 pub mod dto;
 pub mod enrich;
 pub mod error;
@@ -59,6 +60,8 @@ pub struct AppState {
     pub iptv: Arc<reel_iptv::IptvService>,
     /// Running VOD playbacks (provider URLs stay server-side).
     pub vod: Arc<vod::VodRuntime>,
+    /// DLNA renderers and running casts.
+    pub cast: Arc<cast::CastRuntime>,
     /// TMDB client (set by [`AppState::with_tmdb`]).
     pub tmdb: Option<reel_metadata::TmdbClient>,
     pub omdb: Option<reel_requests::reviews::OmdbClient>,
@@ -109,6 +112,7 @@ impl AppState {
         );
         Self {
             vod: Arc::default(),
+            cast: Arc::default(),
             tmdb: None,
             omdb: config
                 .omdb_api_key
@@ -563,6 +567,12 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(vod::vod_subs))
         .routes(routes!(prefs::get_preferences, prefs::put_preferences))
         .routes(routes!(prefs::cast_url))
+        .routes(routes!(cast::list_devices))
+        .routes(routes!(cast::add_device))
+        .routes(routes!(cast::play_on_device))
+        .routes(routes!(cast::get_session))
+        .routes(routes!(cast::control))
+        .routes(routes!(cast::set_volume))
         .routes(routes!(vod::vod_image_route))
         .routes(routes!(extras::get_person))
         .routes(routes!(extras::get_reviews))

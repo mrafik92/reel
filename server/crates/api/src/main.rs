@@ -23,6 +23,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(selected = hw.selected.name(), "hardware acceleration");
     let mut state = AppState::new(pool.clone(), config.clone()).with_hwaccel(hw);
     state.playback.spawn_reaper();
+    state.cast.spawn_discovery(state.config.data_dir.clone());
     // Stale rows from a previous run (sessions don't survive restarts).
     sqlx::query("DELETE FROM playback_sessions")
         .execute(&pool)

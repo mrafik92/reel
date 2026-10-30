@@ -257,6 +257,44 @@
         }
       }
     },
+    "/api/v1/admin/cast/devices": {
+      "post": {
+        "summary": "Add a TV by IP: probes the usual description URLs (Samsung `:9197/dmr`, LG `:1x99/`, …).\nThe device is remembered across restarts.",
+        "operationId": "add_device",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddDeviceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CastDeviceDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No renderer answered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/download-clients": {
       "get": {
         "summary": "List torrent clients (passwords never returned).",
@@ -1647,6 +1685,305 @@
             }
           },
           "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cast/devices": {
+      "get": {
+        "summary": "DLNA renderers (TVs) currently known: found by SSDP (refreshed every minute) or added by IP.",
+        "operationId": "list_devices",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CastDeviceDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cast/devices/{id}/play": {
+      "post": {
+        "summary": "Start something on a TV. Uses the TV-friendly `dlna` preset and absolute signed URLs on\n`cast_base_url`; provider-budget rules are those of the normal playback endpoints (same-user\nnewest wins, 429, admin 409 + `takeover`).",
+        "operationId": "play_on_device",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Device id from /cast/devices",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CastPlayRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CastPlayResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The TV rejected or did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cast/sessions/{id}": {
+      "get": {
+        "summary": "Poll the TV (GetTransportInfo + GetPositionInfo). A TV that went back to idle ends the cast and\nfrees its provider slot.",
+        "operationId": "get_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "cast_session_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CastSessionState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cast/sessions/{id}/volume": {
+      "post": {
+        "summary": "Set the TV volume (RenderingControl).",
+        "operationId": "set_volume",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "cast_session_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VolumeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cast/sessions/{id}/{action}": {
+      "post": {
+        "summary": "`play` | `pause` | `stop` | `seek` (body `{position_s}`). `stop` also releases the provider slot.",
+        "operationId": "control",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "cast_session_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "path",
+            "description": "play | pause | stop | seek",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "seek: {position_s}",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ControlBody"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
             "description": "",
             "content": {
               "application/json": {
@@ -5520,6 +5857,18 @@
           }
         }
       },
+      "AddDeviceRequest": {
+        "type": "object",
+        "required": [
+          "ip"
+        ],
+        "properties": {
+          "ip": {
+            "type": "string",
+            "description": "TV address: `192.168.1.40`, or `192.168.1.40:9197` to probe one port only."
+          }
+        }
+      },
       "AdminChannel": {
         "type": "object",
         "required": [
@@ -5958,6 +6307,60 @@
           "none"
         ]
       },
+      "CastDeviceDto": {
+        "type": "object",
+        "description": "A TV / speaker that can be cast to.",
+        "required": [
+          "id",
+          "name",
+          "ip",
+          "protocol",
+          "supports_volume",
+          "manual"
+        ],
+        "properties": {
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absolute icon URL on the device."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable id (derived from the device UDN)."
+          },
+          "ip": {
+            "type": "string"
+          },
+          "manual": {
+            "type": "boolean",
+            "description": "Added by IP rather than found by SSDP."
+          },
+          "manufacturer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string",
+            "description": "Always `dlna` here."
+          },
+          "supports_volume": {
+            "type": "boolean"
+          }
+        }
+      },
       "CastMember": {
         "type": "object",
         "required": [
@@ -5986,6 +6389,104 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "CastPlayRequest": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "audio_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "file_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Item: file id (or `file_id`). Vod: vod movie/episode id. Channel: channel id."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`item` (library file), `vod` (provider movie/episode) or `channel` (live TV)."
+          },
+          "start_s": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "subtitle_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "`-1` = no subtitles, omitted = automatic."
+          },
+          "takeover": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Admins only: take over a provider slot held by other users (answer to a 409)."
+          },
+          "vod_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Vod only: `movie` (default) or `episode`."
+          }
+        }
+      },
+      "CastPlayResponse": {
+        "type": "object",
+        "required": [
+          "cast_session_id"
+        ],
+        "properties": {
+          "cast_session_id": {
+            "type": "string"
+          }
+        }
+      },
+      "CastSessionState": {
+        "type": "object",
+        "required": [
+          "state",
+          "position_s"
+        ],
+        "properties": {
+          "duration_s": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "position_s": {
+            "type": "number",
+            "format": "double"
+          },
+          "state": {
+            "type": "string",
+            "description": "`playing` | `paused` | `buffering` | `stopped`"
           }
         }
       },
@@ -6258,6 +6759,19 @@
             ],
             "format": "int64",
             "description": "Channel number; `null` removes the custom number."
+          }
+        }
+      },
+      "ControlBody": {
+        "type": "object",
+        "properties": {
+          "position_s": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`seek` only: target position in seconds."
           }
         }
       },
@@ -10599,6 +11113,20 @@
             }
           }
         ]
+      },
+      "VolumeBody": {
+        "type": "object",
+        "required": [
+          "level"
+        ],
+        "properties": {
+          "level": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0–100",
+            "minimum": 0
+          }
+        }
       },
       "WebhookResult": {
         "type": "object",

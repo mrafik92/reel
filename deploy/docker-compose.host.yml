@@ -1,0 +1,18 @@
+# Host networking for DLNA "Play on TV".
+#
+# TVs answer SSDP (multicast M-SEARCH, UDP 1900) with unicast UDP to the sender's port. Behind
+# docker's NAT bridge neither the multicast request leaves on the LAN interface nor does the reply
+# find its way back, so discovery finds nothing. Host networking fixes that:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
+#
+# Reel then listens on the host's port 8420 directly (the `ports:` mapping is dropped). Set
+# REEL_CAST_BASE_URL=http://<host LAN ip>:8420 in .env. Needs Docker Compose >= 2.24 (`!reset`).
+# Not combinable with the `caddy` profile's `reel:8420` upstream unless Caddy also uses the host network.
+# (Alternative without host networking: skip SSDP and add each TV by IP:
+#  POST /api/v1/admin/cast/devices {"ip": "<tv ip>"} - only unicast TCP is needed then.)
+
+services:
+  reel:
+    network_mode: host
+    ports: !reset []

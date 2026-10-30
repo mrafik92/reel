@@ -4,6 +4,7 @@
 #   docker compose up -d      # → http://localhost:8420  (first visit: create the admin account)
 #
 # With HTTPS (Caddy, automatic Let's Encrypt):  docker compose --profile caddy up -d
+# DLNA "Play on TV" (SSDP discovery needs the host network):  -f docker-compose.yml -f docker-compose.host.yml
 # Without a GPU (or on macOS/Windows):          docker compose -f docker-compose.yml -f docker-compose.nogpu.yml up -d
 
 name: reel
@@ -30,6 +31,8 @@ services:
       REEL_WEBHOOK_SECRET: ${REEL_WEBHOOK_SECRET:-}
       # public URL used in invite links, e.g. https://reel.example.com
       REEL_PUBLIC_URL: ${REEL_PUBLIC_URL:-}
+      # LAN address TVs / Chromecasts use to fetch media, e.g. http://10.10.10.207:8420 (casting)
+      REEL_CAST_BASE_URL: ${REEL_CAST_BASE_URL:-}
       # set true when a reverse proxy (Caddy/nginx) is in front: per-IP rate limits use X-Forwarded-For
       REEL_TRUST_PROXY_HEADERS: ${REEL_TRUST_PROXY_HEADERS:-false}
       # SSRF hardening for server-side fetches of admin-supplied URLs (see README)
