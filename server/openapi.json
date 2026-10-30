@@ -5147,6 +5147,14 @@
               "null"
             ]
           },
+          "item_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Multi-episode files: the episode being watched (one of the file's `item_ids`); watch\nprogress is credited to it. Defaults to the file's first item."
+          },
           "preset": {
             "type": [
               "string",
@@ -5554,12 +5562,17 @@
         "type": "object",
         "required": [
           "video",
-          "audio"
+          "audio",
+          "encoder"
         ],
         "properties": {
           "audio": {
             "type": "string",
             "description": "`copy` | `aac` | `none`"
+          },
+          "encoder": {
+            "type": "string",
+            "description": "`copy`, or the video encoder backend (`vaapi`, `qsv`, `nvenc`, `videotoolbox`, `software`)."
           },
           "video": {
             "type": "string",
@@ -5621,6 +5634,7 @@
       "HubStatus": {
         "type": "object",
         "required": [
+          "transcode",
           "sources",
           "channels",
           "sessions"
@@ -5643,6 +5657,10 @@
             "items": {
               "$ref": "#/components/schemas/SourceUsage"
             }
+          },
+          "transcode": {
+            "$ref": "#/components/schemas/TranscodeStatus",
+            "description": "Video encoder used for IPTV transcodes (non-H.264 sources) and whether it fell back."
           }
         }
       },
@@ -6441,6 +6459,14 @@
           "id": {
             "type": "integer",
             "format": "int64"
+          },
+          "item_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Multi-episode files (`S01E02E03`): ids of every episode item stored in this file, in\nepisode order. Absent for ordinary files. Pass the episode being watched as `item_id` to\n`/playback/{file}/decide` so progress is credited to it."
           },
           "size": {
             "type": "integer",
@@ -7656,6 +7682,23 @@
               "type": "string"
             },
             "description": "Text formats the client can render natively: vtt, srt, ass."
+          }
+        }
+      },
+      "TranscodeStatus": {
+        "type": "object",
+        "required": [
+          "encoder",
+          "fell_back_to_software"
+        ],
+        "properties": {
+          "encoder": {
+            "type": "string",
+            "description": "Configured encoder backend: `vaapi`, `qsv`, `nvenc`, `videotoolbox` or `software`."
+          },
+          "fell_back_to_software": {
+            "type": "boolean",
+            "description": "The hardware encoder failed at runtime; software encoding is used instead."
           }
         }
       },

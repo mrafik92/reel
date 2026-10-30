@@ -56,6 +56,13 @@ pub struct Config {
     pub iptv_warm_favorites: usize,
     /// Days of EPG kept ahead of now (1 day is kept behind).
     pub iptv_epg_days: u32,
+    /// Server-side fetches of admin-supplied URLs (IPTV playlists, EPG, Xtream APIs, stream
+    /// upstreams) may reach private/LAN addresses. Default true: these are admin-trusted and often
+    /// LAN-hosted. Set false to block loopback/private/link-local targets (SSRF hardening).
+    pub allow_private_fetch: bool,
+    /// Channel logos come from third-party playlists, so private/loopback targets are blocked
+    /// unless this is true (default false).
+    pub allow_private_logo_fetch: bool,
     /// Libraries created on boot if no library with the same name exists.
     #[serde(default)]
     pub libraries: Vec<LibraryConfig>,
@@ -93,6 +100,8 @@ impl Default for Config {
             iptv_stall_secs: 8,
             iptv_warm_favorites: 0,
             iptv_epg_days: 7,
+            allow_private_fetch: true,
+            allow_private_logo_fetch: false,
             libraries: Vec::new(),
         }
     }

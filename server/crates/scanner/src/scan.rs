@@ -3,8 +3,8 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
@@ -41,6 +41,9 @@ pub struct ScanSummary {
     pub updated: u64,
     pub unchanged: u64,
     pub removed: u64,
+    /// Files recognised as renamed/moved (same size, duration and stream layout) and re-pointed
+    /// instead of deleted + re-added; item, metadata and watch state are preserved.
+    pub moved: u64,
     /// Files that failed to probe (retried on next scan).
     pub failed: u64,
 }
@@ -54,6 +57,10 @@ pub struct Scanner {
     probe_timeout: Duration,
     concurrency: usize,
     lock: Arc<tokio::sync::Mutex<()>>,
+    /// Files that vanished recently, kept so a later "new file" event can claim them (rename
+    /// detection across separate watcher events).
+    tombs: Arc<Mutex<Vec<Tomb>>>,
+    rename_window: Duration,
 }
 
 impl Default for Scanner {
@@ -71,6 +78,8 @@ impl Scanner {
             probe_timeout: Duration::from_secs(60),
             concurrency: 4,
             lock: Arc::default(),
+            tombs: Arc::default(),
+            rename_window: Duration::ZERO,
         }
     }
 
@@ -95,6 +104,15 @@ impl Scanner {
         self
     }
 
+    /// How long a file removed by a *targeted* rescan (watcher event) stays claimable by a new file
+    /// with the same size, duration and stream layout, so a rename delivered as two separate events
+    /// keeps its item. Orphaned items are removed once the window has passed. Default: zero (items
+    /// are removed immediately); renames within a single scan are always detected.
+    pub fn with_rename_window(mut self, d: Duration) -> Self {
+        self.rename_window = d;
+        self
+    }
+
     /// Max concurrent ffprobe processes (min 1).
     pub fn with_concurrency(mut self, n: usize) -> Self {
         self.concurrency = n.max(1);
@@ -112,7 +130,7 @@ impl Scanner {
                 max_depth: None,
             })
             .collect();
-        self.scan_scopes(pool, &lib, scopes).await
+        self.scan_scopes(pool, &lib, scopes, false).await
     }
 
     /// Targeted rescan of a file or directory (also handles deletions).
@@ -144,7 +162,9 @@ impl Scanner {
                 max_depth: Some(1),
             });
         }
-        self.scan_scopes(pool, &lib, scopes).await
+        // Targeted rescans come from watcher events: a vanished file may be half of a rename whose
+        // other half arrives as a separate event, so removal of its item is deferred briefly.
+        self.scan_scopes(pool, &lib, scopes, true).await
     }
 
     fn emit(&self, library_id: i64, scanned: u64, total: u64) {
@@ -162,6 +182,7 @@ impl Scanner {
         pool: &SqlitePool,
         lib: &Library,
         scopes: Vec<Scope>,
+        defer_removals: bool,
     ) -> Result<ScanSummary> {
         let _guard = self.lock.lock().await;
         let mut summary = ScanSummary::default();
@@ -243,6 +264,7 @@ impl Scanner {
                 .filter(|ex| ex.size == entry.size && ex.mtime == entry.mtime)
             {
                 refresh_sidecars(pool, ex.id, &file_subs).await?;
+                ensure_links(pool, lib, ex.id, &parsed, &mut created).await?;
                 summary.unchanged += 1;
                 summary.scanned += 1;
                 done += 1;
@@ -258,6 +280,20 @@ impl Scanner {
                 subs: file_subs,
             });
         }
+
+        // Rename detection: rows whose file was not seen in this walk, by size.
+        let mut vanished_by_size: HashMap<i64, Vec<(String, ExistingFile)>> = HashMap::new();
+        if queue.iter().any(|j| j.existing.is_none()) {
+            for (path, ex) in &existing {
+                if !seen.contains(path) {
+                    vanished_by_size
+                        .entry(ex.size)
+                        .or_default()
+                        .push((path.clone(), ex.clone()));
+                }
+            }
+        }
+        let mut moved_ids: HashSet<i64> = HashSet::new();
 
         // Probe with bounded concurrency; DB writes happen serially here.
         let mut set: JoinSet<(Job, std::result::Result<ProbeResult, probe::ProbeError>)> =
@@ -275,7 +311,7 @@ impl Scanner {
             let Some(joined) = set.join_next().await else {
                 break;
             };
-            let (job, res) = match joined {
+            let (mut job, res) = match joined {
                 Ok(v) => v,
                 Err(e) => {
                     warn!("probe task failed: {e}");
@@ -288,19 +324,49 @@ impl Scanner {
             summary.scanned += 1;
             done += 1;
             match res {
-                Ok(pr) => match store_file(pool, lib, &job, &pr, &mut created).await {
-                    Ok(is_new) => {
-                        if is_new {
-                            summary.added += 1;
-                        } else {
-                            summary.updated += 1;
+                Ok(pr) => {
+                    let mut forced: Option<(i64, Vec<i64>)> = None;
+                    if job.existing.is_none() {
+                        match self
+                            .find_moved(pool, lib.id, &job, &pr, &vanished_by_size, &moved_ids)
+                            .await
+                        {
+                            Ok(Some(Moved::Row(ex))) => {
+                                debug!(from = ex.id, to = %job.entry.path_str, "file moved/renamed");
+                                moved_ids.insert(ex.id);
+                                job.existing = Some(ex);
+                                summary.moved += 1;
+                            }
+                            Ok(Some(Moved::Tomb { item_id, links })) => {
+                                debug!(item = item_id, to = %job.entry.path_str, "file moved/renamed (after removal)");
+                                forced = Some((item_id, links));
+                                summary.moved += 1;
+                            }
+                            Ok(None) => {}
+                            Err(e) => warn!("rename detection failed: {e}"),
                         }
                     }
-                    Err(e) => {
-                        warn!(path = %job.entry.path_str, "failed to store file: {e}");
-                        summary.failed += 1;
+                    let was_move = forced.is_some()
+                        || job
+                            .existing
+                            .as_ref()
+                            .is_some_and(|e| moved_ids.contains(&e.id));
+                    match store_file(pool, lib, &job, &pr, &mut created, forced).await {
+                        Ok(is_new) => {
+                            if was_move {
+                                // counted in `moved`
+                            } else if is_new {
+                                summary.added += 1;
+                            } else {
+                                summary.updated += 1;
+                            }
+                        }
+                        Err(e) => {
+                            warn!(path = %job.entry.path_str, "failed to store file: {e}");
+                            summary.failed += 1;
+                        }
                     }
-                },
+                }
                 Err(e) => {
                     warn!(path = %job.entry.path_str, "probe failed: {e}");
                     summary.failed += 1;
@@ -313,13 +379,24 @@ impl Scanner {
 
         // Vanished files: existing rows within an active scope that were not seen.
         let mut removed = false;
+        let mut keep_items: Vec<i64> = Vec::new();
         for (path, ex) in &existing {
-            if seen.contains(path) {
+            if seen.contains(path) || moved_ids.contains(&ex.id) {
                 continue;
             }
             let p = Path::new(path);
             if active.iter().any(|s| s.contains(p)) {
-                // Not seen as a video: gone, or no longer classified as one.
+                // Not seen as a video: gone, or no longer classified as one. Remember it briefly
+                // so a "new file" event for the same content can claim the item.
+                if let Some(t) = if defer_removals && !self.rename_window.is_zero() {
+                    tomb_of(pool, lib.id, ex, path).await?
+                } else {
+                    None
+                } {
+                    keep_items.push(t.item_id);
+                    keep_items.extend(t.links.iter().copied());
+                    self.tombs.lock().unwrap().push(t);
+                }
                 sqlx::query("DELETE FROM media_files WHERE id = ?")
                     .bind(ex.id)
                     .execute(pool)
@@ -329,7 +406,17 @@ impl Scanner {
             }
         }
         if removed {
-            cleanup_orphans(pool, lib.id).await?;
+            cleanup_orphans(pool, lib.id, &keep_items).await?;
+            if !keep_items.is_empty() {
+                // Items waiting for a possible rename are removed once the window has passed.
+                let (pool2, lib_id, wait) = (pool.clone(), lib.id, self.rename_window);
+                tokio::spawn(async move {
+                    tokio::time::sleep(wait + Duration::from_millis(250)).await;
+                    if let Err(e) = cleanup_orphans(&pool2, lib_id, &[]).await {
+                        warn!("delayed orphan cleanup failed: {e}");
+                    }
+                });
+            }
         }
 
         self.emit(lib.id, total, total);
@@ -386,8 +473,21 @@ struct SubFile {
 #[derive(Clone)]
 struct ExistingFile {
     id: i64,
+    item_id: i64,
     size: i64,
     mtime: i64,
+}
+
+/// A recently vanished file (see [`Scanner::with_rename_window`]).
+struct Tomb {
+    library_id: i64,
+    item_id: i64,
+    links: Vec<i64>,
+    size: i64,
+    duration: Option<f64>,
+    fingerprint: String,
+    stem: String,
+    at: Instant,
 }
 
 struct Job {
@@ -503,7 +603,7 @@ pub async fn library_roots(pool: &SqlitePool) -> Result<Vec<PathBuf>> {
 
 async fn load_existing(pool: &SqlitePool, lib: i64) -> Result<HashMap<String, ExistingFile>> {
     let rows = sqlx::query(
-        "SELECT f.id, f.path, f.size, f.mtime FROM media_files f \
+        "SELECT f.id, f.item_id, f.path, f.size, f.mtime FROM media_files f \
          JOIN media_items i ON i.id = f.item_id WHERE i.library_id = ?",
     )
     .bind(lib)
@@ -516,6 +616,7 @@ async fn load_existing(pool: &SqlitePool, lib: i64) -> Result<HashMap<String, Ex
                 r.get::<String, _>("path"),
                 ExistingFile {
                     id: r.get("id"),
+                    item_id: r.get("item_id"),
                     size: r.get("size"),
                     mtime: r.get("mtime"),
                 },
@@ -524,16 +625,24 @@ async fn load_existing(pool: &SqlitePool, lib: i64) -> Result<HashMap<String, Ex
         .collect())
 }
 
-async fn cleanup_orphans(pool: &SqlitePool, lib: i64) -> Result<()> {
+/// Remove items left without files (or children). `keep` items are spared (pending renames).
+async fn cleanup_orphans(pool: &SqlitePool, lib: i64, keep: &[i64]) -> Result<()> {
+    let keep = serde_json::to_string(keep).unwrap_or_else(|_| "[]".into());
     for sql in [
         "DELETE FROM media_items WHERE library_id = ?1 AND kind IN ('movie','episode') \
-         AND NOT EXISTS (SELECT 1 FROM media_files f WHERE f.item_id = media_items.id)",
+         AND NOT EXISTS (SELECT 1 FROM media_files f WHERE f.item_id = media_items.id) \
+         AND NOT EXISTS (SELECT 1 FROM media_file_links l WHERE l.item_id = media_items.id) \
+         AND id NOT IN (SELECT value FROM json_each(?2))",
         "DELETE FROM media_items WHERE library_id = ?1 AND kind = 'season' \
          AND NOT EXISTS (SELECT 1 FROM media_items c WHERE c.parent_id = media_items.id)",
         "DELETE FROM media_items WHERE library_id = ?1 AND kind = 'show' \
          AND NOT EXISTS (SELECT 1 FROM media_items c WHERE c.parent_id = media_items.id)",
     ] {
-        sqlx::query(sql).bind(lib).execute(pool).await?;
+        let mut q = sqlx::query(sql).bind(lib);
+        if sql.contains("?2") {
+            q = q.bind(&keep);
+        }
+        q.execute(pool).await?;
     }
     Ok(())
 }
@@ -869,15 +978,17 @@ async fn store_file(
     job: &Job,
     pr: &ProbeResult,
     created: &mut Vec<i64>,
+    forced: Option<(i64, Vec<i64>)>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     let mut new_created = Vec::new();
     let (file_id, is_new) = match &job.existing {
         Some(ex) => {
             sqlx::query(
-                "UPDATE media_files SET size=?, mtime=?, container=?, duration_s=?, bitrate=?, \
+                "UPDATE media_files SET path=?, size=?, mtime=?, container=?, duration_s=?, bitrate=?, \
                  probe_json=?, edition=?, part_no=? WHERE id=?",
             )
+            .bind(&job.entry.path_str)
             .bind(job.entry.size)
             .bind(job.entry.mtime)
             .bind(&pr.container)
@@ -896,7 +1007,13 @@ async fn store_file(
             (ex.id, false)
         }
         None => {
-            let item = ensure_item(&mut tx, lib.id, &job.parsed, &mut new_created).await?;
+            let (item, kept_links) = match &forced {
+                Some((item, links)) => (*item, Some(links.clone())),
+                None => (
+                    ensure_item(&mut tx, lib.id, &job.parsed, &mut new_created).await?,
+                    None,
+                ),
+            };
             let r = sqlx::query(
                 "INSERT INTO media_files (item_id, path, size, mtime, container, duration_s, \
                  bitrate, probe_json, edition, part_no) VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -913,7 +1030,30 @@ async fn store_file(
             .bind(job.parsed.part.unwrap_or(1))
             .execute(&mut *tx)
             .await?;
-            (r.last_insert_rowid(), true)
+            let file_id = r.last_insert_rowid();
+            match kept_links {
+                Some(links) => {
+                    for l in links {
+                        sqlx::query("INSERT OR IGNORE INTO media_file_links (file_id, item_id) VALUES (?, ?)")
+                            .bind(file_id)
+                            .bind(l)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+                }
+                None => {
+                    link_extra_episodes(
+                        &mut tx,
+                        lib.id,
+                        file_id,
+                        item,
+                        &job.parsed,
+                        &mut new_created,
+                    )
+                    .await?;
+                }
+            }
+            (file_id, true)
         }
     };
     for s in &pr.streams {
@@ -934,4 +1074,258 @@ async fn store_file(
     tx.commit().await?;
     created.extend(new_created);
     Ok(is_new)
+}
+
+// ------------------------------------------------------------------ multi-episode links
+
+/// Link a file to the further episodes it contains (`S01E02E03`), creating those episode items.
+async fn link_extra_episodes(
+    conn: &mut SqliteConnection,
+    lib: i64,
+    file_id: i64,
+    primary_item: i64,
+    p: &ParsedMedia,
+    created: &mut Vec<i64>,
+) -> Result<()> {
+    if p.kind != MediaKind::Episode || p.episodes.len() < 2 {
+        return Ok(());
+    }
+    let Some(season): Option<i64> =
+        sqlx::query_scalar("SELECT parent_id FROM media_items WHERE id = ?")
+            .bind(primary_item)
+            .fetch_optional(&mut *conn)
+            .await?
+            .flatten()
+    else {
+        return Ok(());
+    };
+    let season_no = p.season.unwrap_or(1);
+    for &n in &p.episodes[1..] {
+        let single = ParsedMedia {
+            episodes: vec![n],
+            episode_title: None,
+            ..p.clone()
+        };
+        let item = ensure_episode(conn, lib, season, season_no, &single, created).await?;
+        if item == primary_item {
+            continue;
+        }
+        sqlx::query("INSERT OR IGNORE INTO media_file_links (file_id, item_id) VALUES (?, ?)")
+            .bind(file_id)
+            .bind(item)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Idempotent: make sure an unchanged multi-episode file has all its episode links (also repairs
+/// libraries scanned before multi-episode support existed).
+async fn ensure_links(
+    pool: &SqlitePool,
+    lib: &Library,
+    file_id: i64,
+    p: &ParsedMedia,
+    created: &mut Vec<i64>,
+) -> Result<()> {
+    if p.kind != MediaKind::Episode || p.episodes.len() < 2 {
+        return Ok(());
+    }
+    let have: i64 = sqlx::query_scalar("SELECT count(*) FROM media_file_links WHERE file_id = ?")
+        .bind(file_id)
+        .fetch_one(pool)
+        .await?;
+    if have as usize >= p.episodes.len() - 1 {
+        return Ok(());
+    }
+    let primary: i64 = sqlx::query_scalar("SELECT item_id FROM media_files WHERE id = ?")
+        .bind(file_id)
+        .fetch_one(pool)
+        .await?;
+    let mut tx = pool.begin().await?;
+    let mut new_created = Vec::new();
+    link_extra_episodes(&mut tx, lib.id, file_id, primary, p, &mut new_created).await?;
+    tx.commit().await?;
+    created.extend(new_created);
+    Ok(())
+}
+
+// ------------------------------------------------------------------ rename detection
+
+enum Moved {
+    /// The still-present row of the vanished file (re-pointed in place).
+    Row(ExistingFile),
+    /// The row was already deleted; re-attach the new file to its item.
+    Tomb { item_id: i64, links: Vec<i64> },
+}
+
+type StreamKey = (
+    String,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+);
+
+fn fingerprint(streams: impl Iterator<Item = StreamKey>) -> String {
+    streams
+        .map(|(k, c, w, h, ch)| {
+            format!(
+                "{k}:{}:{}x{}:{}",
+                c.unwrap_or_default(),
+                w.unwrap_or(0),
+                h.unwrap_or(0),
+                ch.unwrap_or(0)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn probe_fingerprint(pr: &ProbeResult) -> String {
+    fingerprint(pr.streams.iter().map(|s| {
+        (
+            s.kind.as_str().to_string(),
+            s.codec.clone(),
+            s.width,
+            s.height,
+            s.channels,
+        )
+    }))
+}
+
+async fn db_fingerprint(pool: &SqlitePool, file_id: i64) -> Result<String> {
+    let rows = sqlx::query(
+        "SELECT kind, codec, width, height, channels FROM streams \
+         WHERE file_id = ? AND external_path IS NULL ORDER BY idx",
+    )
+    .bind(file_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(fingerprint(rows.iter().map(|r| {
+        (
+            r.get::<String, _>("kind"),
+            r.get("codec"),
+            r.get("width"),
+            r.get("height"),
+            r.get("channels"),
+        )
+    })))
+}
+
+fn same_duration(a: Option<f64>, b: Option<f64>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => (a - b).abs() <= 1.0,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn stem_of(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_lowercase()
+}
+
+/// Tie-break between identical candidates: how much of the file name is shared.
+fn name_affinity(a: &str, b: &str) -> usize {
+    let pre = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
+    let suf = a
+        .chars()
+        .rev()
+        .zip(b.chars().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    pre + suf
+}
+
+async fn tomb_of(
+    pool: &SqlitePool,
+    library_id: i64,
+    ex: &ExistingFile,
+    path: &str,
+) -> Result<Option<Tomb>> {
+    let duration: Option<f64> =
+        sqlx::query_scalar("SELECT duration_s FROM media_files WHERE id = ?")
+            .bind(ex.id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+    let links: Vec<i64> =
+        sqlx::query_scalar("SELECT item_id FROM media_file_links WHERE file_id = ?")
+            .bind(ex.id)
+            .fetch_all(pool)
+            .await?;
+    Ok(Some(Tomb {
+        library_id,
+        item_id: ex.item_id,
+        links,
+        size: ex.size,
+        duration,
+        fingerprint: db_fingerprint(pool, ex.id).await?,
+        stem: stem_of(path),
+        at: Instant::now(),
+    }))
+}
+
+impl Scanner {
+    /// Is the newly found file a moved/renamed copy of a file that vanished? Same size, same
+    /// duration (±1 s) and same stream layout; among several candidates the most similar name wins.
+    async fn find_moved(
+        &self,
+        pool: &SqlitePool,
+        library_id: i64,
+        job: &Job,
+        pr: &ProbeResult,
+        vanished: &HashMap<i64, Vec<(String, ExistingFile)>>,
+        claimed: &HashSet<i64>,
+    ) -> Result<Option<Moved>> {
+        let fp = probe_fingerprint(pr);
+        let new_stem = stem_of(&job.entry.path_str);
+        let mut best: Option<(usize, ExistingFile)> = None;
+        for (path, ex) in vanished.get(&job.entry.size).into_iter().flatten() {
+            if claimed.contains(&ex.id) || tokio::fs::try_exists(path).await.unwrap_or(true) {
+                continue;
+            }
+            let dur: Option<f64> =
+                sqlx::query_scalar("SELECT duration_s FROM media_files WHERE id = ?")
+                    .bind(ex.id)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten();
+            if !same_duration(dur, pr.duration_s) || db_fingerprint(pool, ex.id).await? != fp {
+                continue;
+            }
+            let score = name_affinity(&stem_of(path), &new_stem);
+            if best.as_ref().is_none_or(|(b, _)| score > *b) {
+                best = Some((score, ex.clone()));
+            }
+        }
+        if let Some((_, ex)) = best {
+            return Ok(Some(Moved::Row(ex)));
+        }
+        let mut tombs = self.tombs.lock().unwrap();
+        let window = self.rename_window;
+        tombs.retain(|t| t.at.elapsed() <= window);
+        let pick = tombs
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| {
+                t.library_id == library_id
+                    && t.size == job.entry.size
+                    && same_duration(t.duration, pr.duration_s)
+                    && t.fingerprint == fp
+            })
+            .max_by_key(|(_, t)| name_affinity(&t.stem, &new_stem))
+            .map(|(i, _)| i);
+        Ok(pick.map(|i| {
+            let t = tombs.remove(i);
+            Moved::Tomb {
+                item_id: t.item_id,
+                links: t.links,
+            }
+        }))
+    }
 }

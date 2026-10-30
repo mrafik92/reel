@@ -28,6 +28,11 @@ pub struct IptvConfig {
     pub warm_favorites: usize,
     /// Drop a live session nobody streams from after this long.
     pub session_idle: Duration,
+    /// Allow playlists, guides, provider APIs and stream upstreams on private networks.
+    pub allow_private_fetch: bool,
+    /// Allow channel logos to be fetched from private networks (logos come from third-party
+    /// playlists, so this defaults to off).
+    pub allow_private_logo_fetch: bool,
 }
 
 impl Default for IptvConfig {
@@ -39,6 +44,8 @@ impl Default for IptvConfig {
             default_refresh_minutes: 12 * 60,
             warm_favorites: 0,
             session_idle: Duration::from_secs(30),
+            allow_private_fetch: true,
+            allow_private_logo_fetch: false,
         }
     }
 }
@@ -48,19 +55,20 @@ pub struct IptvService {
     pub ingest: Ingest,
     pub live: Arc<LiveManager>,
     pub cfg: IptvConfig,
+    /// HTTP client for channel logos (guarded unless `allow_private_logo_fetch`).
+    pub logo_http: reqwest::Client,
     pub data_dir: PathBuf,
     refreshing: Mutex<HashSet<i64>>,
 }
 
 impl IptvService {
     pub fn new(pool: SqlitePool, data_dir: PathBuf, cfg: IptvConfig) -> Arc<Self> {
-        let hub = ChannelHub::new(cfg.hub.clone(), Arc::new(DbResolver { pool: pool.clone() }));
+        let mut hub_cfg = cfg.hub.clone();
+        hub_cfg.allow_private_upstream = cfg.allow_private_fetch;
+        let hub = ChannelHub::new(hub_cfg, Arc::new(DbResolver { pool: pool.clone() }));
         let live = LiveManager::new(hub, data_dir.join("iptv").join("hls"), cfg.session_idle);
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(15))
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .build()
-            .expect("reqwest client");
+        let http = crate::net::client(cfg.allow_private_fetch);
+        let logo_http = crate::net::client(cfg.allow_private_logo_fetch);
         Arc::new(Self {
             ingest: Ingest {
                 pool: pool.clone(),
@@ -68,7 +76,9 @@ impl IptvService {
                 work_dir: data_dir.join("iptv").join("tmp"),
                 epg_back_secs: i64::from(cfg.epg_days_back) * 86_400,
                 epg_fwd_secs: i64::from(cfg.epg_days_forward) * 86_400,
+                allow_private: cfg.allow_private_fetch,
             },
+            logo_http,
             pool,
             live,
             cfg,

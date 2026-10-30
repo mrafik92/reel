@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use reel_api::{AppState, app, bootstrap_libraries, enrich::EnrichQueue};
 use reel_core::{Config, db};
-use reel_metadata::{TmdbClient, TmdbEnricher};
+use reel_metadata::{Enricher, TmdbClient};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -27,7 +27,8 @@ async fn main() -> anyhow::Result<()> {
     sqlx::query("DELETE FROM playback_sessions")
         .execute(&pool)
         .await?;
-    match config
+    // Local `.nfo` / artwork enrichment always runs; TMDB is layered on top when a key is set.
+    let enricher = match config
         .tmdb_api_key
         .as_deref()
         .filter(|k| !k.trim().is_empty())
@@ -35,12 +36,15 @@ async fn main() -> anyhow::Result<()> {
         Some(key) => {
             let tmdb = TmdbClient::new(key);
             state = state.with_tmdb(tmdb.clone());
-            let enricher = Arc::new(TmdbEnricher::new(tmdb));
-            let queue = EnrichQueue::spawn(pool, enricher, Some(state.requests.clone()));
-            state = state.with_metadata(queue);
+            Enricher::new(tmdb)
         }
-        None => tracing::info!("no TMDB API key configured; metadata enrichment disabled"),
-    }
+        None => {
+            tracing::info!("no TMDB API key configured; using local .nfo/artwork metadata only");
+            Enricher::local()
+        }
+    };
+    let queue = EnrichQueue::spawn(pool, Arc::new(enricher), Some(state.requests.clone()));
+    state = state.with_metadata(queue);
     if state.auth.needs_setup().await? {
         tracing::warn!(
             "no admin account yet: open the web UI (or POST /api/v1/setup) to create one"

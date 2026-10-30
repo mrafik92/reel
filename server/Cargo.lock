@@ -1871,6 +1871,7 @@ dependencies = [
  "quick-xml",
  "rand 0.8.8",
  "reel-core",
+ "reel-playback",
  "reqwest",
  "serde",
  "serde_json",

@@ -328,7 +328,8 @@ async fn ingest_channels_epg_favorites_and_signed_logos() {
     let ts = dir.path().join("a.ts");
     make_ts(&ts, 4);
     let (prov, _) = Provider::start(&ts, 4).await;
-    let e = env(|_| {}).await;
+    // the test provider listens on loopback, so allow private logo fetches here
+    let e = env(|c| c.allow_private_logo_fetch = true).await;
     // unauthenticated
     assert_eq!(get(&e.raw, "/api/v1/iptv/channels").await.0, 401);
     let id = add_source(&e, &prov, None).await;
@@ -585,7 +586,10 @@ async fn tune_passthrough_and_hls_use_signed_urls_without_headers() {
     .await;
     assert_eq!(s, 200, "{t2}");
     assert_eq!(t2["mode"], "hls");
-    assert_eq!(t2["hls"], json!({"video":"copy","audio":"copy"}));
+    assert_eq!(
+        t2["hls"],
+        json!({"video":"copy","audio":"copy","encoder":"copy"})
+    );
     let sid2 = t2["session_id"].as_str().unwrap().to_string();
     let url2 = t2["url"].as_str().unwrap().to_string();
     assert!(url2.contains("/index.m3u8?exp="));
@@ -1121,5 +1125,61 @@ async fn admin_source_and_channel_management() {
         .0,
         404
     );
+    e.state.iptv.shutdown().await;
+}
+
+#[tokio::test]
+async fn ssrf_guard_defaults_and_strict_mode() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let ts = dir.path().join("a.ts");
+    make_ts(&ts, 2);
+    let (prov, _) = Provider::start(&ts, 2).await;
+
+    // defaults: playlists/EPG/streams on the LAN (here: loopback) work, third-party logos do not
+    let e = env(|_| {}).await;
+    add_source(&e, &prov, None).await;
+    let (_, chans) = get(&e.admin, "/api/v1/iptv/channels").await;
+    let logo = chans[0]["logo_url"].as_str().unwrap().to_string();
+    let res = e
+        .raw
+        .clone()
+        .oneshot(Request::get(&logo).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 404, "loopback logo host refused by default");
+    assert!(!e.state.config.data_dir.join("iptv/logos").exists());
+    e.state.iptv.shutdown().await;
+
+    // strict: private sources are refused up front, with a pointer to the setting
+    let e = env(|c| c.allow_private_fetch = false).await;
+    for url in [
+        format!("{}/list.m3u", prov.base()),
+        "http://169.254.169.254/latest/meta-data".to_string(),
+        "http://localhost:8080/list.m3u".to_string(),
+    ] {
+        let (s, v) = send(
+            &e.admin,
+            "POST",
+            "/api/v1/admin/iptv/sources",
+            Some(json!({"name":"x","kind":"m3u","url":url})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{url}: {v}");
+        assert!(
+            v["error"].as_str().unwrap().contains("allow_private_fetch"),
+            "{v}"
+        );
+    }
+    let (s, _) = send(
+        &e.admin,
+        "POST",
+        "/api/v1/admin/iptv/sources/test",
+        Some(json!({"name":"x","kind":"m3u","url":format!("{}/list.m3u", prov.base())})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
     e.state.iptv.shutdown().await;
 }

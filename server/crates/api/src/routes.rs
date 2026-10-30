@@ -42,6 +42,7 @@ fn summary_select(uid: i64) -> String {
             (SELECT id FROM media_items WHERE parent_id = i.id))), 0) \
         ELSE COALESCE(w.played, 0) END AS played, \
     CAST(COALESCE(i.runtime_s, (SELECT f.duration_s FROM media_files f WHERE f.item_id = i.id \
+        OR f.id IN (SELECT file_id FROM media_file_links WHERE item_id = i.id) \
         ORDER BY f.part_no, f.id LIMIT 1)) AS REAL) AS dur"
     )
 }
@@ -355,7 +356,8 @@ async fn load_files(
     item_id: i64,
 ) -> ApiResult<Vec<MediaFile>> {
     let file_rows = sqlx::query(
-        "SELECT id, container, duration_s, size FROM media_files WHERE item_id = ? \
+        "SELECT id, container, duration_s, size FROM media_files WHERE item_id = ?1 \
+         OR id IN (SELECT file_id FROM media_file_links WHERE item_id = ?1) \
          ORDER BY part_no, id",
     )
     .bind(item_id)
@@ -364,6 +366,15 @@ async fn load_files(
     let mut files = Vec::with_capacity(file_rows.len());
     for fr in &file_rows {
         let fid: i64 = fr.get("id");
+        // Multi-episode files: every episode item stored in this file (primary first).
+        let item_ids: Vec<i64> = sqlx::query_scalar(
+            "SELECT m.id FROM media_items m WHERE m.id IN (SELECT item_id FROM media_files \
+             WHERE id = ?1 UNION SELECT item_id FROM media_file_links WHERE file_id = ?1) \
+             ORDER BY m.episode_no, m.id",
+        )
+        .bind(fid)
+        .fetch_all(&st.db)
+        .await?;
         let streams = sqlx::query(
             "SELECT idx, kind, codec, width, height, hdr, bit_depth, channels, language, title, \
              \"default\" AS is_default, forced, external_path FROM streams WHERE file_id = ? \
@@ -419,6 +430,11 @@ async fn load_files(
             video,
             audio,
             subtitles,
+            item_ids: if item_ids.len() > 1 {
+                item_ids
+            } else {
+                Vec::new()
+            },
         });
     }
     Ok(files)

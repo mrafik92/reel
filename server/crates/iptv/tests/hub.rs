@@ -366,3 +366,111 @@ async fn slow_viewer_never_blocks_others_and_is_resynced() {
     assert!(hub.metrics()[0].viewer_resyncs >= 1);
     hub.shutdown();
 }
+
+#[tokio::test]
+async fn hls_providers_are_pulled_through_ffmpeg_into_the_same_pipeline() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    make_hls(dir.path(), 6);
+    let addr = serve_hls(dir.path().to_path_buf()).await;
+    let res = Arc::new(MapResolver::default());
+    // detected by the `.m3u8` extension …
+    res.add(
+        1,
+        "ByExt",
+        vec![cand(1, 10, format!("http://{addr}/index.m3u8"), None)],
+    );
+    // … and by `Content-Type: application/vnd.apple.mpegurl` alone
+    res.add(
+        2,
+        "ByType",
+        vec![cand(2, 10, format!("http://{addr}/playlist"), None)],
+    );
+    let hub = ChannelHub::new(
+        HubConfig {
+            stall_after: Duration::from_secs(10),
+            ..fast_cfg()
+        },
+        res,
+    );
+    hub.spawn_reaper();
+    for id in [1, 2] {
+        let mut sub = hub.subscribe(id, None).await.unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(15), sub.next())
+            .await
+            .expect("first bytes")
+            .unwrap();
+        // the ffmpeg-produced MPEG-TS goes through the normal alignment + keyframe logic
+        assert_eq!(
+            parse_packet(&first).unwrap().pid,
+            0,
+            "channel {id}: starts with the PAT"
+        );
+        let got = read_bytes(&mut sub, 40_000).await;
+        assert!(got >= 40_000, "channel {id}: {got}");
+        let info = sub.stream_info().expect("PMT parsed");
+        assert_eq!(info.video.map(|v| v.name()), Some("h264"));
+        assert_eq!(info.audio.first().map(|a| a.1.name()), Some("aac"));
+        let m = hub
+            .metrics()
+            .into_iter()
+            .find(|m| m.channel_id == id)
+            .unwrap();
+        assert!(m.keyframes >= 1 && m.bytes_total > 40_000, "{m:?}");
+    }
+    // only http(s) is accepted as an upstream scheme
+    let bad = Arc::new(MapResolver::default());
+    bad.add(
+        3,
+        "File",
+        vec![cand(3, 10, "file:///etc/passwd".into(), None)],
+    );
+    let hub2 = ChannelHub::new(fast_cfg(), bad);
+    let _s = hub2.subscribe(3, None).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let m = &hub2.metrics()[0];
+    assert!(m.last_error.as_deref().unwrap().contains("http"), "{m:?}");
+    hub.shutdown();
+    hub2.shutdown();
+}
+
+#[tokio::test]
+async fn strict_mode_refuses_private_upstreams() {
+    let res = Arc::new(MapResolver::default());
+    res.add(
+        1,
+        "Lan",
+        vec![cand(1, 10, "http://127.0.0.1:9/x.ts".into(), None)],
+    );
+    res.add(
+        2,
+        "Meta",
+        vec![cand(
+            2,
+            10,
+            "http://169.254.169.254/latest/meta-data".into(),
+            None,
+        )],
+    );
+    let hub = ChannelHub::new(
+        HubConfig {
+            allow_private_upstream: false,
+            ..fast_cfg()
+        },
+        res,
+    );
+    for id in [1, 2] {
+        let _s = hub.subscribe(id, None).await.unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    for m in hub.metrics() {
+        assert!(
+            m.last_error.as_deref().unwrap().contains("blocked"),
+            "{m:?}"
+        );
+        assert_eq!(m.bytes_total, 0);
+    }
+    hub.shutdown();
+}

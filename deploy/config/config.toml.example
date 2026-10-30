@@ -1,0 +1,18 @@
+# Optional. Copy to deploy/config/config.toml (mounted read-only at /config/config.toml).
+# Environment variables (REEL_*) override anything set here. Full reference: server/config.example.toml
+
+# Libraries are created on first boot if no library with that name exists, then scanned.
+# Paths are inside the container: MEDIA_DIR is mounted at /media.
+[[libraries]]
+name = "Movies"
+kind = "movies"
+paths = ["/media/movies"]
+
+[[libraries]]
+name = "TV"
+kind = "shows"
+paths = ["/media/tv"]
+
+# max_transcodes = 2
+# max_user_transcodes = 1
+# iptv_warm_favorites = 3

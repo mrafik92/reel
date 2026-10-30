@@ -42,3 +42,9 @@ data_dir = "./data"
 # iptv_warm_favorites = 0     # keep the N most-favorited channels pre-connected (if the
 #                             # provider connection limit allows; evicted first when a slot is needed)
 # iptv_epg_days = 7           # days of EPG kept ahead (1 day behind)
+
+# ── Server-side fetch policy (SSRF) ──────────────────────────────────────────
+# IPTV playlists, EPG, Xtream APIs and stream upstreams may be on the LAN (admin-trusted): allowed.
+# allow_private_fetch = true
+# Channel logos come from third-party playlists: private/loopback/link-local targets are blocked.
+# allow_private_logo_fetch = false

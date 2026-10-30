@@ -6,7 +6,7 @@ pub mod matcher;
 pub mod nfo;
 pub mod tmdb;
 
-pub use enricher::TmdbEnricher;
+pub use enricher::{Enricher, TmdbEnricher};
 pub use images::{ImageCache, ImageKind};
 pub use matcher::{Candidate, MatchQuery, best_match, score};
 pub use tmdb::TmdbClient;

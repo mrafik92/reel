@@ -92,6 +92,8 @@ impl AppState {
                 },
                 epg_days_forward: config.iptv_epg_days.max(1),
                 warm_favorites: config.iptv_warm_favorites,
+                allow_private_fetch: config.allow_private_fetch,
+                allow_private_logo_fetch: config.allow_private_logo_fetch,
                 ..Default::default()
             },
         );
@@ -102,7 +104,9 @@ impl AppState {
             playback,
             hwaccel: Arc::new(hw),
             db,
-            scanner: Scanner::new().with_events(events.clone()),
+            scanner: Scanner::new()
+                .with_events(events.clone())
+                .with_rename_window(Duration::from_secs(20)),
             images,
             config: Arc::new(config),
             events,
@@ -132,6 +136,8 @@ impl AppState {
     /// Use detected hardware acceleration (rebuilds the session manager).
     pub fn with_hwaccel(mut self, hw: HwAccelStatus) -> Self {
         self.playback = SessionManager::new(session_config(&self.config), hw.selected.clone());
+        // IPTV transcodes (non-H.264 sources, e.g. MPEG-2 SD) use the same hardware encoder.
+        self.iptv.live.set_hwaccel(hw.selected.clone());
         self.hwaccel = Arc::new(hw);
         self
     }

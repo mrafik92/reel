@@ -10,6 +10,18 @@ pub struct Nfo {
     pub imdb_id: Option<String>,
     pub tvdb_id: Option<i64>,
     pub plot: Option<String>,
+    pub genres: Vec<String>,
+    pub rating: Option<f64>,
+    /// Content rating (`<mpaa>`), e.g. `PG-13`.
+    pub mpaa: Option<String>,
+    pub runtime_min: Option<i64>,
+    /// `<premiered>` / `<aired>` / `<releasedate>` as `YYYY-MM-DD`.
+    pub aired: Option<String>,
+    /// `(name, role)` of `<actor>` entries, in file order.
+    pub actors: Vec<(String, Option<String>)>,
+    /// Episode nfo: `<season>` / `<episode>`.
+    pub season: Option<i64>,
+    pub episode: Option<i64>,
 }
 
 fn unescape(s: &str) -> String {
@@ -88,12 +100,61 @@ pub fn parse(xml: &str) -> Nfo {
     if n.tmdb_id.is_none() {
         n.tmdb_id = first("tmdbid").and_then(|v| v.parse().ok());
     }
+    n.aired = first("aired")
+        .or_else(|| first("premiered"))
+        .or_else(|| first("releasedate"))
+        .filter(|d| d.len() >= 10);
     if n.year.is_none() {
-        n.year = first("premiered")
-            .or_else(|| first("releasedate"))
-            .and_then(|d| d.get(..4)?.parse().ok());
+        n.year = n.aired.as_deref().and_then(|d| d.get(..4)?.parse().ok());
+    }
+    n.genres = find_tags(xml, "genre")
+        .into_iter()
+        .flat_map(|(_, b)| {
+            unescape(b)
+                .split('/')
+                .map(|g| g.trim().to_string())
+                .collect::<Vec<_>>()
+        })
+        .filter(|g| !g.is_empty())
+        .collect();
+    n.rating = find_tags(xml, "value")
+        .first()
+        .map(|(_, b)| unescape(b))
+        .or_else(|| first("rating"))
+        .and_then(|r| r.parse::<f64>().ok())
+        .filter(|r| *r > 0.0);
+    n.mpaa = first("mpaa").map(|m| m.trim_start_matches("Rated ").trim().to_string());
+    n.runtime_min = first("runtime")
+        .and_then(|r| r.parse().ok())
+        .filter(|r: &i64| *r > 0);
+    n.season = first("season").and_then(|v| v.parse().ok());
+    n.episode = first("episode").and_then(|v| v.parse().ok());
+    for (_, body) in find_tags(xml, "actor") {
+        let name = find_tags(body, "name").first().map(|(_, b)| unescape(b));
+        if let Some(name) = name.filter(|n| !n.is_empty()) {
+            let role = find_tags(body, "role")
+                .first()
+                .map(|(_, b)| unescape(b))
+                .filter(|r| !r.is_empty());
+            n.actors.push((name, role));
+        }
     }
     n
+}
+
+/// Episode nfo files may hold several `<episodedetails>` blocks (multi-episode files).
+pub fn parse_episodes(xml: &str) -> Vec<Nfo> {
+    let blocks = find_tags(xml, "episodedetails");
+    if blocks.is_empty() {
+        return vec![parse(xml)];
+    }
+    blocks.into_iter().map(|(_, b)| parse(b)).collect()
+}
+
+/// Read an episode nfo (one `Nfo` per `<episodedetails>` block).
+pub async fn read_episodes(path: &Path) -> Option<Vec<Nfo>> {
+    let text = tokio::fs::read_to_string(path).await.ok()?;
+    Some(parse_episodes(&text))
 }
 
 pub async fn read(path: &Path) -> Option<Nfo> {
@@ -115,6 +176,47 @@ mod tests {
         assert_eq!(n.year, Some(2021));
         assert_eq!(n.tmdb_id, Some(587807));
         assert_eq!(n.imdb_id.as_deref(), Some("tt1"));
+    }
+
+    #[test]
+    fn parses_genres_rating_mpaa_runtime_and_cast() {
+        let n = parse(
+            r#"<movie><title>X</title><premiered>2021-09-15</premiered><runtime>155</runtime>
+            <mpaa>Rated PG-13</mpaa><genre>Sci-Fi</genre><genre>Adventure / Drama</genre>
+            <ratings><rating name="imdb"><value>7.8</value><votes>1</votes></rating></ratings>
+            <actor><name>Zendaya</name><role>Chani</role></actor><actor><name>No Role</name></actor></movie>"#,
+        );
+        assert_eq!(n.year, Some(2021));
+        assert_eq!(n.aired.as_deref(), Some("2021-09-15"));
+        assert_eq!(n.runtime_min, Some(155));
+        assert_eq!(n.mpaa.as_deref(), Some("PG-13"));
+        assert_eq!(n.genres, ["Sci-Fi", "Adventure", "Drama"]);
+        assert_eq!(n.rating, Some(7.8));
+        assert_eq!(
+            n.actors,
+            vec![
+                ("Zendaya".into(), Some("Chani".into())),
+                ("No Role".into(), None)
+            ]
+        );
+    }
+
+    #[test]
+    fn multi_episode_nfo_blocks() {
+        let eps = parse_episodes(
+            "<episodedetails><title>A</title><season>1</season><episode>2</episode></episodedetails>\
+             <episodedetails><title>B</title><season>1</season><episode>3</episode><aired>2020-02-02</aired></episodedetails>",
+        );
+        assert_eq!(eps.len(), 2);
+        assert_eq!(
+            (
+                eps[1].title.as_deref(),
+                eps[1].episode,
+                eps[1].aired.as_deref()
+            ),
+            (Some("B"), Some(3), Some("2020-02-02"))
+        );
+        assert_eq!(parse_episodes("<movie><title>Z</title></movie>").len(), 1);
     }
 
     #[test]

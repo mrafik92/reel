@@ -74,6 +74,7 @@ fn ingest(pool: &SqlitePool, dir: &std::path::Path) -> Ingest {
         work_dir: dir.join("tmp"),
         epg_back_secs: 86_400,
         epg_fwd_secs: 7 * 86_400,
+        allow_private: true,
     }
 }
 

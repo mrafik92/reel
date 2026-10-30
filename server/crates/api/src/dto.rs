@@ -153,6 +153,11 @@ pub struct MediaFile {
     pub video: Option<VideoStream>,
     pub audio: Vec<AudioStream>,
     pub subtitles: Vec<SubtitleStream>,
+    /// Multi-episode files (`S01E02E03`): ids of every episode item stored in this file, in
+    /// episode order. Absent for ordinary files. Pass the episode being watched as `item_id` to
+    /// `/playback/{file}/decide` so progress is credited to it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub item_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

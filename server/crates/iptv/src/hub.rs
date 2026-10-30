@@ -81,6 +81,8 @@ pub struct HubConfig {
     pub reap_interval: Duration,
     pub default_user_agent: String,
     pub ffmpeg_path: String,
+    /// Allow upstream URLs on private networks (default true: LAN tuners are common).
+    pub allow_private_upstream: bool,
 }
 
 impl Default for HubConfig {
@@ -99,6 +101,7 @@ impl Default for HubConfig {
             reap_interval: Duration::from_millis(250),
             default_user_agent: "VLC/3.0.20 LibVLC/3.0.20".into(),
             ffmpeg_path: "ffmpeg".into(),
+            allow_private_upstream: true,
         }
     }
 }
@@ -649,12 +652,7 @@ pub struct ChannelHub {
 
 impl ChannelHub {
     pub fn new(cfg: HubConfig, resolver: Arc<dyn ChannelResolver>) -> Self {
-        let http = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .connect_timeout(cfg.connect_timeout)
-            .tcp_nodelay(true)
-            .build()
-            .expect("reqwest client");
+        let http = crate::net::client(cfg.allow_private_upstream);
         ChannelHub {
             inner: Arc::new(Inner {
                 cfg,
@@ -923,6 +921,7 @@ async fn open_upstream(inner: &Inner, c: &Candidate) -> std::result::Result<Upst
         .user_agent
         .clone()
         .unwrap_or_else(|| inner.cfg.default_user_agent.clone());
+    crate::net::check_url(&c.url, inner.cfg.allow_private_upstream).map_err(|e| e.to_string())?;
     let looks_hls = reqwest::Url::parse(&c.url)
         .map(|u| u.path().to_ascii_lowercase().ends_with(".m3u8"))
         .unwrap_or(false);
@@ -971,6 +970,9 @@ fn open_ffmpeg(inner: &Inner, c: &Candidate, ua: &str) -> std::result::Result<Up
         "-nostdin",
         "-loglevel",
         "error",
+        // only network protocols: a playlist must not make ffmpeg read local files
+        "-protocol_whitelist",
+        "http,https,tcp,tls,crypto",
         "-user_agent",
         ua,
     ]);

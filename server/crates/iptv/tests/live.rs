@@ -217,3 +217,53 @@ async fn passthrough_reserves_slot_at_tune_and_streams_ts_from_gop_start() {
     );
     live.shutdown().await;
 }
+
+#[tokio::test]
+async fn video_transcode_falls_back_to_software_when_the_hardware_encoder_fails() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mpeg2.ts");
+    make_ts_codecs(&path, 6, "mpeg2video", "mp2");
+    let prov = Provider::start(&path, 6, 1.0).await;
+    let res = Arc::new(MapResolver::default());
+    res.add(1, "SD", vec![cand(1, 10, prov.url("sd"), None)]);
+    let (live, _d) = manager(res, Duration::from_secs(30));
+    // a VAAPI device that does not exist: ffmpeg cannot open it
+    live.set_hwaccel(reel_playback::HwAccel::Vaapi {
+        device: "/dev/dri/renderD999".into(),
+    });
+    assert_eq!(live.hw_status(), ("vaapi", false));
+    let s = live
+        .tune(1, 1, LiveMode::Hls, &HlsOptions::default())
+        .await
+        .unwrap();
+    let h = s.hls.as_ref().unwrap();
+    assert_eq!(
+        (h.video, h.audio),
+        (VideoMode::Transcode, AudioMode::Aac),
+        "MPEG-2 must be re-encoded"
+    );
+    assert_eq!(h.encoder, "software", "hardware failed → software fallback");
+    assert_eq!(live.hw_status(), ("vaapi", true), "remembered");
+    let index = live.hls_file(&s.id, "index.m3u8").await.unwrap();
+    let probe = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(&index)
+        .output()
+        .unwrap();
+    let codecs = String::from_utf8_lossy(&probe.stdout).to_string();
+    assert!(
+        codecs.contains("h264") && codecs.contains("aac") && !codecs.contains("mpeg2"),
+        "{codecs}"
+    );
+    live.shutdown().await;
+}

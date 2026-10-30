@@ -33,6 +33,8 @@ pub enum LiveMode {
 pub struct HlsDetail {
     pub video: VideoMode,
     pub audio: AudioMode,
+    /// `copy` or the video encoder backend (`vaapi`, `qsv`, `nvenc`, `videotoolbox`, `software`).
+    pub encoder: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,6 +102,17 @@ impl LiveManager {
             sessions: Mutex::default(),
             idle: session_idle,
         })
+    }
+
+    /// Use this hardware encoder for video transcodes (falls back to software at runtime if the
+    /// hardware path fails).
+    pub fn set_hwaccel(&self, hw: reel_playback::HwAccel) {
+        self.hls.set_hwaccel(hw);
+    }
+
+    /// `(configured encoder name, fell back to software after a hardware failure)`.
+    pub fn hw_status(&self) -> (&'static str, bool) {
+        self.hls.hw_status()
     }
 
     pub fn hub(&self) -> &ChannelHub {
@@ -188,6 +201,7 @@ impl LiveManager {
             hls: s.lease.as_ref().map(|l| HlsDetail {
                 video: l.pipe().video,
                 audio: l.pipe().audio,
+                encoder: l.pipe().encoder,
             }),
         }
     }

@@ -7,6 +7,7 @@ pub mod hub;
 pub mod ingest;
 pub mod live;
 pub mod m3u;
+pub mod net;
 pub mod service;
 pub mod store;
 pub mod ts;

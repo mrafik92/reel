@@ -1,0 +1,9 @@
+# Keep the build context small (the Dockerfile builds from the repo root).
+.git
+**/target
+**/node_modules
+**/dist
+server/data
+deploy/data
+**/*.log
+clients/apps/*/mock-media

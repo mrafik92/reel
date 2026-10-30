@@ -1,0 +1,7 @@
+# Override for hosts without /dev/dri (no GPU, macOS/Windows Docker Desktop, VMs):
+#   docker compose -f docker-compose.yml -f docker-compose.nogpu.yml up -d
+# Transcoding then runs in software (libx264). Needs Docker Compose v2.24+ (`!reset`).
+services:
+  reel:
+    devices: !reset []
+    group_add: !reset []

@@ -1,0 +1,85 @@
+# Reel — docker compose
+#
+#   cp .env.example .env      # edit MEDIA_DIR, secrets, GPU gids
+#   docker compose up -d      # → http://localhost:8420  (first visit: create the admin account)
+#
+# With HTTPS (Caddy, automatic Let's Encrypt):  docker compose --profile caddy up -d
+# Without a GPU (or on macOS/Windows):          docker compose -f docker-compose.yml -f docker-compose.nogpu.yml up -d
+
+name: reel
+
+services:
+  reel:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: reel:local
+    container_name: reel
+    restart: unless-stopped
+    ports:
+      # Bind to loopback only when Caddy fronts it (set REEL_BIND_HOST=127.0.0.1 in .env).
+      - "${REEL_BIND_HOST:-0.0.0.0}:${REEL_PORT:-8420}:8420"
+    environment:
+      TZ: ${TZ:-UTC}
+      # metadata (optional; without a key only local .nfo/artwork is used)
+      REEL_TMDB_API_KEY: ${REEL_TMDB_API_KEY:-}
+      # Radarr/Sonarr webhook shared secret (webhooks are rejected while empty)
+      REEL_WEBHOOK_SECRET: ${REEL_WEBHOOK_SECRET:-}
+      # public URL used in invite links, e.g. https://reel.example.com
+      REEL_PUBLIC_URL: ${REEL_PUBLIC_URL:-}
+      # set true when a reverse proxy (Caddy/nginx) is in front: per-IP rate limits use X-Forwarded-For
+      REEL_TRUST_PROXY_HEADERS: ${REEL_TRUST_PROXY_HEADERS:-false}
+      # SSRF hardening for server-side fetches of admin-supplied URLs (see README)
+      REEL_ALLOW_PRIVATE_FETCH: ${REEL_ALLOW_PRIVATE_FETCH:-true}
+      REEL_ALLOW_PRIVATE_LOGO_FETCH: ${REEL_ALLOW_PRIVATE_LOGO_FETCH:-false}
+      # transcode limits (0 = unlimited)
+      REEL_MAX_TRANSCODES: ${REEL_MAX_TRANSCODES:-0}
+      REEL_MAX_USER_TRANSCODES: ${REEL_MAX_USER_TRANSCODES:-0}
+    volumes:
+      - reel-data:/data                       # database, image cache, transcode scratch, signing key
+      - ./config:/config:ro                   # optional config.toml (libraries bootstrap, …)
+      - ${MEDIA_DIR:-./media}:/media:ro       # your libraries, read-only
+    # GPU passthrough for VAAPI / QSV (Intel, AMD). NVIDIA: see README ("NVENC").
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:-105}"                  # `getent group render | cut -d: -f3` on the host
+      - "${VIDEO_GID:-44}"                    # `getent group video  | cut -d: -f3`
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8420/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  caddy:
+    profiles: ["caddy"]
+    image: caddy:2
+    container_name: reel-caddy
+    restart: unless-stopped
+    depends_on:
+      reel:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"                          # HTTP/3
+    environment:
+      REEL_DOMAIN: ${REEL_DOMAIN:?set REEL_DOMAIN in .env to use the caddy profile}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  reel-data:
+  caddy-data:
+  caddy-config:

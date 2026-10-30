@@ -11,7 +11,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use reel_metadata::TmdbEnricher;
+use reel_metadata::Enricher;
 use reel_requests::RequestsService;
 use reel_scanner::MetadataProvider;
 use sqlx::SqlitePool;
@@ -29,7 +29,7 @@ impl EnrichQueue {
     /// TMDB id.
     pub fn spawn(
         pool: SqlitePool,
-        enricher: Arc<TmdbEnricher>,
+        enricher: Arc<Enricher>,
         requests: Option<RequestsService>,
     ) -> Arc<Self> {
         let (tx, mut rx) = mpsc::unbounded_channel::<i64>();

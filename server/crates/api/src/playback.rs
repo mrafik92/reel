@@ -43,6 +43,9 @@ pub struct DecideRequest {
     /// Start position in seconds (transcode sessions start there).
     pub start_s: Option<f64>,
     pub device_id: Option<String>,
+    /// Multi-episode files: the episode being watched (one of the file's `item_ids`); watch
+    /// progress is credited to it. Defaults to the file's first item.
+    pub item_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -102,7 +105,23 @@ pub async fn decide_playback(
             })?
         }
     };
-    st.require_file(&u.user, file_id).await?;
+    let primary_item = st.require_file(&u.user, file_id).await?;
+    let watched_item = match req.item_id {
+        None => primary_item,
+        Some(i) if i == primary_item => i,
+        Some(i) => {
+            let linked: Option<i64> = sqlx::query_scalar(
+                "SELECT 1 FROM media_file_links WHERE file_id = ? AND item_id = ?",
+            )
+            .bind(file_id)
+            .bind(i)
+            .fetch_optional(&st.db)
+            .await?;
+            linked
+                .ok_or_else(|| ApiError::BadRequest("item_id is not part of this file".into()))?;
+            i
+        }
+    };
     let (file, streams) = model::load_file(&st.db, file_id)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -181,7 +200,7 @@ pub async fn decide_playback(
     };
     let row = sqlx::query(
         "INSERT INTO playback_sessions (user_id, device_id, file_id, mode, video_decision_json, \
-         bitrate, session_key) VALUES (?, ?, ?, ?, ?, ?, ?)",
+         bitrate, session_key, item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(u.id())
     .bind(&req.device_id)
@@ -190,6 +209,7 @@ pub async fn decide_playback(
     .bind(serde_json::to_string(&decision).ok())
     .bind(info.bitrate_kbps.map(i64::from))
     .bind(&info.id)
+    .bind(watched_item)
     .execute(&st.db)
     .await;
     if let Err(e) = row {
@@ -266,11 +286,19 @@ pub async fn playback_progress(
     }
     let pos = req.position_s.max(0.0);
     st.playback.update_progress(&sid, pos, None)?;
-    let item_id: i64 = sqlx::query_scalar("SELECT item_id FROM media_files WHERE id = ?")
+    let primary: i64 = sqlx::query_scalar("SELECT item_id FROM media_files WHERE id = ?")
         .bind(info.file_id)
         .fetch_optional(&st.db)
         .await?
         .ok_or(ApiError::NotFound)?;
+    // Episode 2+ of a multi-episode file: progress belongs to the episode the session was started for.
+    let item_id: i64 =
+        sqlx::query_scalar("SELECT item_id FROM playback_sessions WHERE session_key = ?")
+            .bind(&sid)
+            .fetch_optional(&st.db)
+            .await?
+            .flatten()
+            .unwrap_or(primary);
     let duration: Option<f64> =
         sqlx::query_scalar("SELECT duration_s FROM media_files WHERE id = ?")
             .bind(info.file_id)
@@ -278,23 +306,42 @@ pub async fn playback_progress(
             .await?;
     let finished = duration.is_some_and(|d| d > 0.0 && pos >= d * 0.9);
     let ts = now();
-    // `played` is sticky: re-watching never un-marks an item.
-    sqlx::query(
-        "INSERT INTO watch_state (user_id, item_id, position_s, played, play_count, last_played_at) \
+    // `played` is sticky: re-watching never un-marks an item. Finishing a multi-episode file
+    // marks every episode in it played.
+    let upsert = "INSERT INTO watch_state (user_id, item_id, position_s, played, play_count, last_played_at) \
          VALUES (?1, ?2, ?3, ?4, ?4, ?5) \
          ON CONFLICT(user_id, item_id) DO UPDATE SET \
            position_s = excluded.position_s, \
            play_count = play_count + (CASE WHEN excluded.played = 1 AND played = 0 THEN 1 ELSE 0 END), \
            played = MAX(played, excluded.played), \
-           last_played_at = excluded.last_played_at",
-    )
-    .bind(info.user_id)
-    .bind(item_id)
-    .bind(pos)
-    .bind(i64::from(finished))
-    .bind(ts)
-    .execute(&st.db)
-    .await?;
+           last_played_at = excluded.last_played_at";
+    sqlx::query(upsert)
+        .bind(info.user_id)
+        .bind(item_id)
+        .bind(pos)
+        .bind(i64::from(finished))
+        .bind(ts)
+        .execute(&st.db)
+        .await?;
+    if finished {
+        let others: Vec<i64> = sqlx::query_scalar(
+            "SELECT item_id FROM media_file_links WHERE file_id = ?1 UNION \
+             SELECT item_id FROM media_files WHERE id = ?1",
+        )
+        .bind(info.file_id)
+        .fetch_all(&st.db)
+        .await?;
+        for o in others.into_iter().filter(|o| *o != item_id) {
+            sqlx::query(upsert)
+                .bind(info.user_id)
+                .bind(o)
+                .bind(0.0_f64)
+                .bind(1_i64)
+                .bind(ts)
+                .execute(&st.db)
+                .await?;
+        }
+    }
     let _ = sqlx::query("UPDATE playback_sessions SET last_ping = ? WHERE session_key = ?")
         .bind(ts)
         .bind(&sid)

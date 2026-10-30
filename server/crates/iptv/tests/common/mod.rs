@@ -42,6 +42,41 @@ pub fn make_ts(path: &Path, secs: u32) {
 
 /// As [`make_ts`] with a chosen audio codec (e.g. `mp2`).
 pub fn make_ts_audio(path: &Path, secs: u32, acodec: &str) {
+    make_ts_codecs(path, secs, "libx264", acodec);
+}
+
+/// MPEG-TS with the given video/audio codecs and a keyframe every second.
+pub fn make_ts_codecs(path: &Path, secs: u32, vcodec: &str, acodec: &str) {
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+        .arg(format!("testsrc=size=128x96:rate=25:duration={secs}"))
+        .args(["-f", "lavfi", "-i"])
+        .arg(format!("sine=frequency=440:duration={secs}"))
+        .args([
+            "-c:v", vcodec, "-g", "25", "-bf", "0", "-pix_fmt", "yuv420p",
+        ]);
+    if vcodec == "libx264" {
+        cmd.args([
+            "-preset",
+            "ultrafast",
+            "-keyint_min",
+            "25",
+            "-sc_threshold",
+            "0",
+        ]);
+    }
+    let ok = cmd
+        .args(["-c:a", acodec, "-b:a", "64k", "-f", "mpegts"])
+        .arg(path)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "ffmpeg failed");
+}
+
+/// A VOD HLS rendition (`index.m3u8` + `.ts` segments) of `secs` seconds in `dir`.
+pub fn make_hls(dir: &Path, secs: u32) {
+    std::fs::create_dir_all(dir).unwrap();
     let ok = Command::new("ffmpeg")
         .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
         .arg(format!("testsrc=size=128x96:rate=25:duration={secs}"))
@@ -56,6 +91,8 @@ pub fn make_ts_audio(path: &Path, secs: u32, acodec: &str) {
             "25",
             "-keyint_min",
             "25",
+        ])
+        .args([
             "-sc_threshold",
             "0",
             "-bf",
@@ -63,17 +100,23 @@ pub fn make_ts_audio(path: &Path, secs: u32, acodec: &str) {
             "-pix_fmt",
             "yuv420p",
             "-c:a",
-            acodec,
-            "-b:a",
-            "64k",
-            "-f",
-            "mpegts",
+            "aac",
         ])
-        .arg(path)
+        .args([
+            "-f",
+            "hls",
+            "-hls_time",
+            "1",
+            "-hls_list_size",
+            "0",
+            "-hls_segment_filename",
+        ])
+        .arg(dir.join("seg%d.ts"))
+        .arg(dir.join("index.m3u8"))
         .status()
         .unwrap()
         .success();
-    assert!(ok, "ffmpeg failed");
+    assert!(ok, "ffmpeg hls failed");
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -254,4 +297,48 @@ pub fn temp_ts(secs: u32) -> (tempfile::TempDir, PathBuf) {
     let p = dir.path().join("fixture.ts");
     make_ts(&p, secs);
     (dir, p)
+}
+
+/// Serve an HLS directory at `/` (`/index.m3u8`, `/segN.ts`) and the same playlist at
+/// `/playlist` (no `.m3u8` extension, so only the Content-Type identifies it).
+pub async fn serve_hls(dir: PathBuf) -> std::net::SocketAddr {
+    use axum::extract::Path as AxPath;
+    let d1 = dir.clone();
+    let app = Router::new()
+        .route(
+            "/{file}",
+            get(move |AxPath(file): AxPath<String>| {
+                let dir = d1.clone();
+                async move {
+                    if file.contains('/') || file.contains("..") {
+                        return StatusCode::BAD_REQUEST.into_response();
+                    }
+                    match std::fs::read(dir.join(&file)) {
+                        Ok(b) => {
+                            let ct = if file.ends_with(".m3u8") {
+                                "application/vnd.apple.mpegurl"
+                            } else {
+                                "video/mp2t"
+                            };
+                            ([(header::CONTENT_TYPE, ct)], b).into_response()
+                        }
+                        Err(_) => StatusCode::NOT_FOUND.into_response(),
+                    }
+                }
+            }),
+        )
+        .route(
+            "/playlist",
+            get(move || {
+                let dir = dir.clone();
+                async move {
+                    let b = std::fs::read(dir.join("index.m3u8")).unwrap();
+                    ([(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")], b)
+                }
+            }),
+        );
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    addr
 }

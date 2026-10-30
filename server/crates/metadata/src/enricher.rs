@@ -1,6 +1,7 @@
-//! TMDB (+ local `.nfo` / art) enrichment of `media_items`.
+//! Local (`.nfo` + art) and optional TMDB enrichment of `media_items`.
 //!
-//! Precedence: locked field (never touched) > local nfo/art > TMDB.
+//! Local enrichment needs no network and no API key; TMDB is layered on top when a client is
+//! configured. Precedence: locked field (never touched) > local nfo/art > TMDB.
 //! Locked fields are column-ish names in `locked_fields_json`, e.g.
 //! `["title","overview","poster","backdrop","genres","credits"]`.
 
@@ -24,10 +25,14 @@ const TOP_CAST: usize = 20;
 const POSTER_NAMES: &[&str] = &["poster.jpg", "poster.png", "folder.jpg", "folder.png"];
 const BACKDROP_NAMES: &[&str] = &["fanart.jpg", "fanart.png", "backdrop.jpg", "backdrop.png"];
 
+/// Enriches items from sidecar files and, if a TMDB client is configured, from TMDB.
 #[derive(Debug, Clone)]
-pub struct TmdbEnricher {
-    client: TmdbClient,
+pub struct Enricher {
+    client: Option<TmdbClient>,
 }
+
+/// Former name; kept for compatibility.
+pub type TmdbEnricher = Enricher;
 
 #[derive(sqlx::FromRow, Debug, Clone)]
 struct Item {
@@ -94,13 +99,25 @@ fn file_url(p: &Path) -> String {
     format!("file://{}", p.display())
 }
 
-impl TmdbEnricher {
+impl Enricher {
+    /// Local sidecars plus TMDB.
     pub fn new(client: TmdbClient) -> Self {
-        Self { client }
+        Self {
+            client: Some(client),
+        }
     }
 
-    pub fn client(&self) -> &TmdbClient {
-        &self.client
+    /// `.nfo` files and local artwork only — works without a TMDB key.
+    pub fn local() -> Self {
+        Self { client: None }
+    }
+
+    pub fn client(&self) -> Option<&TmdbClient> {
+        self.client.as_ref()
+    }
+
+    pub fn has_tmdb(&self) -> bool {
+        self.client.is_some()
     }
 
     /// Enrich one item. Seasons/episodes are routed to their show.
@@ -159,20 +176,21 @@ impl TmdbEnricher {
         let local_poster = find_file(&dirs, &pn).map(|p| file_url(&p));
         let local_back = find_file(&dirs, &bn).map(|p| file_url(&p));
 
-        let tmdb_id = match item.tmdb_id.or(nfo.tmdb_id) {
-            Some(id) => Some(id),
-            None => {
+        let tmdb_id = match (item.tmdb_id.or(nfo.tmdb_id), &self.client) {
+            (Some(id), _) => Some(id),
+            (None, Some(client)) => {
                 let q = MatchQuery {
                     title: nfo.title.clone().unwrap_or_else(|| item.title.clone()),
                     year: nfo.year.or(item.year.map(|y| y as i32)),
                     tmdb_id: None,
                 };
-                matcher::resolve(&self.client, &q, false).await?
+                matcher::resolve(client, &q, false).await?
             }
+            (None, None) => None,
         };
-        let details = match tmdb_id {
-            Some(id) => Some(self.client.movie(id).await?),
-            None => None,
+        let details = match (tmdb_id, &self.client) {
+            (Some(id), Some(client)) => Some(client.movie(id).await?),
+            _ => None,
         };
         apply_movie(
             pool,
@@ -212,25 +230,26 @@ impl TmdbEnricher {
         let local_poster = find_file(&dirs, POSTER_NAMES).map(|p| file_url(&p));
         let local_back = find_file(&dirs, BACKDROP_NAMES).map(|p| file_url(&p));
 
-        let tmdb_id = match item.tmdb_id.or(nfo.tmdb_id) {
-            Some(id) => Some(id),
-            None => {
+        let tmdb_id = match (item.tmdb_id.or(nfo.tmdb_id), &self.client) {
+            (Some(id), _) => Some(id),
+            (None, Some(client)) => {
                 let q = MatchQuery {
                     title: nfo.title.clone().unwrap_or_else(|| item.title.clone()),
                     year: nfo.year.or(item.year.map(|y| y as i32)),
                     tmdb_id: None,
                 };
-                matcher::resolve(&self.client, &q, true).await?
+                matcher::resolve(client, &q, true).await?
             }
+            (None, None) => None,
         };
-        let details = match tmdb_id {
-            Some(id) => Some(self.client.tv(id).await?),
-            None => None,
+        let details = match (tmdb_id, &self.client) {
+            (Some(id), Some(client)) => Some(client.tv(id).await?),
+            _ => None,
         };
         let mut seasons = vec![];
-        if let (Some(id), Some(d)) = (tmdb_id, &details) {
+        if let (Some(id), Some(d), Some(client)) = (tmdb_id, &details, &self.client) {
             for s in &d.seasons {
-                match self.client.season(id, s.season_number).await {
+                match client.season(id, s.season_number).await {
                     Ok(sd) => seasons.push(sd),
                     Err(e) => {
                         tracing::warn!(tmdb_id = id, season = s.season_number, error = %e, "season fetch failed")
@@ -248,7 +267,8 @@ impl TmdbEnricher {
             details,
             seasons,
         )
-        .await
+        .await?;
+        apply_local_episodes(pool, item.id).await
     }
 }
 
@@ -325,14 +345,22 @@ fn merge(item: &Item, nfo: &Nfo, lp: Option<String>, lb: Option<String>, r: Remo
         &item.overview,
         nfo.plot.clone().or(r.overview),
     );
-    o.rating = pick(lk.has("rating"), &item.rating, r.rating);
+    o.rating = pick(lk.has("rating"), &item.rating, nfo.rating.or(r.rating));
     o.content_rating = pick(
         lk.has("content_rating"),
         &item.content_rating,
-        r.content_rating,
+        nfo.mpaa.clone().or(r.content_rating),
     );
-    o.runtime_s = pick(lk.has("runtime"), &item.runtime_s, r.runtime_s);
-    o.air_date = pick(lk.has("air_date"), &item.air_date, r.air_date);
+    o.runtime_s = pick(
+        lk.has("runtime"),
+        &item.runtime_s,
+        nfo.runtime_min.map(|m| m * 60).or(r.runtime_s),
+    );
+    o.air_date = pick(
+        lk.has("air_date"),
+        &item.air_date,
+        nfo.aired.clone().or(r.air_date),
+    );
     o.poster = pick(lk.has("poster"), &item.poster, lp.or(r.poster));
     o.backdrop = pick(lk.has("backdrop"), &item.backdrop, lb.or(r.backdrop));
     o.tmdb_id = r.tmdb_id.or(nfo.tmdb_id).or(item.tmdb_id);
@@ -391,15 +419,16 @@ async fn apply_movie(
     };
     let merged = merge(item, nfo, lp, lb, remote);
     save(pool, &merged).await?;
+    apply_genres_and_cast(
+        pool,
+        item.id,
+        &lk,
+        nfo,
+        d.as_ref().map(|d| (&d.genres, d.credits.as_ref())),
+        true,
+    )
+    .await?;
     if let Some(d) = d {
-        if !lk.has("genres") {
-            set_genres(pool, item.id, &d.genres).await?;
-        }
-        if !lk.has("credits") {
-            if let Some(c) = &d.credits {
-                set_credits(pool, item.id, c, true).await?;
-            }
-        }
         if let Some(col) = &d.belongs_to_collection {
             let (cid,): (i64,) = sqlx::query_as(
                 "INSERT INTO collections (name, tmdb_id) VALUES (?, ?)
@@ -416,6 +445,37 @@ async fn apply_movie(
             .bind(item.id)
             .execute(pool)
             .await?;
+        }
+    }
+    Ok(())
+}
+
+/// Genres: local nfo wins over TMDB. Cast: TMDB credits (they carry photos) when present,
+/// otherwise the nfo `<actor>` list.
+async fn apply_genres_and_cast(
+    pool: &SqlitePool,
+    item_id: i64,
+    lk: &Locked,
+    nfo: &Nfo,
+    remote: Option<(&Vec<Genre>, Option<&Credits>)>,
+    with_directors: bool,
+) -> Result<()> {
+    if !lk.has("genres") {
+        let names: Vec<String> = if !nfo.genres.is_empty() {
+            nfo.genres.clone()
+        } else {
+            remote
+                .map(|(g, _)| g.iter().map(|g| g.name.clone()).collect())
+                .unwrap_or_default()
+        };
+        set_genres(pool, item_id, &names).await?;
+    }
+    if !lk.has("credits") {
+        match remote.and_then(|(_, c)| c) {
+            Some(c) if !(c.cast.is_empty() && c.crew.is_empty()) => {
+                set_credits(pool, item_id, c, with_directors).await?;
+            }
+            _ => set_nfo_cast(pool, item_id, &nfo.actors).await?,
         }
     }
     Ok(())
@@ -469,19 +529,163 @@ async fn apply_show(
     };
     let merged = merge(item, nfo, lp, lb, remote);
     save(pool, &merged).await?;
-    let Some(d) = d else { return Ok(()) };
-    if !lk.has("genres") {
-        set_genres(pool, item.id, &d.genres).await?;
-    }
-    if !lk.has("credits") {
-        if let Some(c) = &d.credits {
-            set_credits(pool, item.id, c, false).await?;
-        }
-    }
+    apply_genres_and_cast(
+        pool,
+        item.id,
+        &lk,
+        nfo,
+        d.as_ref().map(|d| (&d.genres, d.credits.as_ref())),
+        false,
+    )
+    .await?;
     for s in seasons {
         apply_season(pool, item, &s).await?;
     }
     Ok(())
+}
+
+/// Local episode/season data that needs no TMDB: `<episode>.nfo` (title, plot, aired, rating,
+/// runtime; several `<episodedetails>` blocks for multi-episode files), `<episode>-thumb.jpg`, and
+/// season posters (`season01-poster.jpg` next to the show, or `poster.jpg` in the season folder).
+async fn apply_local_episodes(pool: &SqlitePool, show_id: i64) -> Result<()> {
+    let eps: Vec<Item> = sqlx::query_as(&format!(
+        "SELECT {ITEM_COLS} FROM media_items WHERE kind='episode'
+         AND (parent_id=?1 OR parent_id IN (SELECT id FROM media_items WHERE parent_id=?1 AND kind='season'))"
+    ))
+    .bind(show_id)
+    .fetch_all(pool)
+    .await?;
+    let mut season_dirs: std::collections::HashMap<i64, PathBuf> = Default::default();
+    for it in eps {
+        let Some(path): Option<String> = sqlx::query_scalar(
+            "SELECT path FROM media_files WHERE item_id = ?1 \
+             OR id IN (SELECT file_id FROM media_file_links WHERE item_id = ?1) \
+             ORDER BY part_no, id LIMIT 1",
+        )
+        .bind(it.id)
+        .fetch_optional(pool)
+        .await?
+        else {
+            continue;
+        };
+        let path = PathBuf::from(path);
+        let (Some(dir), Some(stem)) = (
+            path.parent().map(Path::to_path_buf),
+            path.file_stem().map(|s| s.to_string_lossy().into_owned()),
+        ) else {
+            continue;
+        };
+        if let Some(sn) = season_of(pool, it.parent_id).await? {
+            season_dirs.entry(sn).or_insert_with(|| dir.clone());
+        }
+        let nfo = match nfo::read_episodes(&dir.join(format!("{stem}.nfo"))).await {
+            Some(blocks) => {
+                let no = it.id_episode_no(pool).await?;
+                blocks
+                    .iter()
+                    .find(|b| b.episode.is_some() && b.episode == no)
+                    .cloned()
+                    .or_else(|| (blocks.len() == 1).then(|| blocks[0].clone()))
+                    .unwrap_or_default()
+            }
+            None => Nfo::default(),
+        };
+        let thumb = find_file(
+            &[dir.clone()],
+            &[
+                &format!("{stem}-thumb.jpg"),
+                &format!("{stem}-thumb.png"),
+                &format!("{stem}.jpg"),
+            ],
+        )
+        .map(|p| file_url(&p));
+        if nfo == Nfo::default() && thumb.is_none() {
+            continue;
+        }
+        let lk = Locked::of(&it);
+        let mut o = it.clone();
+        if !lk.has("title") {
+            if let Some(t) = nonempty(nfo.title.clone()) {
+                o.title = t;
+            }
+        }
+        o.overview = pick(lk.has("overview"), &it.overview, nonempty(nfo.plot.clone()));
+        o.air_date = pick(lk.has("air_date"), &it.air_date, nfo.aired.clone());
+        o.rating = pick(lk.has("rating"), &it.rating, nfo.rating);
+        o.runtime_s = pick(
+            lk.has("runtime"),
+            &it.runtime_s,
+            nfo.runtime_min.map(|m| m * 60),
+        );
+        o.poster = pick(lk.has("poster"), &it.poster, thumb);
+        save(pool, &o).await?;
+    }
+    // season posters
+    let seasons: Vec<Item> = sqlx::query_as(&format!(
+        "SELECT {ITEM_COLS} FROM media_items WHERE kind='season' AND parent_id=?"
+    ))
+    .bind(show_id)
+    .fetch_all(pool)
+    .await?;
+    for it in seasons {
+        let Some(no) =
+            sqlx::query_scalar::<_, Option<i64>>("SELECT season_no FROM media_items WHERE id=?")
+                .bind(it.id)
+                .fetch_one(pool)
+                .await?
+        else {
+            continue;
+        };
+        let Some(sdir) = season_dirs.get(&no) else {
+            continue;
+        };
+        let mut names = vec![
+            format!("season{no:02}-poster.jpg"),
+            format!("season{no}-poster.jpg"),
+            format!("season{no:02}-poster.png"),
+        ];
+        if no == 0 {
+            names.push("season-specials-poster.jpg".into());
+        }
+        let in_show: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut dirs = vec![sdir.clone()];
+        if let Some(p) = sdir.parent() {
+            dirs.push(p.to_path_buf());
+        }
+        let found = find_file(&dirs, &in_show)
+            .or_else(|| {
+                find_file(
+                    &[sdir.clone()],
+                    &["poster.jpg", "poster.png", "folder.jpg", "folder.png"],
+                )
+            })
+            .map(|p| file_url(&p));
+        if found.is_some() && !Locked::of(&it).has("poster") {
+            let mut o = it.clone();
+            o.poster = found;
+            save(pool, &o).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn season_of(pool: &SqlitePool, season_item: Option<i64>) -> Result<Option<i64>> {
+    let Some(id) = season_item else {
+        return Ok(None);
+    };
+    Ok(sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT season_no FROM media_items WHERE id = ? AND kind='season'",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .flatten())
+}
+
+impl Item {
+    async fn id_episode_no(&self, pool: &SqlitePool) -> Result<Option<i64>> {
+        episode_no(pool, self.id).await
+    }
 }
 
 /// Update existing season/episode rows only (never creates rows for files we don't have).
@@ -566,7 +770,7 @@ async fn episode_no(pool: &SqlitePool, id: i64) -> Result<Option<i64>> {
     Ok(r.and_then(|r| r.0))
 }
 
-async fn set_genres(pool: &SqlitePool, item_id: i64, genres: &[Genre]) -> Result<()> {
+async fn set_genres(pool: &SqlitePool, item_id: i64, genres: &[String]) -> Result<()> {
     if genres.is_empty() {
         return Ok(());
     }
@@ -576,12 +780,50 @@ async fn set_genres(pool: &SqlitePool, item_id: i64, genres: &[Genre]) -> Result
         .await?;
     for g in genres {
         sqlx::query("INSERT OR IGNORE INTO genres (name) VALUES (?)")
-            .bind(&g.name)
+            .bind(g)
             .execute(pool)
             .await?;
         sqlx::query("INSERT OR IGNORE INTO item_genres (item_id, genre_id) SELECT ?, id FROM genres WHERE name=?")
             .bind(item_id)
-            .bind(&g.name)
+            .bind(g)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Cast from an nfo (no TMDB ids): people are matched by name.
+async fn set_nfo_cast(
+    pool: &SqlitePool,
+    item_id: i64,
+    actors: &[(String, Option<String>)],
+) -> Result<()> {
+    if actors.is_empty() {
+        return Ok(());
+    }
+    sqlx::query("DELETE FROM credits WHERE item_id=?")
+        .bind(item_id)
+        .execute(pool)
+        .await?;
+    for (i, (name, role)) in actors.iter().take(TOP_CAST).enumerate() {
+        let existing: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM people WHERE tmdb_id IS NULL AND name = ? LIMIT 1")
+                .bind(name)
+                .fetch_optional(pool)
+                .await?;
+        let pid = match existing {
+            Some(id) => id,
+            None => sqlx::query("INSERT INTO people (name) VALUES (?)")
+                .bind(name)
+                .execute(pool)
+                .await?
+                .last_insert_rowid(),
+        };
+        sqlx::query("INSERT OR IGNORE INTO credits (item_id, person_id, role, character, ord) VALUES (?, ?, 'actor', ?, ?)")
+            .bind(item_id)
+            .bind(pid)
+            .bind(role)
+            .bind(i as i64)
             .execute(pool)
             .await?;
     }

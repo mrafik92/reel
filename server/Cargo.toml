@@ -50,3 +50,14 @@ debug = "line-tables-only"
 opt-level = 3
 [profile.dev.package.blake2]
 opt-level = 3
+
+# Release binaries (Docker image). Line tables are kept because proc-macro dylibs built without any
+# debuginfo are refused by macOS ("mis-aligned LINKEDIT") when building on a Mac; the Dockerfile
+# strips the final binary.
+[profile.release]
+codegen-units = 4
+debug = "line-tables-only"
+lto = "thin"
+
+[profile.release.package."*"]
+debug = "line-tables-only"

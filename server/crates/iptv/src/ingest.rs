@@ -30,6 +30,8 @@ pub struct Ingest {
     /// EPG window: keep programmes ending after `now - back` and starting before `now + fwd`.
     pub epg_back_secs: i64,
     pub epg_fwd_secs: i64,
+    /// Allow playlists / guides / provider APIs on private networks (`allow_private_fetch`).
+    pub allow_private: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
@@ -89,10 +91,12 @@ fn local_path(url: &str) -> Option<PathBuf> {
 }
 
 impl Ingest {
-    fn request(&self, url: &str, ua: Option<&str>) -> reqwest::RequestBuilder {
-        self.http
+    fn request(&self, url: &str, ua: Option<&str>) -> Result<reqwest::RequestBuilder> {
+        crate::net::check_url(url, self.allow_private)?;
+        Ok(self
+            .http
             .get(url)
-            .header("User-Agent", ua.unwrap_or("VLC/3.0.20 LibVLC/3.0.20"))
+            .header("User-Agent", ua.unwrap_or("VLC/3.0.20 LibVLC/3.0.20")))
     }
 
     // ───────────── channels ─────────────
@@ -104,7 +108,7 @@ impl Ingest {
             parser.feed(&tokio::fs::read(p).await?, &mut out);
         } else {
             let resp = self
-                .request(&src.url, src.user_agent.as_deref())
+                .request(&src.url, src.user_agent.as_deref())?
                 .send()
                 .await?;
             if !resp.status().is_success() {
@@ -128,6 +132,7 @@ impl Ingest {
                 "Xtream sources need a username and password".into(),
             ));
         };
+        crate::net::check_url(&src.url, self.allow_private)?;
         Ok(XtreamClient::new(self.http.clone(), &src.url, u, p))
     }
 
@@ -333,7 +338,7 @@ impl Ingest {
         }
         tokio::fs::create_dir_all(&self.work_dir).await?;
         let dest = self.work_dir.join(format!("epg-{id}.tmp"));
-        let resp = self.request(url, ua).send().await?;
+        let resp = self.request(url, ua)?.send().await?;
         if !resp.status().is_success() {
             return Err(Error::Unavailable(format!(
                 "EPG download failed: HTTP {}",

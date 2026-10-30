@@ -362,6 +362,8 @@ pub struct HlsDetailDto {
     pub video: String,
     /// `copy` | `aac` | `none`
     pub audio: String,
+    /// `copy`, or the video encoder backend (`vaapi`, `qsv`, `nvenc`, `videotoolbox`, `software`).
+    pub encoder: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -455,6 +457,7 @@ pub async fn tune(
         hls: s.hls.map(|h| HlsDetailDto {
             video: snake(&h.video),
             audio: snake(&h.audio),
+            encoder: h.encoder.to_string(),
         }),
     }))
 }
@@ -589,7 +592,8 @@ pub async fn channel_logo(
             .fetch_optional(&st.db)
             .await?
             .ok_or(ApiError::NotFound)?;
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
+    // Logos come from third-party playlists: private/loopback targets are refused by default.
+    if reel_iptv::net::check_url(&url, st.config.allow_private_logo_fetch).is_err() {
         return Err(ApiError::NotFound);
     }
     let key: String = Sha256::digest(url.as_bytes())
@@ -603,8 +607,7 @@ pub async fn channel_logo(
         Err(_) => {
             let resp = st
                 .iptv
-                .ingest
-                .http
+                .logo_http
                 .get(&url)
                 .timeout(std::time::Duration::from_secs(10))
                 .send()
@@ -725,25 +728,25 @@ fn yes() -> bool {
     true
 }
 
-fn validate_url(u: &str) -> ApiResult<()> {
-    if u.starts_with("http://") || u.starts_with("https://") {
-        Ok(())
-    } else {
-        Err(ApiError::BadRequest(
+fn validate_url(st: &AppState, u: &str) -> ApiResult<()> {
+    if !(u.starts_with("http://") || u.starts_with("https://")) {
+        return Err(ApiError::BadRequest(
             "url must start with http:// or https://".into(),
-        ))
+        ));
     }
+    reel_iptv::net::check_url(u, st.config.allow_private_fetch)?;
+    Ok(())
 }
 
-fn validate_source(b: &SourceBody) -> ApiResult<SourceKind> {
+fn validate_source(st: &AppState, b: &SourceBody) -> ApiResult<SourceKind> {
     let kind = SourceKind::parse(&b.kind)
         .ok_or_else(|| ApiError::BadRequest("kind must be m3u or xtream".into()))?;
     if b.name.trim().is_empty() {
         return Err(ApiError::BadRequest("name must not be empty".into()));
     }
-    validate_url(b.url.trim())?;
+    validate_url(st, b.url.trim())?;
     if let Some(e) = b.epg_url.as_deref().filter(|e| !e.is_empty()) {
-        validate_url(e)?;
+        validate_url(st, e)?;
     }
     if kind == SourceKind::Xtream
         && (b.username.as_deref().is_none_or(str::is_empty)
@@ -768,7 +771,7 @@ pub async fn create_source(
     AdminUser(a): AdminUser,
     Json(b): Json<SourceBody>,
 ) -> ApiResult<(StatusCode, Json<SourceDto>)> {
-    let kind = validate_source(&b)?;
+    let kind = validate_source(&st, &b)?;
     let id = sqlx::query(
         "INSERT INTO iptv_sources (name, kind, url, username, password, max_connections, epg_url, \
          refresh_interval, user_agent, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -847,10 +850,10 @@ pub async fn update_source(
 ) -> ApiResult<Json<SourceDto>> {
     let cur = store::get_source(&st.db, id).await?;
     if let Some(u) = p.url.as_deref() {
-        validate_url(u.trim())?;
+        validate_url(&st, u.trim())?;
     }
     if let Some(u) = p.epg_url.as_deref().filter(|e| !e.is_empty()) {
-        validate_url(u)?;
+        validate_url(&st, u)?;
     }
     let empty_to_none = |s: Option<String>, cur: Option<String>| match s {
         Some(v) if v.is_empty() => None,
@@ -1078,7 +1081,7 @@ pub async fn test_new_source(
     _a: AdminUser,
     Json(b): Json<SourceBody>,
 ) -> ApiResult<Json<SourceTest>> {
-    let kind = validate_source(&b)?;
+    let kind = validate_source(&st, &b)?;
     Ok(Json(
         run_test(
             &st,
@@ -1354,7 +1357,17 @@ pub struct LiveSessionDto {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+pub struct TranscodeStatus {
+    /// Configured encoder backend: `vaapi`, `qsv`, `nvenc`, `videotoolbox` or `software`.
+    pub encoder: String,
+    /// The hardware encoder failed at runtime; software encoding is used instead.
+    pub fell_back_to_software: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct HubStatus {
+    /// Video encoder used for IPTV transcodes (non-H.264 sources) and whether it fell back.
+    pub transcode: TranscodeStatus,
     pub sources: Vec<SourceUsage>,
     pub channels: Vec<ChannelMetricsDto>,
     pub sessions: Vec<LiveSessionDto>,
@@ -1381,6 +1394,7 @@ async fn session_dtos(st: &AppState) -> ApiResult<Vec<LiveSessionDto>> {
             hls: s.hls.map(|h| HlsDetailDto {
                 video: snake(&h.video),
                 audio: snake(&h.audio),
+                encoder: h.encoder.to_string(),
             }),
         });
     }
@@ -1413,7 +1427,12 @@ pub async fn hub_status(State(st): State<AppState>, _a: AdminUser) -> ApiResult<
                 .expect("metrics shape")
         })
         .collect();
+    let (encoder, failed) = st.iptv.live.hw_status();
     Ok(Json(HubStatus {
+        transcode: TranscodeStatus {
+            encoder: encoder.to_string(),
+            fell_back_to_software: failed,
+        },
         sources,
         channels,
         sessions: session_dtos(&st).await?,

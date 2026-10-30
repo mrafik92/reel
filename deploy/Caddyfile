@@ -1,0 +1,49 @@
+# Reverse proxy with automatic HTTPS. Used by `docker compose --profile caddy up -d`.
+# Required: REEL_DOMAIN (DNS A/AAAA record pointing here, ports 80/443 forwarded).
+{
+	email {$ACME_EMAIL}
+}
+
+{$REEL_DOMAIN} {
+	# Compress text only — never video (HLS segments, MPEG-TS, direct files are already compressed
+	# and must stay seekable via Range requests).
+	encode {
+		zstd
+		gzip
+		match {
+			header Content-Type text/*
+			header Content-Type application/json*
+			header Content-Type application/javascript*
+			header Content-Type application/vnd.apple.mpegurl*
+			header Content-Type image/svg+xml*
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# Webhook bodies and API calls are small; media goes the other way.
+	request_body {
+		max_size 8MB
+	}
+
+	reverse_proxy reel:8420 {
+		# Stream immediately: live MPEG-TS passthrough, HLS playlists, WebSocket /events, direct play.
+		flush_interval -1
+
+		transport http {
+			dial_timeout 10s
+			# Cold HLS/transcode starts can take 20+ s before the first byte of a playlist.
+			response_header_timeout 2m
+			# No read/write timeout: a movie or a live channel is one long response.
+			read_timeout 0
+			write_timeout 0
+			keepalive 2m
+		}
+
+		# Real client IP for rate limiting / audit (set REEL_TRUST_PROXY_HEADERS=true).
+		header_up X-Real-IP {remote_host}
+	}
+}
