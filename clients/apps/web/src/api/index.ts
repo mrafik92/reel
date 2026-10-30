@@ -7,7 +7,7 @@ import type {
   CreateNotification, CreateRequest, CreateUser, DecideRequest, DecideResponse, DiscoverCard, DiscoverDetail,
   DiscoverList, DiscoverPage, DownloadClient, HwAccelStatus, InviteDto, InviteInfo, LoginResponse, Me, MediaType,
   NotificationTarget, PatchUser, ProgressDto, RequestDto, RequestState, SetupStatus, UpdateArrServer, UserDto,
-  DiscoverDetailWithCast, PersonDetail, Reviews, DownloadItem,
+  DiscoverDetailWithCast, PersonDetail, Reviews, DownloadItem, GenreCount, LibraryFilters, BrowseLane, SearchAll,
 } from "./types";
 
 export { ApiError, getToken, setToken, onUnauthorized } from "./http";
@@ -39,7 +39,15 @@ export interface Api {
   libraries(): Promise<Library[]>;
   createLibrary(b: CreateLibrary): Promise<Library>;
   scanLibrary(id: Id): Promise<void>;
-  libraryItems(id: Id, opts: { sort: LibrarySort; cursor?: string | null; limit?: number }): Promise<Page<ItemSummary>>;
+  libraryItems(id: Id, opts: { sort: LibrarySort; cursor?: string | null; limit?: number; seed?: number; filters?: LibraryFilters }): Promise<Page<ItemSummary>>;
+  /** Genres with item counts (whole server, or one library). */
+  genres(libraryId?: Id): Promise<GenreCount[]>;
+  /** Curated picker lanes for one library. */
+  browseLanes(libraryId: Id): Promise<BrowseLane[]>;
+  /** One random title matching the filters (404 when nothing does). */
+  pick(libraryId: Id, filters?: LibraryFilters): Promise<ItemSummary>;
+  /** Library + episodes + people + TMDB in one go. */
+  searchAll(q: string, limit?: number): Promise<SearchAll>;
   item(id: Id): Promise<ItemDetail>;
   /** Plain array (not paged). */
   children(id: Id): Promise<ItemSummary[]>;
@@ -102,6 +110,19 @@ onServerUrlChange((u) => setApiBase(u));
 
 const noAuth = { auth: false };
 
+/** LibraryFilters → wire query (omits empty values). */
+export function filterQuery(f?: LibraryFilters): Record<string, string | number | boolean | undefined> {
+  if (!f) return {};
+  return {
+    genre: f.genre && f.genre.length ? f.genre.join(",") : undefined,
+    year_from: f.year_from,
+    year_to: f.year_to,
+    min_rating: f.min_rating,
+    max_runtime_min: f.max_runtime_min,
+    unwatched: f.unwatched ? true : undefined,
+  };
+}
+
 const httpApi: Api = {
   mock: false,
 
@@ -117,7 +138,12 @@ const httpApi: Api = {
   createLibrary: (b) => http.post("/libraries", b),
   scanLibrary: (id) => http.post(`/libraries/${id}/scan`),
   // Only this endpoint is paged; `next_cursor` is opaque.
-  libraryItems: (id, o) => http.get(`/libraries/${id}/items`, { sort: o.sort, cursor: o.cursor, limit: o.limit ?? 60 }),
+  libraryItems: (id, o) =>
+    http.get(`/libraries/${id}/items`, { sort: o.sort, cursor: o.cursor, limit: o.limit ?? 60, seed: o.sort === "random" ? o.seed : undefined, ...filterQuery(o.filters) }),
+  genres: (libraryId) => http.get("/genres", { library_id: libraryId }),
+  browseLanes: (libraryId) => http.get("/browse/lanes", { library_id: libraryId }),
+  pick: (libraryId, f) => http.get("/pick", { library_id: libraryId, ...filterQuery(f) }),
+  searchAll: (q, limit = 30) => http.get("/search/all", { q, limit }),
   item: (id) => http.get(`/items/${id}`),
   children: (id) => http.get(`/items/${id}/children`),
   home: () => http.get("/home"),
@@ -193,6 +219,7 @@ export function invalidate(prefix = ""): void {
 /** Proxy every call to the backend; reads listed in READS go through the cache. */
 const READS: Partial<Record<keyof Api, number>> = {
   libraries: TTL, libraryItems: TTL, item: TTL, children: TTL, home: TTL, search: TTL,
+  genres: 5 * 60_000, browseLanes: 60_000, searchAll: 60_000,
   discover: 5 * 60_000, discoverDetail: 5 * 60_000, discoverSearch: 60_000,
   person: 10 * 60_000, reviews: 30 * 60_000,
 };
@@ -214,6 +241,6 @@ export const api: Api = wrap();
 
 /** Mutations that change library state should call this so lists refresh. */
 export function invalidateLibrary(): void {
-  ["libraries", "libraryItems", "item", "children", "home", "search"].forEach((k) => invalidate(k));
+  ["libraries", "libraryItems", "item", "children", "home", "search", "genres", "browseLanes", "searchAll"].forEach((k) => invalidate(k));
 }
 

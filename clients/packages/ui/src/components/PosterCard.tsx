@@ -1,7 +1,7 @@
 import { Show, type JSX } from "solid-js";
 import type { ItemSummary } from "../types";
 import type { DownloadProgress } from "../progress";
-import { episodeCode, formatEta, formatSpeed } from "../format";
+import { episodeCode, formatEta, formatRuntime, formatSpeed } from "../format";
 import { Img } from "./Img";
 import { ProgressRing, RING_LABEL, type RingState } from "./ProgressRing";
 import { Icon } from "./Icon";
@@ -27,6 +27,8 @@ export interface PosterCardProps {
   onClick?: (e: MouseEvent) => void;
   /** Initial focus for the page. */
   autofocus?: boolean;
+  /** Rating + runtime strip, revealed on focus/hover (default on when the item carries them). */
+  meta?: boolean;
   class?: string;
 }
 
@@ -52,6 +54,12 @@ export function PosterCard(props: PosterCardProps): JSX.Element {
     const d = dl();
     return !!d && d.state !== "declined";
   };
+  const rating = () => {
+    const r = it().rating;
+    return r && r > 0 ? r.toFixed(1) : "";
+  };
+  const runtime = () => (it().kind === "movie" ? formatRuntime(it().runtime_s) : "");
+  const showMeta = () => props.meta !== false && it().kind !== "episode" && !dlActive() && !!(rating() || runtime());
 
   return (
     <a
@@ -71,7 +79,7 @@ export function PosterCard(props: PosterCardProps): JSX.Element {
         }
         props.onClick?.(e);
       }}
-      aria-label={`${it().title}${sub() ? ", " + sub() : ""}${dl() ? ", " + RING_LABEL[dl()!.state] : props.activity ? `, ${RING_LABEL[props.activity.state]} ${Math.round(props.activity.progress * 100)}%` : ""}`}
+      aria-label={`${it().title}${sub() ? ", " + sub() : ""}${showMeta() ? `${rating() ? ", rated " + rating() : ""}${runtime() ? ", " + runtime() : ""}` : ""}${dl() ? ", " + RING_LABEL[dl()!.state] : props.activity ? `, ${RING_LABEL[props.activity.state]} ${Math.round(props.activity.progress * 100)}%` : ""}`}
     >
       <div class="card__frame">
         <Img
@@ -95,6 +103,16 @@ export function PosterCard(props: PosterCardProps): JSX.Element {
         <Show when={it().played && !dlActive() && !props.activity}>
           <span class="card__played" title="Watched">
             <Icon name="check" />
+          </span>
+        </Show>
+        <Show when={showMeta()}>
+          <span class="card__meta" classList={{ "has-progress": !!progress() }} aria-hidden="true">
+            <Show when={rating()}>
+              <span class="card__rating"><Icon name="star" filled /> {rating()}</span>
+            </Show>
+            <Show when={runtime()}>
+              <span>{runtime()}</span>
+            </Show>
           </span>
         </Show>
         <Show when={progress() && !dlActive()}>

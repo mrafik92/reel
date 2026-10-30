@@ -8,6 +8,8 @@ import { usePageFocus } from "../lib/focus";
 import { itemActivity } from "../lib/downloads";
 import { ErrorState, SkeletonRow, FirstRun } from "../components/States";
 import { itemHref, libraryHref, playHref } from "../lib/links";
+import { laneHref } from "../lib/browse";
+import type { BrowseLane } from "../api";
 
 const pad = (n: number) => (n < 10 ? "0" + n : String(n));
 
@@ -22,6 +24,13 @@ export default function Home(): JSX.Element {
     return h.recently_added.find((i) => i.backdrop_url && i.kind !== "episode") ?? h.recently_added[0];
   });
   const [featured] = createResource(() => featuredSummary()?.id, (id) => api.item(id));
+
+  // Picker lanes from the main film library — a light taste of Browse, loaded after Home.
+  const filmLib = () => libs().find((l) => l.kind === "movies" && l.item_count > 0);
+  const [picks] = createResource(
+    () => (home() ? filmLib()?.id : undefined),
+    (id) => api.browseLanes(id).then(pickHomeLanes, () => [] as BrowseLane[]),
+  );
 
   // Ambient backdrop follows focus.
   const [focused, setFocused] = createSignal<ItemSummary>();
@@ -75,8 +84,14 @@ export default function Home(): JSX.Element {
   const idx = createMemo(() => {
     const h = home();
     const cw = h && h.continue_watching.length ? 1 : 0;
+    const pk = picks()?.length ?? 0;
     const ra = h && h.recently_added.length ? 1 : 0;
-    return { cw: pad(1), ra: pad(cw + 1), rows: (i: number) => pad(cw + ra + i + 1) };
+    return {
+      cw: pad(1),
+      pick: (i: number) => pad(cw + i + 1),
+      ra: pad(cw + pk + 1),
+      rows: (i: number) => pad(cw + pk + ra + i + 1),
+    };
   });
 
   return (
@@ -131,6 +146,24 @@ export default function Home(): JSX.Element {
                       </For>
                     </Row>
                   </Show>
+                  <For each={picks() ?? []}>
+                    {(lane, i) => {
+                      const more = laneHref(lane, libs());
+                      return (
+                        <Row
+                          title={lane.title}
+                          subtitle={lane.kind === "genre" ? "Pick of the genre" : lane.subtitle}
+                          index={idx().pick(i())}
+                          class="row--lane"
+                          action={more ? { label: "See all", href: more } : undefined}
+                        >
+                          <For each={lane.items}>
+                            {(it) => <PosterCard item={it} href={itemHref(it)} onFocus={onCardFocus} activity={itemActivity(it.id)} />}
+                          </For>
+                        </Row>
+                      );
+                    }}
+                  </For>
                   <Show when={h().recently_added.length}>
                     <Row title="Recently added" index={idx().ra}>
                       <For each={h().recently_added}>
@@ -163,6 +196,20 @@ export default function Home(): JSX.Element {
       </Show>
     </div>
   );
+}
+
+/** Home keeps it light: Because you watched, Top unwatched, and one genre. */
+function pickHomeLanes(all: BrowseLane[]): BrowseLane[] {
+  const ok = all.filter((l) => l.items.length >= 4);
+  const out: BrowseLane[] = [];
+  const take = (kind: string) => {
+    const l = ok.find((x) => x.kind === kind && out.indexOf(x) < 0);
+    if (l) out.push({ ...l, items: l.items.slice(0, 16) });
+  };
+  take("because_you_watched");
+  take("top_unwatched");
+  take("genre");
+  return out;
 }
 
 function Hero(props: { item?: ItemDetail; summary?: ItemSummary; onFocus: () => void }): JSX.Element {

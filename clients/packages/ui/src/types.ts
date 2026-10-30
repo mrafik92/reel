@@ -36,6 +36,10 @@ export interface ItemSummary {
   played: boolean;
   /** Unix seconds */
   added_at: number;
+  /** Browse metadata (movies/shows); optional so older servers still type-check. */
+  rating?: number | null;
+  runtime_s?: number | null;
+  genres?: string[] | null;
 }
 
 export interface CastMember {
@@ -118,4 +122,4 @@ export interface Home {
   rows: HomeRow[];
 }
 
-export type LibrarySort = "title" | "added" | "year";
+export type LibrarySort = "title" | "added" | "year" | "rating" | "runtime" | "random";

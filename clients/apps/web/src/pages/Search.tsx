@@ -1,63 +1,173 @@
 import { createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { useSearchParams } from "@solidjs/router";
-import { Icon, PosterCard, focusElement } from "@reel/ui";
-import { api, ApiError, type DiscoverCard } from "../api";
+import { Icon, Img, PosterCard, Row, episodeCode, focusElement, focusFirst, isTvMode, type ItemSummary } from "@reel/ui";
+import { api, ApiError, type DiscoverCard, type PersonHit, type SearchAll } from "../api";
 import { itemHref } from "../lib/links";
+import { href, MOCK } from "../lib/mode";
 import { usePageFocus } from "../lib/focus";
-import { itemActivity } from "../lib/downloads";
-import { primeFromCards } from "../lib/downloads";
+import { itemActivity, primeFromCards } from "../lib/downloads";
 import { EmptyState, ErrorState } from "../components/States";
 import { DiscoverTile, useDiscoverSheet } from "../components/Discover";
+import { clearRecent, forgetRecent, recentSearches, rememberSearch } from "../lib/recent";
 
-const SUGGESTIONS = ["Lantern", "Harbour", "Night", "Comet", "Glass", "Kingfisher"];
+const MOCK_SUGGESTIONS = ["Lantern", "Harbour", "Night", "Comet", "Glass", "Kingfisher"];
+const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+interface Full {
+  t: string;
+  r: SearchAll;
+  /** The server predates /search/all: library + TMDB only. */
+  legacy?: boolean;
+}
 
 export default function Search(): JSX.Element {
   const [params, setParams] = useSearchParams<{ q?: string }>();
+  const initial = (params.q ?? "").trim();
   const [q, setQ] = createSignal(params.q ?? "");
-  const [term, setTerm] = createSignal(q().trim());
-  const [library] = createResource(term, (t) => (t ? api.search(t, 40) : Promise.resolve([])));
-  // TMDB: settle the library first so the viewer sees what they already have.
-  const [tmdb] = createResource(term, async (t): Promise<DiscoverCard[] | "off"> => {
-    if (!t) return [];
-    try {
-      const r = await api.discoverSearch(t);
-      primeFromCards(r);
-      return r.filter((c) => c.status !== "available");
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 424) return "off";
-      throw e;
-    }
-  });
+  const [term, setTerm] = createSignal(initial);
+  const [quick, setQuick] = createSignal<{ t: string; items: ItemSummary[] }>();
+  const [full, setFull] = createSignal<Full>();
+  const [loading, setLoading] = createSignal(false);
+  const [error, setError] = createSignal<unknown>();
+  const [tmdbOff, setTmdbOff] = createSignal(false);
+  let legacy = false;
   const sheet = useDiscoverSheet();
+  const tv = isTvMode();
+
+  // Empty state: the genres people actually have.
+  const [genres] = createResource(() => api.genres().catch(() => []));
 
   let input!: HTMLInputElement;
   let el!: HTMLDivElement;
-  let t: ReturnType<typeof setTimeout> | undefined;
-  onCleanup(() => t && clearTimeout(t));
+  let results: HTMLDivElement | undefined;
+  let tQuick: ReturnType<typeof setTimeout> | undefined;
+  let tFull: ReturnType<typeof setTimeout> | undefined;
+  let focusOnLand = false;
+  onCleanup(() => {
+    if (tQuick) clearTimeout(tQuick);
+    if (tFull) clearTimeout(tFull);
+  });
+
+  const runQuick = (t: string) => {
+    if (!t) return setQuick(undefined);
+    api.search(t, 30).then((items) => q().trim() === t && setQuick({ t, items }), () => undefined);
+  };
+
+  const runFull = async (t: string) => {
+    setTerm(t);
+    setParams({ q: t || undefined }, { replace: true });
+    if (!t) {
+      setFull(undefined);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(undefined);
+    try {
+      let r: Full | undefined;
+      if (!legacy) {
+        try {
+          r = { t, r: await api.searchAll(t, 30) };
+        } catch (e) {
+          if (!(e instanceof ApiError && (e.status === 404 || e.status === 405))) throw e;
+          legacy = true;
+        }
+      }
+      if (legacy) r = await legacySearch(t);
+      if (term() !== t) return;
+      primeFromCards(r!.r.discover);
+      setFull(r!);
+      if (focusOnLand) {
+        focusOnLand = false;
+        requestAnimationFrame(() => results && focusFirst(results));
+      }
+    } catch (e) {
+      if (term() === t) setError(e);
+    } finally {
+      if (term() === t) setLoading(false);
+    }
+  };
+
+  const legacySearch = async (t: string): Promise<Full> => {
+    const [library, tm] = await Promise.all([
+      api.search(t, 40),
+      api.discoverSearch(t).then(
+        (r) => r.filter((c) => c.status !== "available"),
+        (e) => {
+          if (e instanceof ApiError && e.status === 424) setTmdbOff(true);
+          return [] as DiscoverCard[];
+        },
+      ),
+    ]);
+    return { t, legacy: true, r: { library, episodes: [], people: [], discover: tm } };
+  };
 
   const onInput = (v: string) => {
     setQ(v);
-    if (t) clearTimeout(t);
-    t = setTimeout(() => {
-      setTerm(v.trim());
-      setParams({ q: v.trim() || undefined }, { replace: true });
-    }, 300);
+    const t = v.trim();
+    if (tQuick) clearTimeout(tQuick);
+    if (tFull) clearTimeout(tFull);
+    // Library titles come back almost instantly; the wider search waits for a pause.
+    tQuick = setTimeout(() => runQuick(t), 90);
+    tFull = setTimeout(() => void runFull(t), 250);
   };
-  const choose = (s: string) => {
+  const commit = (s: string) => {
     if (input) input.value = s;
     setQ(s);
-    setTerm(s);
-    setParams({ q: s }, { replace: true });
+    if (tQuick) clearTimeout(tQuick);
+    if (tFull) clearTimeout(tFull);
+    runQuick(s.trim());
+    void runFull(s.trim());
+    if (s.trim()) rememberSearch(s.trim());
   };
 
   usePageFocus(() => true, () => el);
   onMount(() => {
-    if (!params.q) requestAnimationFrame(() => focusElement(input, { smooth: false }));
+    if (initial) {
+      runQuick(initial);
+      void runFull(initial);
+    } else requestAnimationFrame(() => focusElement(input, { smooth: false }));
   });
 
-  const libCount = () => library()?.length ?? 0;
-  const tmdbOff = () => !tmdb.error && tmdb() === "off";
-  const tmdbList = () => (tmdb.error || tmdb.loading ? [] : Array.isArray(tmdb()) ? (tmdb() as DiscoverCard[]) : []);
+  // What to show for the current text.
+  const typed = () => q().trim();
+  const lib = (): ItemSummary[] => {
+    const f = full();
+    if (f && f.t === typed()) return f.r.library;
+    const qk = quick();
+    if (qk && qk.t === typed()) return qk.items;
+    return f?.r.library ?? qk?.items ?? [];
+  };
+  const stale = () => !!full() && full()!.t !== typed();
+  const eps = () => full()?.r.episodes ?? [];
+  const people = () => full()?.r.people ?? [];
+  const disc = () => full()?.r.discover ?? [];
+  const peopleFirst = () => people().some((p) => p.in_library_count > 0);
+  const peopleRow = () => (
+    <Show when={people().length}>
+      <Row title="People" subtitle={String(people().length)} variant="cast" class="row--results">
+        <For each={people()}>{(p) => <PersonHitTile p={p} />}</For>
+      </Row>
+    </Show>
+  );
+  const anything = () => lib().length + eps().length + people().length + disc().length > 0;
+  const settled = () => !loading() && !!full() && full()!.t === typed();
+
+  const hint = () => {
+    if (!typed()) return "";
+    if (!settled()) return "Searching…";
+    const bits: string[] = [];
+    if (lib().length) bits.push(`${lib().length} in your library`);
+    if (eps().length) bits.push(`${eps().length} episode${eps().length === 1 ? "" : "s"}`);
+    if (people().length) bits.push(`${people().length} ${people().length === 1 ? "person" : "people"}`);
+    if (disc().length) bits.push(`${disc().length} you can add`);
+    return bits.join(" · ");
+  };
+
+  // Clicking any result counts as a search worth remembering.
+  const onResultsClick = (e: MouseEvent) => {
+    if ((e.target as HTMLElement).closest("a,button") && typed()) rememberSearch(typed());
+  };
 
   return (
     <div class="page search" ref={el}>
@@ -68,70 +178,157 @@ export default function Search(): JSX.Element {
             ref={input}
             class="search__input"
             type="search"
-            placeholder="Search films and series"
+            placeholder="Films, series, episodes, people"
             value={q()}
             onInput={(e) => onInput(e.currentTarget.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                if (t) clearTimeout(t);
-                setTerm(q().trim());
+              if (e.key === "Enter" || e.keyCode === 13) {
+                e.preventDefault();
+                focusOnLand = tv;
+                commit(q());
               }
             }}
             autocomplete="off"
             autocapitalize="off"
             spellcheck={false}
+            enterkeyhint="search"
+            inputmode="search"
             data-autofocus={params.q ? undefined : ""}
-            aria-label="Search your library and TMDB"
+            aria-label="Search films, series, episodes and people"
           />
+          <Show when={q()}>
+            <button type="button" class="iconbtn search__clear" aria-label="Clear search" onClick={() => { commit(""); focusElement(input, { smooth: false }); }}>
+              <Icon name="x" />
+            </button>
+          </Show>
         </label>
         <p class="search__hint">
-          <Show when={term()} fallback="Search your library, plus everything you could add to it.">
-            <Show when={!library.loading} fallback="Searching…">
-              {libCount()} in your library{tmdb.loading ? " · looking further…" : tmdbList().length ? ` · ${tmdbList().length} you can add` : ""}
-            </Show>
+          <Show
+            when={typed()}
+            fallback={
+              <Show when={!tv} fallback="Type a title, an actor or an episode — then press Down to browse the results.">
+                Search your library, plus everything you could add to it.{" "}
+                <span class="search__keys">
+                  Press <span class="keycap">/</span> or <span class="keycap">{isMac ? "⌘" : "Ctrl"} K</span> anywhere.
+                </span>
+              </Show>
+            }
+          >
+            {hint()}
           </Show>
         </p>
       </header>
 
-      <Show when={!term()}>
-        <div class="search__suggest" data-nav-group>
-          <p class="eyebrow">Try</p>
-          <div class="chips">
-            <For each={SUGGESTIONS}>{(s) => <button type="button" class="chip" onClick={() => choose(s)}>{s}</button>}</For>
-          </div>
+      <Show when={!typed()}>
+        <div class="search__start">
+          <Show when={recentSearches().length}>
+            <section class="search__group" data-nav-group>
+              <div class="search__group-head">
+                <p class="eyebrow">Recent searches</p>
+                <button type="button" class="linkbtn" onClick={clearRecent}>Clear</button>
+              </div>
+              <div class="chips">
+                <For each={recentSearches()}>
+                  {(s) => (
+                    <span class="chip chip--recent">
+                      <button type="button" class="chip__main" onClick={() => commit(s)}>
+                        <Icon name="clock" /> {s}
+                      </button>
+                      <button type="button" class="chip__x" aria-label={`Forget ${s}`} onClick={() => forgetRecent(s)}>
+                        <Icon name="x" />
+                      </button>
+                    </span>
+                  )}
+                </For>
+              </div>
+            </section>
+          </Show>
+          <Show when={(genres() ?? []).length}>
+            <section class="search__group" data-nav-group>
+              <p class="eyebrow">Browse by genre</p>
+              <div class="chips">
+                <For each={(genres() ?? []).slice(0, 14)}>
+                  {(g) => (
+                    <a class="chip chip--genre" href={href(`/movies?genre=${encodeURIComponent(g.name)}`)}>
+                      {g.name} <span class="gchip__count">{g.count}</span>
+                    </a>
+                  )}
+                </For>
+              </div>
+            </section>
+          </Show>
+          <Show when={MOCK}>
+            <section class="search__group" data-nav-group>
+              <p class="eyebrow">Try</p>
+              <div class="chips">
+                <For each={MOCK_SUGGESTIONS}>{(s) => <button type="button" class="chip" onClick={() => commit(s)}>{s}</button>}</For>
+              </div>
+            </section>
+          </Show>
         </div>
       </Show>
 
-      <Show when={library.error}>
-        <ErrorState error={library.error} />
+      <Show when={error() && typed()}>
+        <div class="search__pad">
+          <ErrorState error={error()} onRetry={() => void runFull(typed())} />
+        </div>
       </Show>
 
-      <Show when={term() && library() && !library.error}>
-        <Show when={libCount()}>
-          <section class="search__section">
-            <h2 class="section-title">In your library</h2>
-            <div class="results-grid" data-nav-group="free">
-              <For each={library()}>{(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} />}</For>
+      <Show when={typed() && !error()}>
+        <div class="search__results" classList={{ "is-stale": stale() }} ref={results} onClick={onResultsClick}>
+          <Show when={lib().length}>
+            <Row title="In your library" subtitle={String(lib().length)} class="row--results">
+              <For each={lib()}>{(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} />}</For>
+            </Row>
+          </Show>
+          <Show when={eps().length}>
+            <Row title="Episodes" subtitle={String(eps().length)} variant="landscape" class="row--results">
+              <For each={eps()}>
+                {(it) => <PosterCard item={it} variant="landscape" href={itemHref(it)} subtitle={episodeCode(it)} />}
+              </For>
+            </Row>
+          </Show>
+          {/* People you actually have films with lead; otherwise titles you could add come first. */}
+          <Show when={peopleFirst()}>{peopleRow()}</Show>
+          <Show when={disc().length}>
+            <Row title="Not in your library" subtitle="Add it and watch the ring fill" class="row--results row--discover">
+              <For each={disc()}>{(c) => <DiscoverTile card={c} onOpen={sheet.open} />}</For>
+            </Row>
+          </Show>
+          <Show when={!peopleFirst()}>{peopleRow()}</Show>
+          <Show when={settled() && !anything()}>
+            <div class="search__pad">
+              <EmptyState title="Nothing matches that" body="Check the spelling, or try a shorter part of the title or name." />
             </div>
-          </section>
-        </Show>
-        <Show when={!tmdbOff() && (tmdb.loading || tmdbList().length)}>
-          <section class="search__section">
-            <h2 class="section-title">
-              Add to your library <span class="section-title__aside">from TMDB</span>
-            </h2>
-            <Show when={!tmdb.loading} fallback={<div class="results-grid"><div class="card card--poster is-placeholder"><div class="card__frame skel" /></div></div>}>
-              <div class="results-grid results-grid--discover" data-nav-group="free">
-                <For each={tmdbList()}>{(c) => <DiscoverTile card={c} onOpen={sheet.open} />}</For>
-              </div>
-            </Show>
-          </section>
-        </Show>
-        <Show when={!libCount() && !tmdb.loading && !tmdbList().length}>
-          <EmptyState title="Nothing matches that" body="Check the spelling, or try a shorter part of the title." />
-        </Show>
+          </Show>
+          <Show when={settled() && tmdbOff() && !disc().length && anything()}>
+            <p class="search__fine">Titles you could add aren't shown — the server isn't connected to TMDB.</p>
+          </Show>
+        </div>
       </Show>
       {sheet.view()}
     </div>
+  );
+}
+
+function PersonHitTile(props: { p: PersonHit }): JSX.Element {
+  const initials = () => props.p.name.split(" ").map((w) => w.charAt(0)).join("").slice(0, 2);
+  const line = () =>
+    props.p.in_library_count
+      ? `${props.p.in_library_count} in your library`
+      : props.p.known_for.slice(0, 2).join(", ") || props.p.known_for_department || "";
+  return (
+    <a
+      class="person person--link person--hit"
+      href={href(`/person/${props.p.tmdb_id}`)}
+      data-fid={"ph:" + props.p.tmdb_id}
+      aria-label={`${props.p.name}${line() ? ", " + line() : ""}`}
+    >
+      <Img class="person__photo" src={props.p.photo_url} width={185} fallback={<span class="person__initials">{initials()}</span>} />
+      <span class="person__name">{props.p.name}</span>
+      <Show when={line()}>
+        <span class="person__role" classList={{ "person__role--lib": props.p.in_library_count > 0 }}>{line()}</span>
+      </Show>
+    </a>
   );
 }

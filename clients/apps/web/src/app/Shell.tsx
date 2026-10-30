@@ -6,6 +6,7 @@ import { authStatus, bootError, bootstrap, currentUser, isAdmin, logout, onAuthC
 import { connectEvents, disconnectEvents, downloads, queueSummary } from "../lib/downloads";
 import { Toaster } from "../components/Toaster";
 import { ErrorState } from "../components/States";
+import "../styles/browse.css";
 
 interface NavItem {
   path: string;
@@ -18,11 +19,12 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
+  // Search leads the rail (accent-ringed) so it's the first thing the D-pad meets.
+  { path: "/search", label: "Search", icon: "search", match: (p) => p.indexOf("/search") === 0 },
   { path: "/", label: "Home", icon: "home", match: (p) => p === "/" },
   { path: "/movies", label: "Movies", icon: "film", match: (p) => p.indexOf("/movies") === 0 },
   { path: "/shows", label: "Shows", icon: "tv", match: (p) => p.indexOf("/shows") === 0 },
   { path: "/discover", label: "Discover", icon: "compass", match: (p) => p.indexOf("/discover") === 0 },
-  { path: "/search", label: "Search", icon: "search", match: (p) => p.indexOf("/search") === 0 },
   { path: "/requests", label: "Requests", icon: "inbox", match: (p) => p.indexOf("/requests") === 0 },
   { path: "/downloads", label: "Downloads", icon: "download", match: (p) => p.indexOf("/downloads") === 0 },
   // Next: Live TV (IPTV guide + zapping). Flip `hidden` when the route lands.
@@ -66,6 +68,42 @@ export function Shell(props: ParentProps): JSX.Element {
     else if (s === "needs_setup" && path !== "/setup" && path.indexOf("/invite/") !== 0) navigate("/setup", { replace: true });
     else if (s === "anon" && !isPublic()) navigate(`/login${path !== "/" ? `?next=${encodeURIComponent(path + loc.search)}` : ""}`, { replace: true });
     else if (s === "authed" && /^\/(login|setup)/.test(path)) navigate("/", { replace: true });
+  });
+
+  // Global search shortcuts: "/" (when not typing) and Ctrl/Cmd+K (always).
+  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  // The floating search pill tucks away once the page scrolls under it.
+  const [tucked, setTucked] = createSignal(false);
+  const openSearch = () => {
+    if (loc.pathname.indexOf("/search") === 0) {
+      const input = document.querySelector<HTMLInputElement>(".search__input");
+      if (input) {
+        input.focus();
+        input.select();
+        window.scrollTo(0, 0);
+      }
+    } else navigate("/search");
+  };
+  onMount(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (authStatus() !== "authed" || immersive() || isPublic() || e.defaultPrevented) return;
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+      const cmdK = (e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "k" || e.key === "K");
+      const slash = e.key === "/" && !typing && !e.metaKey && !e.ctrlKey && !e.altKey;
+      if (!cmdK && !slash) return;
+      // Leave the shortcut alone while a modal (sheet, picker) owns the screen.
+      if (!cmdK && document.querySelector("[data-nav-trap]")) return;
+      e.preventDefault();
+      openSearch();
+    };
+    const onScroll = () => setTucked(window.pageYOffset > 90);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onCleanup(() => {
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll);
+    });
   });
 
   // Requests badge: active downloads of this user.
@@ -146,7 +184,13 @@ export function Shell(props: ParentProps): JSX.Element {
               <For each={NAV.filter((n) => !n.hidden)}>
                 {(n) => (
                   <li>
-                    <a class="rail__link" href={href(n.path)} aria-current={n.match(loc.pathname) ? "page" : undefined}>
+                    <a
+                      class="rail__link"
+                      classList={{ "rail__link--search": n.path === "/search" }}
+                      href={href(n.path)}
+                      aria-current={n.match(loc.pathname) ? "page" : undefined}
+                      aria-keyshortcuts={n.path === "/search" && !TV ? "/ Control+K Meta+K" : undefined}
+                    >
                       <Icon name={n.icon} class="rail__icon" />
                       <Show when={n.path === "/downloads" && queueSummary().active}>
                         {(a) => <MiniRing progress={a().progress} state={a().state} />}
@@ -197,6 +241,26 @@ export function Shell(props: ParentProps): JSX.Element {
               </Show>
             </div>
           </nav>
+          <Show when={loc.pathname.indexOf("/search") !== 0}>
+            <a
+              class="topsearch"
+              classList={{ "is-tucked": tucked() }}
+              href={href("/search")}
+              data-nav-fixed
+              data-nav-skip={tucked() ? "" : undefined}
+              tabindex={tucked() ? -1 : undefined}
+              aria-keyshortcuts={TV ? undefined : "/ Control+K Meta+K"}
+            >
+              <Icon name="search" class="topsearch__icon" />
+              <span class="topsearch__label">Search</span>
+              <Show when={!TV}>
+                <span class="topsearch__keys" aria-hidden="true">
+                  <span class="keycap">{isMac ? "⌘" : "Ctrl"}</span>
+                  <span class="keycap">K</span>
+                </span>
+              </Show>
+            </a>
+          </Show>
           <main class="main" data-nav-group>
             {props.children}
           </main>

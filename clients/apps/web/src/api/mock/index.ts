@@ -1,6 +1,6 @@
 import type { Api } from "../index";
 import { ApiError } from "../http";
-import type { ItemSummary, LibrarySort } from "@reel/ui";
+import type { ItemSummary } from "@reel/ui";
 import type { ReelEvent } from "@reel/sdk";
 import type {
   AdminSession, ArrServer, DecideResponse, DiscoverCard, DownloadClient, InviteDto, Me, NotificationTarget,
@@ -10,19 +10,11 @@ import { buildDb, detail, home, importTitle, tmdbIndex, SAMPLE_VIDEO } from "./f
 import { buildTmdb, type TmdbEntry } from "./discover";
 import { castOfTmdb, createQueue, mockPerson, mockReviews } from "./extras";
 import type { DownloadItem } from "../types";
+import { enrichSummaries, genreCounts, lanes, libraryRecs, matches, searchAll, sortRecs } from "./browse";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const latency = () => sleep(120 + Math.random() * 220);
 const nowS = () => Math.floor(Date.now() / 1000);
-
-function sortItems(items: ItemSummary[], sort: LibrarySort): ItemSummary[] {
-  const key = (s: string) => s.replace(/^(the|a|an)\s+/i, "").toLowerCase();
-  const copy = items.slice();
-  if (sort === "title") copy.sort((a, b) => (key(a.title) < key(b.title) ? -1 : key(a.title) > key(b.title) ? 1 : 0));
-  else if (sort === "added") copy.sort((a, b) => b.added_at - a.added_at);
-  else copy.sort((a, b) => (b.year ?? 0) - (a.year ?? 0) || (key(a.title) < key(b.title) ? -1 : 1));
-  return copy;
-}
 
 function fold(s: string): string {
   return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -55,6 +47,7 @@ export interface MockApi extends Api {
 /** In-browser stand-in for reel-server (`?mock=1`): fixtures + a simulated download pipeline. */
 export function createMockApi(): MockApi {
   const db = buildDb();
+  enrichSummaries(db);
   if (typeof console !== "undefined") console.info("[reel] mock mode — fixture data, no server calls");
   const need = <T>(v: T | undefined, what: string): T => {
     if (v === undefined) throw new ApiError(404, `${what} not found`);
@@ -264,13 +257,41 @@ export function createMockApi(): MockApi {
         if (n >= total) clearInterval(t);
       }, 400);
     },
-    async libraryItems(lid, { sort, cursor, limit = 60 }) {
+    async libraryItems(lid, { sort, cursor, limit = 60, seed, filters }) {
       await latency();
-      const ids = need(db.byLibrary.get(id(lid)), "Library");
-      const all = sortItems(ids.map((i) => db.byId.get(i)!.summary), sort);
+      need(db.byLibrary.get(id(lid)), "Library");
+      enrichSummaries(db);
+      const all = sortRecs(libraryRecs(db, id(lid)).filter((r) => matches(r, filters)), sort, seed).map((r) => r.summary);
       const start = cursor ? parseInt(atob(cursor), 10) || 0 : 0;
       const items = all.slice(start, start + limit).map((s) => ({ ...s }));
       return { items, next_cursor: start + limit < all.length ? btoa(String(start + limit)) : null };
+    },
+    async genres(lid) {
+      await latency();
+      return genreCounts(db, lid != null ? id(lid) : undefined);
+    },
+    async browseLanes(lid) {
+      await latency();
+      need(db.byLibrary.get(id(lid)), "Library");
+      enrichSummaries(db);
+      return lanes(db, id(lid));
+    },
+    async pick(lid, filters) {
+      await sleep(260 + Math.random() * 200);
+      enrichSummaries(db);
+      const pool = libraryRecs(db, id(lid)).filter((r) => matches(r, filters));
+      if (!pool.length) throw new ApiError(404, "Nothing matches those filters");
+      return { ...pool[Math.floor(Math.random() * pool.length)]!.summary };
+    },
+    async searchAll(q, limit = 30) {
+      await sleep(140 + Math.random() * 160);
+      let tm: DiscoverCard[] = [];
+      try {
+        tm = await api.discoverSearch(q);
+      } catch {
+        /* TMDB off */
+      }
+      return searchAll(db, q, limit, tm);
     },
     async item(iid) {
       await latency();

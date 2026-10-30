@@ -3,6 +3,7 @@
  * Switch these imports to `@reel/sdk` once its schema is regenerated.
  */
 import type { components } from "./openapi";
+import type { ItemSummary } from "@reel/ui";
 
 type S = components["schemas"];
 
@@ -77,4 +78,52 @@ export type DownloadItem = S["DownloadDto"];
 export interface DownloadsEvent {
   type: "downloads";
   items: DownloadItem[];
+}
+
+// ---------------------------------------------------------------------------
+// Browse / picker / unified search (server round 5). Hand-written until the
+// OpenAPI export includes them; shapes follow the agreed contract.
+
+export interface GenreCount {
+  name: string;
+  count: number;
+}
+
+/** Filters shared by `/libraries/{id}/items` and `/pick`. */
+export interface LibraryFilters {
+  /** AND-combined. */
+  genre?: string[];
+  year_from?: number;
+  year_to?: number;
+  min_rating?: number;
+  max_runtime_min?: number;
+  unwatched?: boolean;
+}
+
+export type LaneKind = "because_you_watched" | "top_unwatched" | "short" | "new" | "genre" | "rediscover";
+
+export interface BrowseLane {
+  key: string;
+  title: string;
+  subtitle?: string | null;
+  kind: LaneKind | string;
+  items: ItemSummary[];
+  /** `query` is the library-items query (object or `a=b&c=d` string). */
+  see_all?: { library_id: number; query: Record<string, string | number | boolean | null> | string } | null;
+}
+
+export interface PersonHit {
+  tmdb_id: number;
+  name: string;
+  photo_url?: string | null;
+  known_for_department?: string | null;
+  known_for: string[];
+  in_library_count: number;
+}
+
+export interface SearchAll {
+  library: ItemSummary[];
+  episodes: ItemSummary[];
+  people: PersonHit[];
+  discover: DiscoverCard[];
 }

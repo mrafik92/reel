@@ -2,6 +2,8 @@ import { Show, type JSX } from "solid-js";
 
 export interface RowProps {
   title: string;
+  /** Quiet line after the title, e.g. "Drama · Mystery". */
+  subtitle?: string | null;
   /** Small label before the title, e.g. "01". */
   index?: string;
   /** Optional trailing link (e.g. "See all"). */
@@ -25,6 +27,9 @@ export function Row(props: RowProps): JSX.Element {
             <span class="row__index">{props.index}</span>
           </Show>
           {props.title}
+          <Show when={props.subtitle}>
+            <span class="row__sub">{props.subtitle}</span>
+          </Show>
         </h2>
         <Show when={props.action}>
           {(a) => (
