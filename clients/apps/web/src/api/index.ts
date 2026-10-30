@@ -1,103 +1,174 @@
-import type { Home, ItemDetail, ItemSummary, Library, LibrarySort, Page, Id } from "@reel/ui";
-import { setApiBase } from "@reel/ui";
-import { API_BASE, MOCK } from "../lib/mode";
+import type { Home, ItemDetail, ItemSummary, Library, LibraryKind, LibrarySort, Page, Id } from "@reel/ui";
+import { getServerUrl, onServerUrlChange, setApiBase } from "@reel/ui";
+import { MOCK } from "../lib/mode";
+import { http } from "./http";
+import type {
+  AdminSession, ArrProfiles, ArrServer, CreateArrServer, CreateDownloadClient, CreateInvite, CreateLibrary,
+  CreateNotification, CreateRequest, CreateUser, DecideRequest, DecideResponse, DiscoverCard, DiscoverDetail,
+  DiscoverList, DiscoverPage, DownloadClient, HwAccelStatus, InviteDto, InviteInfo, LoginResponse, Me, MediaType,
+  NotificationTarget, PatchUser, ProgressDto, RequestDto, RequestState, SetupStatus, UpdateArrServer, UserDto,
+} from "./types";
 
-export type { Home, ItemDetail, ItemSummary, Library, LibrarySort, Page, Id };
+export { ApiError, getToken, setToken, onUnauthorized } from "./http";
+export type * from "./types";
+export type { Home, ItemDetail, ItemSummary, Library, LibraryKind, LibrarySort, Page, Id };
 
-export interface ProgressReport {
-  item_id: Id;
-  file_id: Id;
-  position_s: number;
-  duration_s: number;
-  paused: boolean;
-  /** "tick" every ~10s while playing, otherwise the triggering event. */
-  reason: "tick" | "pause" | "ended" | "stop";
+export interface Credentials {
+  username: string;
+  password: string;
+  device_id?: string;
+  device_name?: string;
+  client?: string;
 }
 
-/** Phase 1 data access (SPEC §4.1). Implemented over fetch, or fixtures in mock mode. */
+/** Typed access to every endpoint the web client uses. HTTP by default, fixtures with `?mock=1`. */
 export interface Api {
   readonly mock: boolean;
+
+  // Auth
+  setupStatus(): Promise<SetupStatus>;
+  setup(c: Credentials): Promise<LoginResponse>;
+  login(c: Credentials): Promise<LoginResponse>;
+  logout(): Promise<void>;
+  me(): Promise<Me>;
+  inviteInfo(code: string): Promise<InviteInfo>;
+  acceptInvite(code: string, c: Credentials): Promise<LoginResponse>;
+
+  // Library
   libraries(): Promise<Library[]>;
+  createLibrary(b: CreateLibrary): Promise<Library>;
+  scanLibrary(id: Id): Promise<void>;
   libraryItems(id: Id, opts: { sort: LibrarySort; cursor?: string | null; limit?: number }): Promise<Page<ItemSummary>>;
   item(id: Id): Promise<ItemDetail>;
+  /** Plain array (not paged). */
   children(id: Id): Promise<ItemSummary[]>;
   home(): Promise<Home>;
-  /** Movies + shows only (no episodes). */
+  /** Library search — movies + shows only, plain array. */
   search(q: string, limit?: number): Promise<ItemSummary[]>;
-  /**
-   * STUB: Phase 1 has no playback session, so there is nowhere to send this yet.
-   * Phase 2: `POST /playback/{sessionId}/progress` after `/playback/{fileId}/decide`.
-   */
-  reportProgress(r: ProgressReport): Promise<void>;
+  setPlayed(id: Id, played: boolean): Promise<void>;
+
+  // Playback
+  decide(fileId: Id, body: DecideRequest): Promise<DecideResponse>;
+  progress(sessionId: string, body: { position_s: number; paused?: boolean }, keepalive?: boolean): Promise<void>;
+  stopPlayback(sessionId: string, keepalive?: boolean): Promise<void>;
+
+  // Discover & requests
+  discover(list: DiscoverList, media?: "movie" | "tv" | "all", page?: number): Promise<DiscoverPage>;
+  discoverSearch(q: string, media?: "movie" | "tv" | "all"): Promise<DiscoverCard[]>;
+  discoverDetail(media: MediaType, tmdbId: number): Promise<DiscoverDetail>;
+  requests(o?: { status?: RequestState; limit?: number; offset?: number }): Promise<RequestDto[]>;
+  activeRequests(): Promise<ProgressDto[]>;
+  createRequest(b: CreateRequest): Promise<RequestDto>;
+  approveRequest(id: number): Promise<RequestDto>;
+  declineRequest(id: number, note?: string): Promise<RequestDto>;
+  retryRequest(id: number): Promise<RequestDto>;
+
+  // Admin
+  users(): Promise<UserDto[]>;
+  createUser(b: CreateUser): Promise<UserDto>;
+  patchUser(id: number, b: PatchUser): Promise<UserDto>;
+  deleteUser(id: number): Promise<void>;
+  revokeUserSessions(id: number): Promise<void>;
+  invites(): Promise<InviteDto[]>;
+  createInvite(b: CreateInvite): Promise<InviteDto>;
+  deleteInvite(id: number): Promise<void>;
+  arrServers(): Promise<ArrServer[]>;
+  createArrServer(b: CreateArrServer): Promise<ArrServer>;
+  updateArrServer(id: number, b: UpdateArrServer): Promise<ArrServer>;
+  deleteArrServer(id: number): Promise<void>;
+  arrProfiles(id: number): Promise<ArrProfiles>;
+  downloadClients(): Promise<DownloadClient[]>;
+  createDownloadClient(b: CreateDownloadClient): Promise<DownloadClient>;
+  deleteDownloadClient(id: number): Promise<void>;
+  notifications(): Promise<NotificationTarget[]>;
+  createNotification(b: CreateNotification): Promise<NotificationTarget>;
+  deleteNotification(id: number): Promise<void>;
+  testNotification(id: number): Promise<void>;
+  sessions(): Promise<AdminSession[]>;
+  killSession(id: string): Promise<void>;
+  hwaccel(): Promise<HwAccelStatus>;
 }
 
-export class ApiError extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
-  }
-}
+// Media URLs are server-relative and pre-signed; only the origin is prefixed (TV builds run from file://).
+setApiBase(getServerUrl());
+onServerUrlChange((u) => setApiBase(u));
 
-setApiBase(API_BASE);
-
-function token(): string | null {
-  try {
-    return localStorage.getItem("reel.token");
-  } catch {
-    return null;
-  }
-}
-
-async function get<T>(path: string, params?: Record<string, string | number | null | undefined>): Promise<T> {
-  let qs = "";
-  if (params) {
-    const p = new URLSearchParams();
-    for (const k in params) {
-      const v = params[k];
-      if (v != null && v !== "") p.set(k, String(v));
-    }
-    const s = p.toString();
-    if (s) qs = "?" + s;
-  }
-  const headers: Record<string, string> = { Accept: "application/json" };
-  const t = token();
-  if (t) headers.Authorization = `Bearer ${t}`;
-  let res: Response;
-  try {
-    res = await fetch(`${API_BASE}/api/v1${path}${qs}`, { headers });
-  } catch {
-    throw new ApiError(0, "Can't reach your Reel server");
-  }
-  if (!res.ok) throw new ApiError(res.status, res.status === 404 ? "Not found" : `Server error (${res.status})`);
-  return (await res.json()) as T;
-}
+const noAuth = { auth: false };
 
 const httpApi: Api = {
   mock: false,
-  libraries: () => get<Library[]>("/libraries"),
-  libraryItems: (id, o) =>
-    get<Page<ItemSummary>>(`/libraries/${id}/items`, { sort: o.sort, cursor: o.cursor, limit: o.limit ?? 60 }),
-  item: (id) => get<ItemDetail>(`/items/${id}`),
-  // `/children` and `/search` return plain ItemSummary[]; only library items are paged.
-  children: (id) => get<ItemSummary[]>(`/items/${id}/children`),
-  home: () => get<Home>("/home"),
-  search: (q, limit = 60) => get<ItemSummary[]>("/search", { q, limit }),
-  reportProgress: async (r) => {
-    if (import.meta.env.DEV) console.debug("[reel] progress (stub)", r);
-  },
+
+  setupStatus: () => http.get("/setup", undefined, noAuth),
+  setup: (c) => http.post("/setup", c, noAuth),
+  login: (c) => http.post("/auth/login", c, noAuth),
+  logout: () => http.post("/auth/logout"),
+  me: () => http.get("/me"),
+  inviteInfo: (code) => http.get(`/auth/invite/${encodeURIComponent(code)}`, undefined, noAuth),
+  acceptInvite: (code, c) => http.post(`/auth/invite/${encodeURIComponent(code)}/accept`, c, noAuth),
+
+  libraries: () => http.get("/libraries"),
+  createLibrary: (b) => http.post("/libraries", b),
+  scanLibrary: (id) => http.post(`/libraries/${id}/scan`),
+  // Only this endpoint is paged; `next_cursor` is opaque.
+  libraryItems: (id, o) => http.get(`/libraries/${id}/items`, { sort: o.sort, cursor: o.cursor, limit: o.limit ?? 60 }),
+  item: (id) => http.get(`/items/${id}`),
+  children: (id) => http.get(`/items/${id}/children`),
+  home: () => http.get("/home"),
+  search: (q, limit = 60) => http.get("/search", { q, limit }),
+  setPlayed: (id, played) => (played ? http.post(`/items/${id}/played`) : http.del(`/items/${id}/played`)),
+
+  decide: (fileId, body) => http.post(`/playback/${fileId}/decide`, body),
+  progress: (sid, body, keepalive) => http.post(`/playback/${encodeURIComponent(sid)}/progress`, body, { keepalive }),
+  stopPlayback: (sid, keepalive) => http.del(`/playback/${encodeURIComponent(sid)}`, { keepalive }),
+
+  discover: (list, media = "all", page = 1) => http.get(`/discover/${list}`, { media, page }),
+  discoverSearch: (q, media = "all") => http.get("/discover/search", { q, media }),
+  discoverDetail: (media, id) => http.get(`/discover/${media}/${id}`),
+  requests: (o = {}) => http.get("/requests", { status: o.status, limit: o.limit, offset: o.offset }),
+  activeRequests: () => http.get("/requests/active"),
+  createRequest: (b) => http.post("/requests", b),
+  approveRequest: (id) => http.post(`/requests/${id}/approve`),
+  declineRequest: (id, note) => http.post(`/requests/${id}/decline`, { note: note ?? null }),
+  retryRequest: (id) => http.post(`/requests/${id}/retry`),
+
+  users: () => http.get("/admin/users"),
+  createUser: (b) => http.post("/admin/users", b),
+  patchUser: (id, b) => http.patch(`/admin/users/${id}`, b),
+  deleteUser: (id) => http.del(`/admin/users/${id}`),
+  revokeUserSessions: (id) => http.del(`/admin/users/${id}/sessions`),
+  invites: () => http.get("/admin/invites"),
+  createInvite: (b) => http.post("/admin/invites", b),
+  deleteInvite: (id) => http.del(`/admin/invites/${id}`),
+  arrServers: () => http.get("/admin/arr-servers"),
+  createArrServer: (b) => http.post("/admin/arr-servers", b),
+  updateArrServer: (id, b) => http.patch(`/admin/arr-servers/${id}`, b),
+  deleteArrServer: (id) => http.del(`/admin/arr-servers/${id}`),
+  arrProfiles: (id) => http.get(`/admin/arr-servers/${id}/profiles`),
+  downloadClients: () => http.get("/admin/download-clients"),
+  createDownloadClient: (b) => http.post("/admin/download-clients", b),
+  deleteDownloadClient: (id) => http.del(`/admin/download-clients/${id}`),
+  notifications: () => http.get("/admin/notifications"),
+  createNotification: (b) => http.post("/admin/notifications", b),
+  deleteNotification: (id) => http.del(`/admin/notifications/${id}`),
+  testNotification: (id) => http.post(`/admin/notifications/${id}/test`),
+  sessions: () => http.get("/admin/sessions"),
+  killSession: (id) => http.del(`/admin/sessions/${encodeURIComponent(id)}`),
+  hwaccel: () => http.get("/admin/hwaccel"),
 };
 
 let impl: Promise<Api> | undefined;
-function load(): Promise<Api> {
+/** The concrete implementation (mock fixtures are code-split out of production). */
+export function backend(): Promise<Api> {
   if (!impl) impl = MOCK ? import("./mock").then((m) => m.createMockApi()) : Promise.resolve(httpApi);
   return impl;
 }
 
-// Short-lived cache so Back navigation renders instantly.
+// Short-lived read cache so Back navigation renders instantly. Writes invalidate.
 const cache = new Map<string, { at: number; p: Promise<unknown> }>();
 const TTL = 30_000;
-function cached<T>(key: string, fn: () => Promise<T>): Promise<T> {
+function cached<T>(key: string, fn: () => Promise<T>, ttl = TTL): Promise<T> {
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL) return hit.p as Promise<T>;
+  if (hit && Date.now() - hit.at < ttl) return hit.p as Promise<T>;
   const p = fn();
   cache.set(key, { at: Date.now(), p });
   p.catch(() => cache.delete(key));
@@ -109,19 +180,29 @@ export function invalidate(prefix = ""): void {
   });
 }
 
-export const api: Api = {
-  mock: MOCK,
-  libraries: () => cached("libraries", () => load().then((a) => a.libraries())),
-  libraryItems: (id, o) =>
-    cached(`lib:${id}:${o.sort}:${o.cursor ?? ""}:${o.limit ?? ""}`, () => load().then((a) => a.libraryItems(id, o))),
-  item: (id) => cached(`item:${id}`, () => load().then((a) => a.item(id))),
-  children: (id) => cached(`children:${id}`, () => load().then((a) => a.children(id))),
-  home: () => cached("home", () => load().then((a) => a.home())),
-  search: (q, limit = 60) => cached(`search:${q}:${limit}`, () => load().then((a) => a.search(q, limit))),
-  reportProgress: (r) =>
-    load().then((a) => {
-      invalidate("home");
-      invalidate(`item:${r.item_id}`);
-      return a.reportProgress(r);
-    }),
+/** Proxy every call to the backend; reads listed in READS go through the cache. */
+const READS: Partial<Record<keyof Api, number>> = {
+  libraries: TTL, libraryItems: TTL, item: TTL, children: TTL, home: TTL, search: TTL,
+  discover: 5 * 60_000, discoverDetail: 5 * 60_000, discoverSearch: 60_000,
 };
+
+function wrap(): Api {
+  const out: Record<string, unknown> = { mock: MOCK };
+  (Object.keys(httpApi) as (keyof Api)[]).forEach((k) => {
+    if (k === "mock") return;
+    out[k] = (...args: unknown[]) => {
+      const run = () => backend().then((a) => (a[k] as unknown as (...x: unknown[]) => Promise<unknown>)(...args));
+      const ttl = READS[k];
+      return ttl ? cached(`${k}:${JSON.stringify(args)}`, run, ttl) : run();
+    };
+  });
+  return out as unknown as Api;
+}
+
+export const api: Api = wrap();
+
+/** Mutations that change library state should call this so lists refresh. */
+export function invalidateLibrary(): void {
+  ["libraries", "libraryItems", "item", "children", "home", "search"].forEach((k) => invalidate(k));
+}
+

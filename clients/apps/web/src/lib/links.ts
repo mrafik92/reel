@@ -15,3 +15,8 @@ export function playHref(it: Pick<ItemSummary, "id">, opts: { file?: number; fro
 export function libraryHref(lib: Pick<Library, "id" | "kind">): string {
   return href(`/${lib.kind === "shows" ? "shows" : "movies"}?lib=${lib.id}`);
 }
+
+/** Turn an href from these helpers into a router path (strips the hash-routing "#"). */
+export function toPath(h: string): string {
+  return h.charAt(0) === "#" ? h.slice(1) : h;
+}

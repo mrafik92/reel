@@ -159,7 +159,7 @@ export function buildDb(): Db {
         backdrop_url: id % 37 === 11 ? missingImage("backdrop", id) : backdropArt(seed),
         played: false,
         progress: null,
-        added_at: new Date(NOW - addedDaysAgo * DAY - Math.floor(r() * DAY)).toISOString(),
+        added_at: Math.floor((NOW - addedDaysAgo * DAY - Math.floor(r() * DAY)) / 1000),
       },
       library_id: lib, overview: m.overview, genres: m.genres, runtime_s: m.runtime * 60, rating: m.rating,
       content_rating: m.cr, tmdb_id: 500000 + id, cast: castFor(seed, 8 + Math.floor(r() * 6)), childIds: [], seed,
@@ -210,7 +210,7 @@ export function buildDb(): Db {
       summary: {
         id: showId, kind: "show", title: s.title, year: s.year,
         poster_url: posterArt(s.title, seed), backdrop_url: backdropArt(seed), played: false, progress: null,
-        added_at: new Date(NOW - (si * 4 + 1) * DAY).toISOString(),
+        added_at: Math.floor((NOW - (si * 4 + 1) * DAY) / 1000),
       },
       library_id: 2, overview: s.overview, genres: s.genres, rating: s.rating, content_rating: s.cr,
       tmdb_id: 900000 + showId, cast: castFor(seed, 10), childIds: [], seed,
@@ -246,7 +246,7 @@ export function buildDb(): Db {
             year: s.year + k, poster_url: null,
             backdrop_url: bare ? missingImage("backdrop", epId) : backdropArt(seed * 31 + seasonNo * 100 + e),
             played, progress: !played && seasonNo === finishedSeasons + 1 && e === 3 ? 0.38 + (si % 3) * 0.17 : null,
-            added_at: new Date(NOW - (si * 4 + 1) * DAY + e * 3600_000).toISOString(),
+            added_at: Math.floor((NOW - (si * 4 + 1) * DAY + e * 3600_000) / 1000),
           },
           library_id: 2,
           overview: `${ROLES[Math.floor(er() * ROLES.length)]!.replace(/^./, (c) => c.toUpperCase())} ${PLOTS[Math.floor(er() * PLOTS.length)]}.`,
@@ -301,12 +301,14 @@ function filesFor(rec: Rec): MediaFile[] {
   if (rec.summary.kind !== "movie" && rec.summary.kind !== "episode") return [];
   const r = rng(rec.seed * 3 + 11);
   const dur = rec.runtime_s ?? 3600;
+  // The mock stream is a 90s sample; report its real length so resume/seek line up.
+  const SAMPLE_S = 90;
   const variant = rec.summary.kind === "episode" ? 2 : Math.floor(r() * 3);
   const uhd = variant === 1;
   const main: MediaFile = {
     id: rec.summary.id * 10 + 1,
     container: uhd ? "mkv" : variant === 0 ? "mkv" : "mp4",
-    duration_s: dur,
+    duration_s: SAMPLE_S,
     size: Math.round(dur * (uhd ? 6.2e6 : variant === 0 ? 1.4e6 : 0.45e6)),
     url: SAMPLE_VIDEO,
     video: uhd
@@ -320,7 +322,7 @@ function filesFor(rec: Rec): MediaFile[] {
   return [
     main,
     {
-      id: rec.summary.id * 10 + 2, container: "mp4", duration_s: dur, size: Math.round(dur * 1.1e6), url: SAMPLE_VIDEO,
+      id: rec.summary.id * 10 + 2, container: "mp4", duration_s: SAMPLE_S, size: Math.round(dur * 1.1e6), url: SAMPLE_VIDEO,
       video: { codec: "h264", width: 1920, height: 1080, hdr: "none", bit_depth: 8 },
       audio: AUDIO_SETS[2]!, subtitles: SUB_SETS[0]!,
     },
@@ -347,8 +349,21 @@ export function detail(db: Db, id: number): ItemDetail | undefined {
     tmdb_id: rec.tmdb_id || null,
     cast,
     children_count: rec.childIds.length,
-    files: filesFor(rec),
+    files: multiEpisode(db, rec) ?? filesFor(rec),
   };
+}
+
+/** Mock a multi-episode file: Kitchen Brigade S1E1+E2 live in one `S01E01E02` file. */
+function multiEpisode(db: Db, rec: Rec): MediaFile[] | undefined {
+  const s = rec.summary;
+  if (s.kind !== "episode" || s.season_no !== 1 || (s.episode_no !== 1 && s.episode_no !== 2)) return undefined;
+  const season = s.parent_id != null ? db.byId.get(s.parent_id) : undefined;
+  const show = season?.summary.parent_id != null ? db.byId.get(season.summary.parent_id) : undefined;
+  if (!season || show?.summary.title !== "Kitchen Brigade") return undefined;
+  const ids = season.childIds.slice(0, 2);
+  const first = db.byId.get(ids[0]!)!;
+  const f = filesFor(first)[0]!;
+  return [{ ...f, id: ids[0]! * 10 + 1, item_ids: ids }];
 }
 
 export function home(db: Db): Home {
@@ -378,4 +393,38 @@ export function home(db: Db): Home {
       { library_id: 3, title: "Kids & Family", items: recent(3).slice(0, 20) },
     ],
   };
+}
+
+/** Mock "import": a requested title lands in the library once its download completes. */
+export function importTitle(
+  db: Db,
+  t: { title: string; year?: number | null; tmdb_id: number; media_type: "movie" | "tv"; overview?: string | null; genres?: string[] },
+): number {
+  let max = 0;
+  db.byId.forEach((_v, k) => (max = Math.max(max, k)));
+  const id = max + 1;
+  const seed = hash(t.title) % 100000;
+  const lib = t.media_type === "tv" ? 2 : 1;
+  const nowS = Math.floor(Date.now() / 1000);
+  db.byId.set(id, {
+    summary: {
+      id, kind: t.media_type === "tv" ? "show" : "movie", title: t.title, year: t.year ?? null,
+      poster_url: posterArt(t.title, seed), backdrop_url: backdropArt(seed), played: false, progress: null, added_at: nowS,
+    },
+    library_id: lib, overview: t.overview ?? "", genres: t.genres ?? [], runtime_s: 6600, rating: 7.4,
+    content_rating: "PG-13", tmdb_id: t.tmdb_id, cast: castFor(seed, 8), childIds: [], seed,
+  });
+  db.byLibrary.get(lib)!.push(id);
+  const l = db.libraries.find((x) => x.id === lib);
+  if (l) l.item_count++;
+  return id;
+}
+
+/** tmdb_id → library item id (for availability badges). */
+export function tmdbIndex(db: Db): Map<number, number> {
+  const m = new Map<number, number>();
+  db.byId.forEach((r, id) => {
+    if (r.tmdb_id && (r.summary.kind === "movie" || r.summary.kind === "show")) m.set(r.tmdb_id, id);
+  });
+  return m;
 }

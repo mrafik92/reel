@@ -4,6 +4,8 @@ interface ImportMetaEnv {
   readonly VITE_MOCK?: string;
   /** "tv" for webOS/Tizen builds (forces 10-foot mode). */
   readonly VITE_TARGET?: string;
+  /** "web" (default), "webos" or "tizen" — reported to the server on login and decide. */
+  readonly VITE_CLIENT?: string;
   readonly DEV: boolean;
 }
 interface ImportMeta {

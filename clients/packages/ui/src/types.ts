@@ -34,8 +34,8 @@ export interface ItemSummary {
   /** 0..1 */
   progress?: number | null;
   played: boolean;
-  /** ISO-8601 */
-  added_at: string;
+  /** Unix seconds */
+  added_at: number;
 }
 
 export interface CastMember {
@@ -77,6 +77,11 @@ export interface MediaFile {
   size: number;
   /** `/api/v1/direct/{id}` */
   url: string;
+  /**
+   * Multi-episode files (`S01E02E03`): every episode item stored in this file, in
+   * episode order. Absent for ordinary files.
+   */
+  item_ids?: Id[] | null;
   video?: VideoStreamInfo | null;
   audio: AudioStreamInfo[];
   subtitles: SubtitleStreamInfo[];

@@ -37,7 +37,14 @@ export function usePageFocus(ready: () => boolean, container?: () => HTMLElement
   });
 
   createEffect(() => {
-    if (done || !ready()) return;
+    let ok: boolean;
+    try {
+      ok = ready();
+    } catch {
+      // Reading an errored resource throws; the page is showing its error state.
+      ok = true;
+    }
+    if (done || !ok) return;
     // Let the DOM settle (rows mount, grid measures) before measuring.
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {

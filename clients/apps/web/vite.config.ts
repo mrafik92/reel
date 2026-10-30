@@ -30,6 +30,17 @@ function mockMedia(): Plugin {
     name: "reel-mock-media",
     apply: "serve",
     configureServer(server) {
+      server.middlewares.use("/mock-media/subs.vtt", (req, res) => {
+        const lang = /lang=([a-z]+)/.exec(req.url ?? "")?.[1] ?? "eng";
+        const line = lang === "fre" ? "Les lumières du port s'allument une à une." : lang === "spa" ? "Las luces del puerto se encienden." : "The harbour lights come on, one by one.";
+        let body = "WEBVTT\n\n";
+        for (let t = 0; t < 90; t += 6) {
+          const f = (s: number) => `00:00:${String(s).padStart(2, "0")}.000`;
+          body += `${f(t)} --> ${f(Math.min(89, t + 4))}\n${line} (${t}s)\n\n`;
+        }
+        res.setHeader("Content-Type", "text/vtt");
+        res.end(body);
+      });
       server.middlewares.use("/mock-media/sample.webm", (req, res) => {
         if (!ensure()) {
           res.statusCode = 404;

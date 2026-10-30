@@ -6,8 +6,9 @@ import {
 } from "@reel/ui";
 import { api } from "../api";
 import { usePageFocus } from "../lib/focus";
+import { isAdmin } from "../lib/auth";
 import { itemHref, libraryHref } from "../lib/links";
-import { EmptyState, ErrorState } from "../components/States";
+import { EmptyState, ErrorState, FirstRun } from "../components/States";
 
 const SORTS: { value: LibrarySort; label: string }[] = [
   { value: "title", label: "A–Z" },
@@ -127,10 +128,7 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
         </header>
 
         <Show when={libs() && !lib()}>
-          <EmptyState
-            title={`No ${props.kind === "shows" ? "TV" : "movie"} libraries yet`}
-            body="Add a library on the server and run a scan — titles will appear here as they're matched."
-          />
+          <FirstRun />
         </Show>
 
         <Show when={error()}>
@@ -140,7 +138,7 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
         <Show when={lib() && !error()}>
           <Show
             when={lib()!.item_count > 0 || items().length > 0}
-            fallback={<EmptyState title="This library is empty" body="Run a scan on the server to pick up new files." />}
+            fallback={<EmptyState title="This library is empty" body={isAdmin() ? "Run a scan from Settings → Libraries to pick up new files." : "New titles will show up here once the server finds them."} />}
           >
             <VirtualGrid
               class="library__grid"

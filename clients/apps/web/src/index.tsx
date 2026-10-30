@@ -4,14 +4,19 @@ import { HashRouter, Route, Router } from "@solidjs/router";
 import "./styles/fonts.css";
 import "@reel/ui/src/styles/ui.css";
 import "./styles/app.css";
+import "./styles/features.css";
 import { HASH_ROUTING, TV } from "./lib/mode";
 import { Shell } from "./app/Shell";
 import Home from "./pages/Home";
 import Library from "./pages/Library";
 import Item from "./pages/Item";
+import { Connect, Invite, Login, Setup } from "./pages/Auth";
 
 const Player = lazy(() => import("./pages/Player"));
 const Search = lazy(() => import("./pages/Search"));
+const Discover = lazy(() => import("./pages/Discover"));
+const Requests = lazy(() => import("./pages/Requests"));
+const Admin = lazy(() => import("./pages/admin/Admin"));
 const DevRings = lazy(() => import("./pages/DevRings"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
@@ -21,12 +26,19 @@ if (TV) root.classList.add("tv");
 function Routes() {
   return (
     <>
+      <Route path="/login" component={Login} />
+      <Route path="/setup" component={Setup} />
+      <Route path="/connect" component={Connect} />
+      <Route path="/invite/:code" component={Invite} />
       <Route path="/" component={Home} />
       <Route path="/movies" component={() => <Library kind="movies" />} />
       <Route path="/shows" component={() => <Library kind="shows" />} />
       <Route path="/item/:id" component={Item} />
       <Route path="/play/:id" component={Player} />
       <Route path="/search" component={Search} />
+      <Route path="/discover" component={Discover} />
+      <Route path="/requests" component={Requests} />
+      <Route path="/admin/:section?" component={Admin} />
       <Route path="/dev/rings" component={DevRings} />
       <Route path="*" component={NotFound} />
     </>

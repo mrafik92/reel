@@ -27,8 +27,6 @@ export const TV = flag("tv", import.meta.env.VITE_TARGET === "tv") || isTvUserAg
 /** Packaged TV apps load from file:// — hash routing works there without a server fallback. */
 export const HASH_ROUTING = typeof location !== "undefined" && location.protocol === "file:";
 
-export const API_BASE = (import.meta.env.VITE_REEL_URL ?? "").replace(/\/$/, "");
-
 /** Build an in-app href that works in both history and hash routing. */
 export function href(path: string): string {
   return HASH_ROUTING ? "#" + path : path;

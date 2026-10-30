@@ -6,7 +6,8 @@ import {
   hdrLabel, resolutionLabel, subtitleLabel,
   type ItemDetail, type ItemSummary, type MediaFile,
 } from "@reel/ui";
-import { api } from "../api";
+import { api, invalidateLibrary } from "../api";
+import { toast } from "../lib/toast";
 import { usePageFocus } from "../lib/focus";
 import { playHref } from "../lib/links";
 import { getTrackPrefs, setTrackPrefs } from "../lib/playback";
@@ -104,7 +105,24 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
     setTimeout(() => api.item(e.id).then(res, rej), 300);
   }));
 
-  const progress = () => (it().progress && it().progress! > 0.005 ? it().progress! : 0);
+  const [played, setPlayedLocal] = createSignal(props.item.played);
+  const [savingPlayed, setSavingPlayed] = createSignal(false);
+  const togglePlayed = async () => {
+    if (savingPlayed()) return;
+    const next = !played();
+    setSavingPlayed(true);
+    setPlayedLocal(next);
+    try {
+      await api.setPlayed(it().id, next);
+      invalidateLibrary();
+    } catch (e) {
+      setPlayedLocal(!next);
+      toast(e instanceof Error ? e.message : "Couldn't update", "error");
+    } finally {
+      setSavingPlayed(false);
+    }
+  };
+  const progress = () => (!played() && it().progress && it().progress! > 0.005 ? it().progress! : 0);
   const runtime = () => it().runtime_s ?? file()?.duration_s;
   const tags = () => fileTags(file());
 
@@ -126,7 +144,7 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
           <Show when={it().rating}>
             <span class="meta__rating"><Icon name="star" filled /> {it().rating!.toFixed(1)}</span>
           </Show>
-          <Show when={it().played}><span class="meta__watched"><Icon name="check" /> Watched</span></Show>
+          <Show when={played()}><span class="meta__watched"><Icon name="check" /> Watched</span></Show>
         </p>
         <Show when={tags().length}>
           <ul class="tags" aria-label="Video and audio">
@@ -175,6 +193,10 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
               )}
             </Show>
           </Show>
+          <button type="button" class="btn" aria-pressed={played()} aria-disabled={savingPlayed() ? "true" : undefined} onClick={() => void togglePlayed()}>
+            <Icon name={played() ? "eyeoff" : "check"} />
+            <span>{played() ? "Mark unwatched" : "Mark watched"}</span>
+          </button>
         </div>
       </section>
 
@@ -260,6 +282,9 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
               <div class="tech__file" tabindex="0" data-focusable data-fid={"f:" + f.id} classList={{ "is-current": i() === fileIdx() }}>
                 <div class="tech__summary">
                   <span class="tech__ver">{it().files.length > 1 ? `Version ${i() + 1}` : "Source"}</span>
+                  <Show when={f.item_ids && f.item_ids.length > 1}>
+                    <span class="tag">{f.item_ids!.length} episodes in one file</span>
+                  </Show>
                   <span>{f.container.toUpperCase()}</span>
                   <span>{formatBytes(f.size)}</span>
                   <span>{formatRuntime(f.duration_s)}</span>

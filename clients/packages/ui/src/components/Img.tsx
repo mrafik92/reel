@@ -1,4 +1,4 @@
-import { createSignal, on, createEffect, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createMemo, createSignal, on, createEffect, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { mediaUrl } from "../format";
 
 let io: IntersectionObserver | undefined;
@@ -58,7 +58,8 @@ export function Img(props: ImgProps): JSX.Element {
     });
   });
 
-  const url = () => mediaUrl(props.src, props.width);
+  // Memo: only a *different* URL resets the fade (parents often re-emit the same src).
+  const url = createMemo(() => mediaUrl(props.src, props.width));
   createEffect(on(url, () => {
     setLoaded(false);
     setFailed(false);

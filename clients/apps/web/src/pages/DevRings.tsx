@@ -55,7 +55,7 @@ export default function DevRings(): JSX.Element {
     year: d.year,
     poster_url: posterArt(d.title, 7000 + i * 37),
     played: false,
-    added_at: new Date().toISOString(),
+    added_at: Math.floor(Date.now() / 1000),
     note: d.note,
     tmdb: d.tmdb_id,
   }));

@@ -5,7 +5,7 @@ import {
 } from "@reel/ui";
 import { api } from "../api";
 import { usePageFocus } from "../lib/focus";
-import { ErrorState, SkeletonRow } from "../components/States";
+import { ErrorState, SkeletonRow, FirstRun } from "../components/States";
 import { itemHref, libraryHref, playHref } from "../lib/links";
 
 const pad = (n: number) => (n < 10 ? "0" + n : String(n));
@@ -65,6 +65,10 @@ export default function Home(): JSX.Element {
     }
   };
 
+  const hasItems = () => {
+    const h = home();
+    return !!h && (h.continue_watching.length > 0 || h.recently_added.length > 0 || h.rows.some((r) => r.items.length > 0));
+  };
   const libFor = (id: number): Library | undefined => libs().find((l) => l.id === id);
   // Editorial row numbering: 01, 02, …
   const idx = createMemo(() => {
@@ -80,6 +84,7 @@ export default function Home(): JSX.Element {
       <div class="page-scrim page-scrim--home" aria-hidden="true" />
 
       <Show when={!data.error} fallback={<ErrorState error={data.error} onRetry={refetch} />}>
+        <Show when={!data() || libs().length || hasItems()} fallback={<FirstRun />}>
         <Show when={home()} fallback={<HomeSkeleton />}>
           {(h) => {
             return (
@@ -152,6 +157,7 @@ export default function Home(): JSX.Element {
               </>
             );
           }}
+        </Show>
         </Show>
       </Show>
     </div>

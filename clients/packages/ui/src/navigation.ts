@@ -14,6 +14,8 @@
  * - `data-nav-scroll="x"` horizontal scroller; focused children are kept in view.
  * - `data-nav-anchor`    vertical anchor (e.g. a row); on TV the page scrolls so the
  *                        anchor sits at `--nav-anchor-top` (default 30vh).
+ * - `data-nav-lateral`   only enterable with left/right (side rails), so up/down in
+ *                        content never jumps into the nav.
  * - `data-nav-skip`      excluded from navigation.
  * - `data-autofocus`     preferred landing spot when nothing is focused.
  *
@@ -21,33 +23,24 @@
  * and requires `react` at runtime.
  */
 
+import { exitApp, onRemoteKey, type RemoteKeyEvent } from "./platform/keys";
+
 export type Direction = "up" | "down" | "left" | "right";
 export type MediaKey = "playpause" | "play" | "pause" | "stop" | "ff" | "rw" | "next" | "prev";
 
 const FOCUSABLE =
-  'a[href],button,input,select,textarea,[data-focusable],[tabindex]:not([tabindex="-1"])';
+  'a[href],button,input,select,textarea,summary,[data-focusable],[tabindex]:not([tabindex="-1"])';
 
 const KEY_DIR: Record<string, Direction> = {
   ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
   Up: "up", Down: "down", Left: "left", Right: "right",
 };
 const KEYCODE_DIR: Record<number, Direction> = { 37: "left", 38: "up", 39: "right", 40: "down" };
-/** Browser Escape/Backspace, webOS Back (461), Tizen Return (10009). */
-const BACK_CODES = [27, 8, 461, 10009];
-const MEDIA_CODES: Record<number, MediaKey> = {
-  415: "play", 19: "pause", 10252: "playpause", 179: "playpause", 413: "stop",
-  417: "ff", 412: "rw", 176: "next", 177: "prev",
-};
-const MEDIA_NAMES: Record<string, MediaKey> = {
-  MediaPlayPause: "playpause", MediaPlay: "play", MediaPause: "pause", MediaStop: "stop",
-  MediaFastForward: "ff", MediaRewind: "rw", MediaTrackNext: "next", MediaTrackPrevious: "prev",
-};
-
 export interface TvNavigationOptions {
   /** Force TV behaviour (always-visible focus, pointer hover focuses, instant scroll). */
   tv?: boolean;
   debug?: boolean;
-  /** Called when Back is pressed and no handler consumed it. */
+  /** Called when Back is pressed and no handler consumed it (default: `exitApp()` on TVs). */
   onBack?: () => void;
 }
 
@@ -80,8 +73,10 @@ export function initTvNavigation(opts: TvNavigationOptions = {}): void {
   state = { tv: !!opts.tv, debug: !!opts.debug, onBack: opts.onBack, lastMove: 0 };
   const root = document.documentElement;
   root.setAttribute("data-input", state.tv ? "key" : "pointer");
-  registerTizenKeys();
-
+  // Back + media keys come through the platform layer's normaliser (webOS 461,
+  // Tizen 10009/registered media keys, browser Escape/Backspace). Digits and
+  // channel up/down are left unhandled — reserved for Live TV zapping.
+  onRemoteKey(onRemote);
   document.addEventListener("keydown", onKeyDown, true);
   document.addEventListener("focusin", onFocusIn);
   let lx = -1, ly = -1;
@@ -189,39 +184,45 @@ function onKeyDown(e: KeyboardEvent): void {
     return;
   }
 
-  const media = MEDIA_NAMES[e.key] ?? MEDIA_CODES[code];
-  if (media && mediaHandlers.size) {
-    e.preventDefault();
-    mediaHandlers.forEach((h) => h(media, e));
-    return;
-  }
-
-  const isBack =
-    e.key === "Escape" || e.key === "GoBack" || e.key === "BrowserBack" ||
-    (e.key === "Backspace" && !typing) ||
-    (!e.key && BACK_CODES.indexOf(code) >= 0) || code === 461 || code === 10009;
-  if (isBack) {
-    if (typing && e.key === "Escape") {
-      (active as HTMLElement).blur();
-    }
-    for (let i = backStack.length - 1; i >= 0; i--) {
-      if (backStack[i]!() === true) {
-        e.preventDefault();
-        return;
-      }
-    }
-    if (state.onBack) {
-      e.preventDefault();
-      state.onBack();
-    }
-    return;
-  }
-
   if ((e.key === "Enter" || code === 13) && active && active.hasAttribute("data-focusable") &&
       !/^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/.test(active.tagName)) {
     e.preventDefault();
     active.click();
   }
+}
+
+const MEDIA: Partial<Record<RemoteKeyEvent["key"], MediaKey>> = {
+  play: "play", pause: "pause", playpause: "playpause", stop: "stop", ff: "ff", rw: "rw",
+};
+
+function onRemote(e: RemoteKeyEvent): boolean {
+  if (!state) return false;
+  const media = MEDIA[e.key];
+  if (media) {
+    if (!mediaHandlers.size) return false;
+    mediaHandlers.forEach((h) => h(media, e.original));
+    return true;
+  }
+  if (e.key !== "back") return false;
+  const active = document.activeElement as HTMLElement | null;
+  // Escape in a text field just leaves the field.
+  if (isTextInput(active) && e.original.key === "Escape") {
+    active!.blur();
+    return true;
+  }
+  for (let i = backStack.length - 1; i >= 0; i--) {
+    if (backStack[i]!() === true) return true;
+  }
+  if (state.onBack) {
+    state.onBack();
+    return true;
+  }
+  // Root screen: leave the app on TVs (no-op in a browser — let it be).
+  if (state.tv) {
+    exitApp();
+    return true;
+  }
+  return false;
 }
 
 function onFocusIn(e: FocusEvent): void {
@@ -335,13 +336,35 @@ function findNext(cur: HTMLElement, dir: Direction, scope: Element): HTMLElement
   let best: HTMLElement | null = null;
   let bestScore = Infinity;
   const list = candidates(scope);
+  const vertical = dir === "up" || dir === "down";
+  const curLateral = cur.closest("[data-nav-lateral]");
   for (const el of list) {
     if (el === cur || el.contains(cur)) continue;
+    if (vertical && el.closest("[data-nav-lateral]") !== curLateral) continue;
     const s = score(from, box(el), dir);
     if (s >= 0 && s < bestScore) {
       bestScore = s;
       best = el;
     }
+  }
+  // Left/right: stay on the same visual line when anything on it qualifies,
+  // instead of sliding diagonally into the row above/below.
+  if (best && !vertical) {
+    let lineBest: HTMLElement | null = null;
+    let lineScore = Infinity;
+    for (const el of list) {
+      if (el === cur || el.contains(cur)) continue;
+      const b = box(el);
+      if (b.b <= from.t + 2 || b.t >= from.b - 2) continue;
+      const s = score(from, b, dir);
+      if (s >= 0 && s < lineScore) {
+        lineScore = s;
+        lineBest = el;
+      }
+    }
+    if (lineBest) best = lineBest;
+    // Nothing on this line: only hop off-line into/out of a side rail (end of a row stays put).
+    else if (!best.closest("[data-nav-lateral]") && !curLateral) best = null;
   }
   if (!best) return null;
   return restoreFromGroup(cur, best, dir, from) ?? best;
@@ -432,21 +455,4 @@ function isInFixedLayer(el: HTMLElement): boolean {
     p = p.parentElement;
   }
   return false;
-}
-
-// ---------------------------------------------------------------------------
-// Platform keys
-
-function registerTizenKeys(): void {
-  const w = window as unknown as {
-    tizen?: { tvinputdevice?: { registerKeyBatch?: (k: string[]) => void } };
-  };
-  try {
-    w.tizen?.tvinputdevice?.registerKeyBatch?.([
-      "MediaPlayPause", "MediaPlay", "MediaPause", "MediaStop",
-      "MediaFastForward", "MediaRewind", "MediaTrackNext", "MediaTrackPrevious",
-    ]);
-  } catch {
-    /* not on Tizen */
-  }
 }

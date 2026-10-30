@@ -1,7 +1,8 @@
 import { Show, type JSX } from "solid-js";
 import { Icon } from "@reel/ui";
 import { ApiError } from "../api";
-import { MOCK } from "../lib/mode";
+import { MOCK, href } from "../lib/mode";
+import { isAdmin } from "../lib/auth";
 
 export function ErrorState(props: { error: unknown; onRetry?: () => void; title?: string }): JSX.Element {
   const offline = () => props.error instanceof ApiError && props.error.status === 0;
@@ -68,5 +69,30 @@ export function SkeletonRow(props: { variant?: "poster" | "landscape"; count?: n
         </div>
       </div>
     </section>
+  );
+}
+
+/** No libraries yet: admins get a clear next step, everyone else a friendly note. */
+export function FirstRun(): JSX.Element {
+  return (
+    <div class="state state--first">
+      <p class="eyebrow eyebrow--accent">Welcome to Reel</p>
+      <h2 class="state__title">{isAdmin() ? "Add your first library" : "Nothing to watch yet"}</h2>
+      <p class="state__body">
+        {isAdmin()
+          ? "Point Reel at the folders holding your films and series. It scans them, matches each title on TMDB and fetches artwork."
+          : "Your server doesn't have any libraries you can see yet. Ask the person who invited you to share one."}
+      </p>
+      <Show when={isAdmin()}>
+        <div class="actions">
+          <a class="btn btn--primary btn--lg" href={href("/admin/libraries")} data-autofocus>
+            <Icon name="plus" /> <span>Add a library</span>
+          </a>
+          <a class="btn btn--lg" href={href("/discover")}>
+            <Icon name="compass" /> <span>Browse Discover</span>
+          </a>
+        </div>
+      </Show>
+    </div>
   );
 }
