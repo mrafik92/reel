@@ -29,13 +29,19 @@ const num = (v?: string): number | undefined => {
   return isFinite(n) ? n : undefined;
 };
 
+/** The server wants whole numbers for years/minutes (anything else is a 400). */
+const int = (v?: string): number | undefined => {
+  const n = num(v);
+  return n == null ? undefined : Math.round(n);
+};
+
 export function filtersFrom(p: BrowseParams): LibraryFilters {
   return {
     genre: p.genre ? p.genre.split(",").map((g) => g.trim()).filter(Boolean) : undefined,
-    year_from: num(p.year_from),
-    year_to: num(p.year_to),
+    year_from: int(p.year_from),
+    year_to: int(p.year_to),
     min_rating: num(p.min_rating),
-    max_runtime_min: num(p.max_runtime_min),
+    max_runtime_min: int(p.max_runtime_min),
     unwatched: p.unwatched === "true" || p.unwatched === "1",
   };
 }
@@ -125,14 +131,7 @@ export function laneHref(lane: BrowseLane, libs: Library[]): string | undefined 
   const base = lib?.kind === "shows" ? "/shows" : "/movies";
   const q = new URLSearchParams();
   q.set("lib", String(sa.library_id));
-  if (typeof sa.query === "string") {
-    new URLSearchParams(sa.query.replace(/^\?/, "")).forEach((v, k) => q.set(k, v));
-  } else if (sa.query) {
-    for (const k in sa.query) {
-      const v = sa.query[k];
-      if (v != null && v !== "" && v !== false) q.set(k, String(v));
-    }
-  }
+  new URLSearchParams((sa.query || "").replace(/^\?/, "")).forEach((v, k) => q.set(k, v));
   if (!q.has("view")) q.set("view", "all");
   return href(`${base}?${q.toString()}`);
 }

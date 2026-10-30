@@ -4,7 +4,7 @@ import {
   Icon, PosterCard, Row, Sheet, VirtualGrid, isTvMode,
   type ItemSummary, type Library as Lib, type LibraryKind, type LibrarySort,
 } from "@reel/ui";
-import { api, type BrowseLane, type LibraryFilters } from "../api";
+import { api, ApiError, type BrowseLane, type LibraryFilters } from "../api";
 import { usePageFocus } from "../lib/focus";
 import { itemActivity } from "../lib/downloads";
 import { isAdmin } from "../lib/auth";
@@ -278,7 +278,16 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
         <Show when={lib() && grid()}>
           <div class="library__body">
             <Show when={error()}>
-              <ErrorState error={error()} onRetry={() => { setError(undefined); void loadMore(); }} />
+              <Show
+                when={error() instanceof ApiError && (error() as ApiError).status === 400}
+                fallback={<ErrorState error={error()} onRetry={() => { setError(undefined); void loadMore(); }} />}
+              >
+                <EmptyState title="Those filters don't add up" body={(error() as ApiError).message}>
+                  <button type="button" class="btn btn--primary" onClick={() => { clearFilters(); setParams({ sort: undefined, seed: undefined }, { replace: true }); }} data-autofocus>
+                    <Icon name="x" /> <span>Clear filters</span>
+                  </button>
+                </EmptyState>
+              </Show>
             </Show>
             <Show when={!error()}>
               <Show

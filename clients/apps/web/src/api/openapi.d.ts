@@ -557,6 +557,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/browse/lanes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Personalised browse lanes (per user: watch state; cached TMDB recommendations). */
+        get: operations["browse_lanes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/direct/{file_id}": {
         parameters: {
             query?: never;
@@ -659,6 +676,23 @@ export interface paths {
          *     admins); `scan_progress` to admins only.
          */
         get: operations["events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/genres": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Genres with item counts, most common first. */
+        get: operations["list_genres"];
         put?: never;
         post?: never;
         delete?: never;
@@ -975,7 +1009,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Top-level items (movies or shows) of a library, keyset-paginated. */
+        /** Top-level items (movies or shows) of a library, keyset-paginated, with optional filters. */
         get: operations["library_items"];
         put?: never;
         post?: never;
@@ -1079,6 +1113,23 @@ export interface paths {
         };
         /** A person from TMDB with their filmography as discovery cards. */
         get: operations["get_person"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pick": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One random movie/show matching the filters ("Surprise me"). */
+        get: operations["pick"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1256,6 +1307,23 @@ export interface paths {
         };
         /** Library search over movie and show titles. */
         get: operations["search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/search/all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One search box for everything: your library (titles and cast), episodes, people and TMDB. */
+        get: operations["search_all"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1787,6 +1855,8 @@ export interface components {
             arr_name: string;
             /** Format: int64 */
             arr_server_id: number;
+            /** @description Raw torrent-client state (`metaDL`, `stalledDL`, …); needs a download client configured. */
+            client_state?: string | null;
             /** Format: int64 */
             episode?: number | null;
             episode_title?: string | null;
@@ -1824,6 +1894,11 @@ export interface components {
             speed_bps?: number | null;
             /** @description queued | downloading | stalled | importing | failed */
             state: components["schemas"]["RequestState"];
+            /**
+             * @description Most specific human-readable reason (Arr message, else torrent-client state such as
+             *     "Fetching metadata", "Stalled — no peers", "Queued in client", "Paused").
+             */
+            status_text?: string | null;
             title: string;
             /** Format: int64 */
             tmdb_id?: number | null;
@@ -1844,6 +1919,14 @@ export interface components {
         };
         ErrorBody: {
             error: string;
+        };
+        GenreCount: {
+            /**
+             * Format: int64
+             * @description Movies/shows (top-level items) with this genre.
+             */
+            count: number;
+            name: string;
         };
         /** @enum {string} */
         Hdr: "none" | "hdr10" | "hlg" | "dv";
@@ -1997,6 +2080,8 @@ export interface components {
             backdrop_url?: string | null;
             /** Format: int64 */
             episode_no?: number | null;
+            /** @description Genre names (list endpoints only). */
+            genres?: string[] | null;
             /** Format: int64 */
             id: number;
             kind: components["schemas"]["ItemKind"];
@@ -2009,12 +2094,33 @@ export interface components {
              * @description Watch progress 0..1 (movies/episodes with a saved position).
              */
             progress?: number | null;
+            /**
+             * Format: double
+             * @description Community rating 0–10 (list endpoints only; see `ItemDetail.rating` for the detail view).
+             */
+            rating?: number | null;
+            /**
+             * Format: int64
+             * @description Runtime in seconds (list endpoints only).
+             */
+            runtime_s?: number | null;
             /** Format: int64 */
             season_no?: number | null;
             title: string;
             /** Format: int64 */
             year?: number | null;
         };
+        Lane: {
+            /** @description At most 20 items. */
+            items: components["schemas"]["ItemSummary"][];
+            key: string;
+            kind: components["schemas"]["LaneKind"];
+            see_all?: null | components["schemas"]["SeeAll"];
+            subtitle?: string | null;
+            title: string;
+        };
+        /** @enum {string} */
+        LaneKind: "because_you_watched" | "top_unwatched" | "short" | "new" | "genre" | "rediscover";
         Library: {
             /** Format: int64 */
             id: number;
@@ -2195,6 +2301,20 @@ export interface components {
             /** Format: int64 */
             tmdb_id: number;
         };
+        PersonHit: {
+            /**
+             * Format: int64
+             * @description Movies/shows in your library they are credited on.
+             */
+            in_library_count: number;
+            /** @description Titles this person is known for (library titles for local matches). */
+            known_for: string[];
+            known_for_department?: string | null;
+            name: string;
+            photo_url?: string | null;
+            /** Format: int64 */
+            tmdb_id: number;
+        };
         PlaybackDecision: {
             audio: components["schemas"]["AudioAction"];
             /** Format: int64 */
@@ -2347,6 +2467,22 @@ export interface components {
             /** Format: int64 */
             id: number;
             path: string;
+        };
+        SearchAll: {
+            /** @description TMDB movies/shows that are not in your library (status/progress as in discovery). */
+            discover: components["schemas"]["DiscoverCardDto"][];
+            /** @description Episode title matches (≤ 10). */
+            episodes: components["schemas"]["ItemSummary"][];
+            /** @description Movies and shows: title matches first, then cast/crew-name matches. */
+            library: components["schemas"]["ItemSummary"][];
+            /** @description Library cast/crew merged with TMDB people. */
+            people: components["schemas"]["PersonHit"][];
+        };
+        SeeAll: {
+            /** Format: int64 */
+            library_id: number;
+            /** @description Query string for `GET /libraries/{library_id}/items`. */
+            query: string;
         };
         /** @description Server-to-client event. */
         ServerEvent: {
@@ -3880,6 +4016,36 @@ export interface operations {
             };
         };
     };
+    browse_lanes: {
+        parameters: {
+            query?: {
+                /** @description Library to build lanes for (default: the first library you can see). */
+                library_id?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Lane"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     direct: {
         parameters: {
             query?: never;
@@ -4096,6 +4262,36 @@ export interface operations {
                 content?: never;
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_genres: {
+        parameters: {
+            query?: {
+                /** @description Restrict to one library (default: every library you can see). */
+                library_id?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenreCount"][];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4754,18 +4950,34 @@ export interface operations {
     };
     library_items: {
         parameters: {
-            query?: {
-                /** @description `title` (default, A→Z), `added` (newest first) or `year` (newest first). */
-                sort?: string | null;
-                /** @description Opaque cursor from a previous page's `next_cursor`. */
-                cursor?: string | null;
-                /** @description Page size (default 50, max 200). */
-                limit?: number | null;
-            };
+            query?: never;
             header?: never;
             path: {
                 /** @description Library id */
                 id: number;
+                /**
+                 * @description `title` (default, A→Z), `added` (newest first), `year` (newest first), `rating` (best
+                 *     first), `runtime` (shortest first) or `random` (stable for a given `seed`).
+                 */
+                sort: string | null;
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor: string | null;
+                /** @description Page size (default 50, max 200). */
+                limit: number | null;
+                /** @description Genre name; repeat the parameter or use a comma list. All given genres must match. */
+                genre: string | null;
+                /** @description Earliest release year. */
+                year_from: number | null;
+                /** @description Latest release year. */
+                year_to: number | null;
+                /** @description Minimum rating (0–10). */
+                min_rating: number | null;
+                /** @description Maximum runtime in minutes. */
+                max_runtime_min: number | null;
+                /** @description Only items the current user has not (fully) watched. */
+                unwatched: boolean | null;
+                /** @description Seed for `sort=random` (integer; same seed = same order, so pagination is stable). */
+                seed: number | null;
             };
             cookie?: never;
         };
@@ -4969,6 +5181,45 @@ export interface operations {
             };
             /** @description TMDB not configured */
             424: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    pick: {
+        parameters: {
+            query?: {
+                /** @description Restrict to one library */
+                library_id?: number;
+                /** @description Genre(s), comma list or repeated */
+                genre?: string;
+                /** @description Maximum runtime in minutes */
+                max_runtime_min?: number;
+                /** @description Minimum rating 0-10 */
+                min_rating?: number;
+                /** @description Only unwatched */
+                unwatched?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemSummary"];
+                };
+            };
+            /** @description Nothing matches */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5364,6 +5615,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ItemSummary"][];
+                };
+            };
+        };
+    };
+    search_all: {
+        parameters: {
+            query?: {
+                /** @description Search text. */
+                q?: string | null;
+                /** @description Max library results (default 20, max 100). */
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchAll"];
                 };
             };
         };

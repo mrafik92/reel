@@ -304,7 +304,7 @@ export function Spotlight(props: {
               <div class="spot__none">
                 <h2 class="spot__title spot__title--none">{error() ? "Couldn't pick right now" : "Nothing fits all of that"}</h2>
                 <p class="spot__overview">
-                  {error() ? (error() instanceof Error ? (error() as Error).message : "Try again in a moment.") : unwatched() ? "You've seen everything that matches — include watched titles, or loosen the filters." : "Try fewer filters."}
+                  {error() ? (error() instanceof Error ? (error() as Error).message : "Try again in a moment.") : activeCount(props.filters) === 0 ? "You've seen everything here — include watched titles to pick from the lot." : unwatched() ? "No unwatched titles match those filters. Include watched ones, or loosen the filters." : "Try fewer genres, a lower rating or a longer runtime."}
                 </p>
               </div>
             }>
