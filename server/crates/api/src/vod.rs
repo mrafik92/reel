@@ -994,6 +994,9 @@ pub struct VodPlayRequest {
     pub device_id: Option<String>,
     /// Admins only: if every provider connection is held by other users, stop their streams.
     pub takeover: Option<bool>,
+    /// Chromecast/AirPlay receiver: default preset `chromecast`, absolute 8-hour URLs on
+    /// `cast_base_url`.
+    pub for_cast: Option<bool>,
 }
 
 fn ffprobe_path(st: &AppState) -> String {
@@ -1133,10 +1136,15 @@ pub async fn vod_play(
             )));
         }
     };
+    let cast = crate::prefs::cast_ctx(&st, req.for_cast.unwrap_or(false))?;
     let profile = match (req.profile.clone(), req.preset.as_deref()) {
         (Some(p), _) => p,
         (None, name) => {
-            let name = name.unwrap_or("web_chrome");
+            let name = name.unwrap_or(if cast.is_some() {
+                "chromecast"
+            } else {
+                "web_chrome"
+            });
             DeviceProfile::preset(name).ok_or_else(|| {
                 ApiError::BadRequest(format!(
                     "unknown preset '{name}' (available: {})",
@@ -1207,7 +1215,7 @@ pub async fn vod_play(
         }
         Err(e) => return Err(e.into()),
     };
-    let res = vod_play_inner(&st, &u, &req, kind, &target, &profile, &mine).await;
+    let res = vod_play_inner(&st, &u, &req, kind, &target, &profile, &mine, &cast).await;
     match res {
         Ok((resp, vs)) => {
             st.iptv.live.vod_attach(&lease, &resp.session_id);
@@ -1221,6 +1229,7 @@ pub async fn vod_play(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn vod_play_inner(
     st: &AppState,
     u: &AuthUser,
@@ -1229,14 +1238,55 @@ async fn vod_play_inner(
     target: &reel_iptv::vod::PlayTarget,
     profile: &DeviceProfile,
     mine: &[reel_playback::SessionInfo],
+    cast: &Option<crate::prefs::Cast>,
 ) -> ApiResult<(DecideResponse, VodSession)> {
     let (file, streams) = probe_cached(st, kind, req.id, target).await?;
     let limits = &u.user.limits;
+    let vs = VodSession {
+        kind,
+        item_id: req.id,
+        user_id: u.id(),
+        source_id: target.source_id,
+        url: target.url.clone(),
+        container: target.container.clone(),
+        duration_s: file.duration_s,
+    };
+    // automatic audio/subtitle choice (client indexes override)
+    let prefs = crate::prefs::load(st, u.id()).await;
+    let original = match (crate::prefs::wants_original(&prefs), st.tmdb.as_ref()) {
+        (true, Some(t)) => match item_tmdb(st, kind, req.id).await {
+            Some((tv, id)) => crate::prefs::original_language(t, tv, id).await,
+            None => None,
+        },
+        _ => None,
+    };
+    let mut selected = reel_playback::select::select(
+        &streams,
+        &prefs,
+        original.as_deref(),
+        reel_playback::Pick::from_request(req.audio_index),
+        reel_playback::Pick::from_request(req.subtitle_index),
+        profile,
+    );
+    // a text track we cannot extract (single-connection provider) is not worth selecting
+    if let Some(si) = selected.subtitle_index {
+        let text = streams.iter().any(|s| {
+            s.idx == si
+                && s.kind == StreamKind::Subtitle
+                && !is_image_subtitle(s.codec.as_deref().unwrap_or(""))
+        });
+        if text && !sub_available(st, &vs, si).await {
+            selected.subtitle_index = None;
+            selected
+                .reason
+                .push_str("; subtitle track not extractable on a single-connection provider");
+        }
+    }
     let decision = decide(&DecisionInput {
         file: &file,
         streams: &streams,
-        audio_index: req.audio_index,
-        subtitle_index: req.subtitle_index,
+        audio_index: selected.audio_index,
+        subtitle_index: selected.subtitle_index,
         profile,
         max_bitrate_kbps: limits.max_bitrate_kbps.and_then(|v| u32::try_from(v).ok()),
     });
@@ -1272,8 +1322,16 @@ async fn vod_play_inner(
         })
         .await?;
     let sg = st.signer(u.id());
-    let ttl = st.media_ttl();
-    let url = if decision.mode == PlaybackMode::DirectPlay {
+    let ttl = if cast.is_some() {
+        crate::prefs::Cast::ttl(st)
+    } else {
+        st.media_ttl()
+    };
+    let absolute = |u: String| match cast {
+        Some(c) => c.abs(&u),
+        None => u,
+    };
+    let url = absolute(if decision.mode == PlaybackMode::DirectPlay {
         sg.url(
             &format!("/api/v1/vod/direct/{}", info.id),
             &format!("vod:{}", info.id),
@@ -1287,22 +1345,31 @@ async fn vod_play_inner(
             ttl,
             1,
         )
-    };
-    let subtitles = streams
-        .iter()
-        .filter(|s| s.kind == StreamKind::Subtitle)
-        .map(|s| SubtitleOption {
+    });
+    let mut subtitles = vec![];
+    for s in streams.iter().filter(|s| s.kind == StreamKind::Subtitle) {
+        let text = !is_image_subtitle(s.codec.as_deref().unwrap_or(""));
+        // text tracks are extracted from the provider file on demand (image subs: burn-in only)
+        let url = if text && sub_available(st, &vs, s.idx).await {
+            Some(absolute(sg.url(
+                &format!("/api/v1/vod/subs/{}/{}.vtt", info.id, s.idx),
+                &format!("vodsub:{}:{}", info.id, s.idx),
+                ttl,
+                1,
+            )))
+        } else {
+            None
+        };
+        subtitles.push(SubtitleOption {
             index: s.idx,
             stream_id: s.id,
             language: s.language.clone(),
             title: s.title.clone(),
-            // remote files have no extracted WebVTT; image subtitles can only be burned in
-            url: None,
+            url,
             forced: s.forced,
             external: false,
-        })
-        .collect::<Vec<_>>();
-    let _ = is_image_subtitle;
+        });
+    }
     let audio = streams
         .iter()
         .filter(|s| s.kind == StreamKind::Audio)
@@ -1315,15 +1382,6 @@ async fn vod_play_inner(
             default: s.default,
         })
         .collect();
-    let vs = VodSession {
-        kind,
-        item_id: req.id,
-        user_id: u.id(),
-        source_id: target.source_id,
-        url: target.url.clone(),
-        container: target.container.clone(),
-        duration_s: file.duration_s,
-    };
     Ok((
         DecideResponse {
             session_id: info.id,
@@ -1332,6 +1390,7 @@ async fn vod_play_inner(
             decision,
             subtitles,
             audio,
+            selected,
         },
         vs,
     ))
@@ -1387,6 +1446,7 @@ pub async fn vod_direct(
     if vs.user_id != user.id && !user.is_admin() {
         return Err(ApiError::NotFound);
     }
+    st.playback.touch_session(&sid);
     let mut up = st
         .iptv
         .ingest
@@ -1432,6 +1492,151 @@ pub async fn vod_direct(
     }
     out.body(Body::from_stream(resp.bytes_stream()))
         .map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+fn sub_cache_name(vs: &VodSession, idx: i64) -> String {
+    format!("vod-{}-{}-{idx}", vs.kind, vs.item_id)
+}
+
+/// Streams of a probed VOD item (empty when not probed yet).
+pub(crate) async fn cached_streams(st: &AppState, kind: &str, id: i64) -> Vec<model::StreamInfo> {
+    let j: Option<String> =
+        sqlx::query_scalar("SELECT probe_json FROM vod_probe WHERE kind = ? AND item_id = ?")
+            .bind(kind)
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await
+            .ok()
+            .flatten();
+    j.and_then(|j| serde_json::from_str::<(FileInfo, Vec<model::StreamInfo>)>(&j).ok())
+        .map(|x| x.1)
+        .unwrap_or_default()
+}
+
+/// Can the text subtitle `idx` be served? Extraction reads the whole remote file over a *second*
+/// provider connection, so it only runs when the provider allows more than one connection —
+/// unless the track was extracted (cached) before.
+pub(crate) async fn sub_available(st: &AppState, vs: &VodSession, idx: i64) -> bool {
+    let cached = st
+        .config
+        .data_dir
+        .join("subs")
+        .join(format!("{}.vtt", sub_cache_name(vs, idx)));
+    if tokio::fs::metadata(&cached)
+        .await
+        .map(|m| m.len() > 0)
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    can_extract_subs(st, vs).await
+}
+
+pub(crate) async fn can_extract_subs(st: &AppState, vs: &VodSession) -> bool {
+    let max: Option<i64> =
+        sqlx::query_scalar("SELECT max_connections FROM iptv_sources WHERE id = ?")
+            .bind(vs.source_id)
+            .fetch_optional(&st.db)
+            .await
+            .ok()
+            .flatten();
+    !matches!(max, Some(1))
+}
+
+/// TMDB `(is_tv, id)` of a VOD movie / episode.
+async fn item_tmdb(st: &AppState, kind: &str, id: i64) -> Option<(bool, i64)> {
+    let (sql, tv) = if kind == "movie" {
+        ("SELECT tmdb_id FROM vod_movies WHERE id = ?", false)
+    } else {
+        (
+            "SELECT s.tmdb_id FROM vod_episodes e JOIN vod_series s ON s.id = e.series_pk WHERE e.id = ?",
+            true,
+        )
+    };
+    let t: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(sql)
+        .bind(id)
+        .fetch_optional(&st.db)
+        .await
+        .ok()
+        .flatten()
+        .flatten();
+    t.map(|t| (tv, t))
+}
+
+/// An embedded text subtitle of a VOD playback as WebVTT (extracted from the provider file with
+/// the player User-Agent, cached). Signed URL (scope `vodsub:{session}:{index}`) or bearer token.
+#[utoipa::path(
+    get,
+    path = "/vod/subs/{session_id}/{file}",
+    params(
+        ("session_id" = String, Path, description = "Session id from /vod/play"),
+        ("file" = String, Path, description = "`{subtitle index}.vtt`"),
+        SignedQuery
+    ),
+    responses(
+        (status = 200, description = "WebVTT", content_type = "text/vtt"),
+        (status = 404, body = ErrorBody),
+        (status = 503, description = "Not available on single-connection providers", body = ErrorBody)
+    )
+)]
+pub async fn vod_subs(
+    State(st): State<AppState>,
+    Path((sid, file)): Path<(String, String)>,
+    Query(sq): Query<SignedQuery>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Response> {
+    let idx: i64 = file
+        .strip_suffix(".vtt")
+        .and_then(|n| n.parse().ok())
+        .ok_or(ApiError::NotFound)?;
+    let user = st
+        .media_user(&headers, &sq, &format!("vodsub:{sid}:{idx}"))
+        .await?;
+    let vs = st.vod.get(&sid).ok_or(ApiError::NotFound)?;
+    if vs.user_id != user.id && !user.is_admin() {
+        return Err(ApiError::NotFound);
+    }
+    let streams = cached_streams(&st, vs.kind, vs.item_id).await;
+    let is_text_sub = streams.iter().any(|s| {
+        s.idx == idx
+            && s.kind == StreamKind::Subtitle
+            && !is_image_subtitle(s.codec.as_deref().unwrap_or(""))
+    });
+    if !is_text_sub {
+        return Err(ApiError::NotFound);
+    }
+    if !sub_available(&st, &vs, idx).await {
+        return Err(ApiError::Status(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "subtitles cannot be extracted while streaming from a single-connection provider"
+                .into(),
+        ));
+    }
+    st.playback.touch_session(&sid);
+    let out = reel_playback::subtitles::to_vtt(
+        &st.playback.config().ffmpeg_path,
+        &reel_playback::subtitles::SubtitleSource::Embedded {
+            path: vs.url.clone(),
+            stream_index: idx,
+        },
+        &st.config.data_dir.join("subs"),
+        &sub_cache_name(&vs, idx),
+    )
+    .await
+    .map_err(|e| ApiError::BadGateway(reel_iptv::net::redact_text(&e.to_string())))?;
+    let bytes = tokio::fs::read(out)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut res = bytes.into_response();
+    res.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/vtt; charset=utf-8"),
+    );
+    res.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=3600"),
+    );
+    Ok(res)
 }
 
 impl AppState {

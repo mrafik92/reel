@@ -18,10 +18,12 @@ pub mod error;
 pub mod ffmpeg;
 pub mod hwaccel;
 pub mod keyindex;
+pub mod langs;
 pub mod model;
 pub mod plan;
 pub mod profile;
 pub mod router;
+pub mod select;
 pub mod session;
 pub mod subtitles;
 
@@ -31,4 +33,5 @@ pub use hwaccel::{HwAccel, HwAccelStatus, detect};
 pub use model::{FileInfo, Hdr, StreamInfo, StreamKind};
 pub use plan::SegmentPlan;
 pub use profile::DeviceProfile;
+pub use select::{Pick, PlaybackPrefs, Selected, SubtitleMode};
 pub use session::{SessionConfig, SessionInfo, SessionManager, StartRequest};

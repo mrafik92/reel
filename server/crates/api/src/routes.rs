@@ -937,6 +937,14 @@ pub async fn direct(
         .media_user(req.headers(), &sq, &format!("direct:{file_id}"))
         .await?;
     st.require_file(&user, file_id).await?;
+    // media requests (any client) keep the playback session alive
+    if let Some(sid) = req.uri().query().and_then(|q| {
+        q.split('&')
+            .find_map(|kv| kv.strip_prefix("s="))
+            .map(str::to_string)
+    }) {
+        st.playback.touch_session(&sid);
+    }
     let (path, container): (String, Option<String>) =
         sqlx::query_as("SELECT path, container FROM media_files WHERE id = ?")
             .bind(file_id)

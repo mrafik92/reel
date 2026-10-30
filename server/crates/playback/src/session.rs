@@ -485,6 +485,14 @@ impl SessionManager {
     }
 
     /// Progress ping from the client; also keeps the session alive.
+    /// Keep a session alive: any request for its media (segments, playlists, proxied bytes) from
+    /// any client counts, e.g. a Chromecast fetching while the sender only pings progress.
+    pub fn touch_session(&self, id: &str) {
+        if let Ok(s) = self.get(id) {
+            s.meta.lock().unwrap().last_activity = Instant::now();
+        }
+    }
+
     pub fn update_progress(
         &self,
         id: &str,

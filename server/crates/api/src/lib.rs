@@ -8,6 +8,7 @@ pub mod error;
 mod extras;
 mod iptv;
 mod playback;
+pub mod prefs;
 mod requests;
 mod routes;
 mod stream;
@@ -559,6 +560,9 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(vod::vod_lanes))
         .routes(routes!(vod::vod_play))
         .routes(routes!(vod::vod_direct))
+        .routes(routes!(vod::vod_subs))
+        .routes(routes!(prefs::get_preferences, prefs::put_preferences))
+        .routes(routes!(prefs::cast_url))
         .routes(routes!(vod::vod_image_route))
         .routes(routes!(extras::get_person))
         .routes(routes!(extras::get_reviews))
@@ -641,6 +645,60 @@ pub fn app(state: AppState) -> Router {
             HeaderValue::from_static("no-referrer"),
         ))
         .layer(tower::util::option_layer(cors))
+        .layer(axum::middleware::from_fn(media_cors))
+}
+
+/// Signed media routes answer cross-origin requests from anywhere (Chromecast receivers, hls.js on
+/// another origin): the URL's signature is the authorization, nothing ambient is exposed.
+fn is_media_path(p: &str) -> bool {
+    let p = p.strip_prefix("/api/v1").unwrap_or(p);
+    [
+        "/stream/",
+        "/direct/",
+        "/subs/",
+        "/vod/direct/",
+        "/vod/subs/",
+        "/vod/images/",
+        "/iptv/live/",
+        "/iptv/logo/",
+        "/images/",
+    ]
+    .iter()
+    .any(|pre| p.starts_with(pre))
+}
+
+async fn media_cors(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let media = is_media_path(req.uri().path());
+    if media && req.method() == Method::OPTIONS {
+        return Response::builder()
+            .status(axum::http::StatusCode::NO_CONTENT)
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS")
+            .header(
+                header::ACCESS_CONTROL_ALLOW_HEADERS,
+                "Range, Content-Type, Accept",
+            )
+            .header(header::ACCESS_CONTROL_MAX_AGE, "86400")
+            .body(axum::body::Body::empty())
+            .unwrap_or_default();
+    }
+    let mut res = next.run(req).await;
+    if media
+        && !res
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+    {
+        let h = res.headers_mut();
+        h.insert(
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            HeaderValue::from_static("*"),
+        );
+        h.insert(
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            HeaderValue::from_static("Content-Range, Accept-Ranges, Content-Length, Content-Type"),
+        );
+    }
+    res
 }
 
 /// Same-origin by default; with `cors_origins` set, those origins may call the API.

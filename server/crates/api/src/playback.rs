@@ -36,9 +36,11 @@ pub struct DecideRequest {
     pub profile: Option<DeviceProfile>,
     /// Built-in preset: web_chrome (default), web_safari, webos, tizen, android_exoplayer.
     pub preset: Option<String>,
-    /// ffprobe stream index of the audio track to use.
+    /// ffprobe stream index of the audio track to use. Omit to let the server choose from the
+    /// user's preferences (`GET /me/preferences`).
     pub audio_index: Option<i64>,
-    /// ffprobe stream index of the subtitle track to use.
+    /// ffprobe stream index of the subtitle track to use. Omit for the automatic choice, `-1`
+    /// for no subtitles.
     pub subtitle_index: Option<i64>,
     /// Start position in seconds (transcode sessions start there).
     pub start_s: Option<f64>,
@@ -46,6 +48,9 @@ pub struct DecideRequest {
     /// Multi-episode files: the episode being watched (one of the file's `item_ids`); watch
     /// progress is credited to it. Defaults to the file's first item.
     pub item_id: Option<i64>,
+    /// Receiver is a Chromecast/AirPlay device: defaults the preset to `chromecast` and returns
+    /// absolute, 8-hour signed URLs on `cast_base_url`.
+    pub for_cast: Option<bool>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -72,6 +77,8 @@ pub struct DecideResponse {
     pub decision: PlaybackDecision,
     pub subtitles: Vec<SubtitleOption>,
     pub audio: Vec<AudioStream>,
+    /// The tracks chosen automatically (or taken from the request) and why.
+    pub selected: reel_playback::Selected,
 }
 
 /// Decide how to play a file and start a playback session.
@@ -93,10 +100,15 @@ pub async fn decide_playback(
     Path(file_id): Path<i64>,
     Json(req): Json<DecideRequest>,
 ) -> ApiResult<Json<DecideResponse>> {
+    let cast = crate::prefs::cast_ctx(&st, req.for_cast.unwrap_or(false))?;
     let profile = match (req.profile, req.preset.as_deref()) {
         (Some(p), _) => p,
         (None, name) => {
-            let name = name.unwrap_or("web_chrome");
+            let name = name.unwrap_or(if cast.is_some() {
+                "chromecast"
+            } else {
+                "web_chrome"
+            });
             DeviceProfile::preset(name).ok_or_else(|| {
                 ApiError::BadRequest(format!(
                     "unknown preset '{name}' (available: {})",
@@ -142,11 +154,26 @@ pub async fn decide_playback(
             )));
         }
     }
+    // automatic audio/subtitle choice (client indexes override)
+    let prefs = crate::prefs::load(&st, u.id()).await;
+    let original = if crate::prefs::wants_original(&prefs) {
+        crate::prefs::library_original_language(&st, primary_item).await
+    } else {
+        None
+    };
+    let selected = reel_playback::select::select(
+        &streams,
+        &prefs,
+        original.as_deref(),
+        reel_playback::Pick::from_request(req.audio_index),
+        reel_playback::Pick::from_request(req.subtitle_index),
+        &profile,
+    );
     let decision = decide(&DecisionInput {
         file: &file,
         streams: &streams,
-        audio_index: req.audio_index,
-        subtitle_index: req.subtitle_index,
+        audio_index: selected.audio_index,
+        subtitle_index: selected.subtitle_index,
         profile: &profile,
         max_bitrate_kbps: max_bitrate_kbps.and_then(|v| u32::try_from(v).ok()),
     });
@@ -182,10 +209,23 @@ pub async fn decide_playback(
         })
         .await?;
     let sg = st.signer(u.id());
-    let ttl = st.media_ttl();
-    let url = if decision.mode == PlaybackMode::DirectPlay {
+    let ttl = if cast.is_some() {
+        crate::prefs::Cast::ttl(&st)
+    } else {
+        st.media_ttl()
+    };
+    let absolute = |u: String| match &cast {
+        Some(c) => c.abs(&u),
+        None => u,
+    };
+    let url = absolute(if decision.mode == PlaybackMode::DirectPlay {
+        // `s` lets media requests (e.g. from a cast receiver) keep the session alive
         sg.url(
-            &format!("/api/v1/direct/{file_id}"),
+            &if cast.is_some() {
+                format!("/api/v1/direct/{file_id}?s={}", info.id)
+            } else {
+                format!("/api/v1/direct/{file_id}")
+            },
             &format!("direct:{file_id}"),
             ttl,
             1,
@@ -197,7 +237,7 @@ pub async fn decide_playback(
             ttl,
             1,
         )
-    };
+    });
     let row = sqlx::query(
         "INSERT INTO playback_sessions (user_id, device_id, file_id, mode, video_decision_json, \
          bitrate, session_key, item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -225,12 +265,12 @@ pub async fn decide_playback(
             language: s.language.clone(),
             title: s.title.clone(),
             url: (!is_image_subtitle(s.codec.as_deref().unwrap_or(""))).then(|| {
-                sg.url(
+                absolute(sg.url(
                     &format!("/api/v1/subs/{}.vtt", s.id),
                     &format!("subs:{}", s.id),
                     ttl,
                     1,
-                )
+                ))
             }),
             forced: s.forced,
             external: s.external_path.is_some(),
@@ -255,6 +295,7 @@ pub async fn decide_playback(
         decision,
         subtitles,
         audio,
+        selected,
     }))
 }
 

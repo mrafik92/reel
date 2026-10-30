@@ -3306,6 +3306,60 @@
         }
       }
     },
+    "/api/v1/me/preferences": {
+      "get": {
+        "summary": "The signed-in user's playback preferences.",
+        "operationId": "get_preferences",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackPrefs"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Replace the preferences (missing fields fall back to the defaults). Language codes are\nnormalised to ISO 639-1 where one exists (`eng`/`English` → `en`).",
+        "operationId": "put_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackPrefs"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackPrefs"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/sessions": {
       "get": {
         "summary": "Devices signed in as the current user.",
@@ -3576,6 +3630,55 @@
         "responses": {
           "204": {
             "description": "Stopped"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/playback/{session_id}/cast-url": {
+      "post": {
+        "summary": "Absolute, long-lived (8 h) signed URLs of a running playback session for a Chromecast /\nAirPlay receiver. Start the session with `preset: \"chromecast\"` (or `for_cast: true`, which\ndefaults to it) so the decision suits the receiver. The sender must keep pinging\n`/playback/{id}/progress`; media requests from the receiver also keep the session alive.",
+        "operationId": "cast_url",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session id from decide / vod play",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CastUrl"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           },
           "404": {
             "description": "",
@@ -5011,6 +5114,98 @@
         }
       }
     },
+    "/api/v1/vod/subs/{session_id}/{file}": {
+      "get": {
+        "summary": "An embedded text subtitle of a VOD playback as WebVTT (extracted from the provider file with\nthe player User-Agent, cached). Signed URL (scope `vodsub:{session}:{index}`) or bearer token.",
+        "operationId": "vod_subs",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session id from /vod/play",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "path",
+            "description": "`{subtitle index}.vtt`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "query",
+            "description": "Expiry (unix seconds).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "query",
+            "description": "User the URL was signed for.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "query",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "WebVTT",
+            "content": {
+              "text/vtt": {}
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not available on single-connection providers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/webhooks/arr": {
       "post": {
         "summary": "Radarr/Sonarr webhook receiver. Imported/removed files trigger a targeted library rescan.",
@@ -5794,6 +5989,75 @@
           }
         }
       },
+      "CastSubtitle": {
+        "type": "object",
+        "required": [
+          "index",
+          "forced"
+        ],
+        "properties": {
+          "forced": {
+            "type": "boolean"
+          },
+          "index": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absolute WebVTT URL (absent for image subtitles or when extraction is unavailable)."
+          }
+        }
+      },
+      "CastUrl": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "mode",
+          "url",
+          "content_type",
+          "base_url",
+          "expires_in_s",
+          "subtitles"
+        ],
+        "properties": {
+          "base_url": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "expires_in_s": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PlaybackMode"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "subtitles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CastSubtitle"
+            }
+          },
+          "url": {
+            "type": "string",
+            "description": "Absolute signed media URL on `cast_base_url` (HLS master playlist, or the direct/proxied file)."
+          }
+        }
+      },
       "ChannelMetricsDto": {
         "type": "object",
         "required": [
@@ -6241,13 +6505,20 @@
               "null"
             ],
             "format": "int64",
-            "description": "ffprobe stream index of the audio track to use."
+            "description": "ffprobe stream index of the audio track to use. Omit to let the server choose from the\nuser's preferences (`GET /me/preferences`)."
           },
           "device_id": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "for_cast": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Receiver is a Chromecast/AirPlay device: defaults the preset to `chromecast` and returns\nabsolute, 8-hour signed URLs on `cast_base_url`."
           },
           "item_id": {
             "type": [
@@ -6289,7 +6560,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "ffprobe stream index of the subtitle track to use."
+            "description": "ffprobe stream index of the subtitle track to use. Omit for the automatic choice, `-1`\nfor no subtitles."
           }
         }
       },
@@ -6301,7 +6572,8 @@
           "url",
           "decision",
           "subtitles",
-          "audio"
+          "audio",
+          "selected"
         ],
         "properties": {
           "audio": {
@@ -6315,6 +6587,10 @@
           },
           "mode": {
             "$ref": "#/components/schemas/PlaybackMode"
+          },
+          "selected": {
+            "$ref": "#/components/schemas/Selected",
+            "description": "The tracks chosen automatically (or taken from the request) and why."
           },
           "session_id": {
             "type": "string"
@@ -8237,6 +8513,49 @@
           "transcode"
         ]
       },
+      "PlaybackPrefs": {
+        "type": "object",
+        "properties": {
+          "audio_languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered audio languages (ISO 639-1/2 or names); `\"original\"` = the film's original language.",
+            "default": [
+              "original"
+            ]
+          },
+          "burn_in_image_subs": {
+            "type": "boolean",
+            "description": "Allow picking image subtitles (PGS/VobSub) that must be burned into the video.",
+            "default": false
+          },
+          "prefer_sdh": {
+            "type": "boolean",
+            "description": "Prefer SDH / hearing-impaired tracks.",
+            "default": false
+          },
+          "subtitle_languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered subtitle languages.",
+            "default": [
+              "en"
+            ]
+          },
+          "subtitle_mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubtitleMode"
+              }
+            ],
+            "default": "auto"
+          }
+        }
+      },
       "PlayerKind": {
         "type": "string",
         "enum": [
@@ -8761,6 +9080,34 @@
           "query": {
             "type": "string",
             "description": "Query string for `GET /libraries/{library_id}/items`."
+          }
+        }
+      },
+      "Selected": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "audio_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "ffprobe index of the chosen audio stream."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why (human readable)."
+          },
+          "subtitle_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "ffprobe index of the chosen subtitle stream; `null` = none."
           }
         }
       },
@@ -9362,6 +9709,15 @@
           }
         ]
       },
+      "SubtitleMode": {
+        "type": "string",
+        "enum": [
+          "off",
+          "forced_only",
+          "auto",
+          "always"
+        ]
+      },
       "SubtitleOption": {
         "type": "object",
         "required": [
@@ -9481,6 +9837,13 @@
       "TuneBody": {
         "type": "object",
         "properties": {
+          "for_cast": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Chromecast/AirPlay receiver: defaults the preset to `chromecast` and returns an absolute,\n8-hour signed URL on `cast_base_url`."
+          },
           "mode": {
             "oneOf": [
               {
@@ -10093,6 +10456,13 @@
               "string",
               "null"
             ]
+          },
+          "for_cast": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Chromecast/AirPlay receiver: default preset `chromecast`, absolute 8-hour URLs on\n`cast_base_url`."
           },
           "id": {
             "type": "integer",

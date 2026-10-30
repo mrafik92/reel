@@ -86,6 +86,8 @@ impl DeviceProfile {
             "webos" => Some(webos()),
             "tizen" => Some(tizen()),
             "android_exoplayer" => Some(android_exoplayer()),
+            "chromecast" => Some(chromecast()),
+            "airplay" => Some(airplay()),
             _ => None,
         }
     }
@@ -97,6 +99,8 @@ impl DeviceProfile {
             "webos",
             "tizen",
             "android_exoplayer",
+            "chromecast",
+            "airplay",
         ]
     }
 }
@@ -124,6 +128,42 @@ fn a(codec: &str, ch: u8) -> AudioCodecSupport {
 
 fn strs(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
+}
+
+/// Chromecast default media receiver: MP4 / HLS fMP4 with H.264 or HEVC, AAC/AC3/EAC3, WebVTT
+/// subtitles. Modelled as MSE-like (one audio track per stream, subtitles as separate VTT tracks).
+pub fn chromecast() -> DeviceProfile {
+    DeviceProfile {
+        name: "chromecast".into(),
+        player: PlayerKind::Mse,
+        containers: strs(&["mp4"]),
+        video: vec![
+            v("h264", "high", 42, 8, &[]),
+            v("hevc", "main 10", 153, 10, &[Hdr::Hdr10, Hdr::Hlg, Hdr::Dv]),
+        ],
+        audio: vec![
+            a("aac", 6),
+            a("ac3", 6),
+            a("eac3", 6),
+            a("mp3", 2),
+            a("opus", 2),
+        ],
+        subtitles: SubtitleSupport {
+            text: strs(&["vtt"]),
+            image: vec![],
+        },
+        max_width: 3840,
+        max_height: 2160,
+        max_bitrate_kbps: None,
+    }
+}
+
+/// AirPlay (Apple TV / HomePod receivers): HLS/MP4 with H.264 or HEVC, AAC/AC3/EAC3, WebVTT.
+pub fn airplay() -> DeviceProfile {
+    let mut p = web_safari();
+    p.name = "airplay".into();
+    p.containers = strs(&["mp4", "mov"]);
+    p
 }
 
 /// Chrome/Firefox/Edge via hls.js (MSE).

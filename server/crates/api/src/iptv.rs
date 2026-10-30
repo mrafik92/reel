@@ -372,6 +372,9 @@ pub struct TuneBody {
     /// Admins only: if every provider connection is held by other users, stop their streams and
     /// take the slot (answer to a 409 with `takeover: true`).
     pub takeover: Option<bool>,
+    /// Chromecast/AirPlay receiver: defaults the preset to `chromecast` and returns an absolute,
+    /// 8-hour signed URL on `cast_base_url`.
+    pub for_cast: Option<bool>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -443,6 +446,7 @@ pub async fn tune(
             )));
         }
     }
+    let cast = crate::prefs::cast_ctx(&st, b.for_cast.unwrap_or(false))?;
     let profile = match (b.profile, b.preset.as_deref()) {
         (Some(p), _) => Some(p),
         (None, Some(name)) => Some(DeviceProfile::preset(name).ok_or_else(|| {
@@ -451,6 +455,7 @@ pub async fn tune(
                 DeviceProfile::preset_names().join(", ")
             ))
         })?),
+        (None, None) if cast.is_some() => DeviceProfile::preset("chromecast"),
         (None, None) => None,
     };
     let opts = profile.map_or_else(HlsOptions::default, |p| HlsOptions {
@@ -495,9 +500,17 @@ pub async fn tune(
     let url = st.signer(u.id()).url(
         &format!("/api/v1/iptv/live/{}/{file}", s.id),
         &format!("live:{}", s.id),
-        st.media_ttl(),
+        if cast.is_some() {
+            crate::prefs::Cast::ttl(&st)
+        } else {
+            st.media_ttl()
+        },
         1,
     );
+    let url = match &cast {
+        Some(c) => c.abs(&url),
+        None => url,
+    };
     Ok(Json(TuneResponse {
         session_id: s.id,
         mode: s.mode.into(),

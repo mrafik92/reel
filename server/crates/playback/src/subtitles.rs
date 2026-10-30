@@ -20,6 +20,21 @@ pub fn extract_args(src: &SubtitleSource, out: &Path) -> Vec<String> {
         .iter()
         .map(|s| s.to_string())
         .collect();
+    if let SubtitleSource::Embedded { path, .. } = src {
+        if crate::ffmpeg::is_remote(path) {
+            // provider URL: player-like agent, network protocols only
+            a.extend(
+                [
+                    "-user_agent",
+                    crate::ffmpeg::REMOTE_UA,
+                    "-protocol_whitelist",
+                    "http,https,tcp,tls,crypto",
+                ]
+                .iter()
+                .map(|s| s.to_string()),
+            );
+        }
+    }
     match src {
         SubtitleSource::Embedded { path, stream_index } => {
             a.extend([

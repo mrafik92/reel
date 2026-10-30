@@ -174,6 +174,7 @@ pub struct MovieDetails {
     pub overview: Option<String>,
     pub vote_average: Option<f64>,
     pub vote_count: Option<i64>,
+    pub original_language: Option<String>,
     /// Minutes.
     pub runtime: Option<i64>,
     pub poster_path: Option<String>,
@@ -216,6 +217,7 @@ pub struct TvDetails {
     pub overview: Option<String>,
     pub vote_average: Option<f64>,
     pub vote_count: Option<i64>,
+    pub original_language: Option<String>,
     #[serde(default)]
     pub episode_run_time: Vec<i64>,
     pub poster_path: Option<String>,

@@ -77,6 +77,8 @@ struct Xt {
     live_active: AtomicUsize,
     mp4: PathBuf,
     mkv: PathBuf,
+    /// h264/aac mkv with embedded English + Arabic subtitles (served for stream 1003)
+    mkv_subs: PathBuf,
     ts: Vec<u8>,
 }
 
@@ -94,7 +96,7 @@ fn movies() -> Value {
         .enumerate()
     {
         v.push(json!({"num":3+i,"name":format!("Filler Film {}", i + 3),"stream_id":1003+i,"stream_icon":img("p"),
-            "rating":r.to_string(),"added":(1_700_000_000i64 + a).to_string(),"category_id":"10","container_extension":"mp4"}));
+            "rating":r.to_string(),"added":(1_700_000_000i64 + a).to_string(),"category_id":"10","container_extension": if i == 0 { "mkv" } else { "mp4" }}));
     }
     v.push(json!({"num":7,"name":"Other Movie (2010)","stream_id":1007,"stream_icon":"","rating":"0","added":"1700000050","category_id":"11","container_extension":"mp4","tmdb":"555"}));
     v.push(json!({"num":8,"name":"Lonely","stream_id":1008,"stream_icon":"","rating":"4","added":"1700000010","category_id":"11","container_extension":"mp4"}));
@@ -164,10 +166,10 @@ async fn serve_movie(
         x.ranges.lock().unwrap().push(r.to_string());
     }
     let id: i64 = file.split('.').next().unwrap().parse().unwrap();
-    let p = if id == 1002 {
-        x.mkv.clone()
-    } else {
-        x.mp4.clone()
+    let p = match id {
+        1002 => x.mkv.clone(),
+        1003 => x.mkv_subs.clone(),
+        _ => x.mp4.clone(),
     };
     ServeFile::new(p)
         .oneshot(req)
@@ -226,6 +228,66 @@ async fn start_panel(dir: &FsPath) -> (Arc<Xt>, String) {
     let mp4 = dir.join("a.mp4");
     let mkv = dir.join("b.mkv");
     let ts = dir.join("c.ts");
+    let mkv_subs = dir.join("d.mkv");
+    std::fs::write(
+        dir.join("en.srt"),
+        "1\n00:00:00,000 --> 00:00:01,500\nHello subtitles\n\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("ar.srt"),
+        "1\n00:00:00,000 --> 00:00:01,500\nMarhaba\n\n",
+    )
+    .unwrap();
+    let ok = Command::new("ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=160x120:rate=25:duration=4",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=duration=4",
+            "-i",
+        ])
+        .arg(dir.join("en.srt"))
+        .arg("-i")
+        .arg(dir.join("ar.srt"))
+        .args([
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-map",
+            "2",
+            "-map",
+            "3",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-c:s",
+            "srt",
+            "-metadata:s:a:0",
+            "language=eng",
+            "-metadata:s:s:0",
+            "language=eng",
+            "-metadata:s:s:1",
+            "language=ara",
+        ])
+        .arg(&mkv_subs)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "mkv with subtitles");
     encode(
         &mp4,
         &[
@@ -253,6 +315,7 @@ async fn start_panel(dir: &FsPath) -> (Arc<Xt>, String) {
     let x = Arc::new(Xt {
         mp4,
         mkv,
+        mkv_subs,
         ts: std::fs::read(ts).unwrap(),
         ..Default::default()
     });
@@ -1132,4 +1195,140 @@ async fn vod_shares_the_provider_connection_budget_with_live_tv() {
     let (s, _) = tune(&alice, json!({"mode":"passthrough"})).await;
     assert_eq!(s, StatusCode::OK);
     e.state.iptv.shutdown().await;
+}
+
+#[tokio::test]
+async fn vod_embedded_subtitles_are_selected_extracted_and_cached_when_the_provider_allows_a_second_connection()
+ {
+    if !have_ffmpeg() {
+        return;
+    }
+    let e = env(|_| {}, 2).await;
+    let (_, p) = get(&e.admin, "/api/v1/vod/movies?q=filler%20film%203").await;
+    let id = p["items"][0]["id"].as_i64().unwrap();
+    send(
+        &e.admin,
+        "PUT",
+        "/api/v1/me/preferences",
+        Some(json!({"subtitle_mode": "always", "subtitle_languages": ["en"]})),
+    )
+    .await;
+    let (s, d) = send(
+        &e.admin,
+        "POST",
+        "/api/v1/vod/play",
+        Some(json!({"kind":"movie","id":id,"preset":"webos"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{d}");
+    assert_eq!(d["mode"], "direct_play", "{d}");
+    let subs = d["subtitles"].as_array().unwrap();
+    assert_eq!(subs.len(), 2);
+    let en = subs.iter().find(|s| s["language"] == "eng").unwrap();
+    assert_eq!(
+        d["selected"]["subtitle_index"], en["index"],
+        "English picked automatically: {d}"
+    );
+    assert_eq!(d["decision"]["subtitle_index"], en["index"]);
+    let url = en["url"].as_str().unwrap();
+    assert!(url.contains("/api/v1/vod/subs/") && !url.contains("hunter2"));
+    // extracted from the remote file (player UA), served as WebVTT, cached
+    let before = e.x.media_hits.load(SeqCst);
+    let res = raw_get(&e.raw, url, None).await;
+    assert_eq!(res.status(), 200);
+    assert!(
+        res.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/vtt")
+    );
+    assert_eq!(res.headers()["access-control-allow-origin"], "*");
+    let text =
+        String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    assert!(
+        text.starts_with("WEBVTT") && text.contains("Hello subtitles"),
+        "{text}"
+    );
+    assert!(
+        e.x.media_hits.load(SeqCst) > before,
+        "ffmpeg read the provider file"
+    );
+    let hits = e.x.media_hits.load(SeqCst);
+    assert_eq!(raw_get(&e.raw, url, None).await.status(), 200);
+    assert_eq!(
+        e.x.media_hits.load(SeqCst),
+        hits,
+        "second request served from the cache"
+    );
+    assert_eq!(
+        raw_get(&e.raw, "/api/v1/vod/subs/nope/1.vtt", None)
+            .await
+            .status(),
+        401
+    );
+    // cast URL for the same session lists absolute VTT URLs too
+    let e_cast = env(|c| c.cast_base_url = Some("http://10.0.0.9:8420".into()), 2).await;
+    let (_, p) = get(&e_cast.admin, "/api/v1/vod/movies?q=filler%20film%203").await;
+    let (_, d) = send(
+        &e_cast.admin,
+        "POST",
+        "/api/v1/vod/play",
+        Some(json!({"kind":"movie","id":p["items"][0]["id"],"preset":"webos"})),
+    )
+    .await;
+    let sid = d["session_id"].as_str().unwrap();
+    let (s, c) = send(
+        &e_cast.admin,
+        "POST",
+        &format!("/api/v1/playback/{sid}/cast-url"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{c}");
+    assert!(
+        c["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://10.0.0.9:8420/api/v1/vod/direct/")
+    );
+    assert!(
+        c["subtitles"][0]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://10.0.0.9:8420/api/v1/vod/subs/")
+    );
+
+    // single-connection provider: no second connection for extraction → no URL, no selection
+    let e1 = env(|_| {}, 1).await;
+    let (_, p) = get(&e1.admin, "/api/v1/vod/movies?q=filler%20film%203").await;
+    send(
+        &e1.admin,
+        "PUT",
+        "/api/v1/me/preferences",
+        Some(json!({"subtitle_mode": "always"})),
+    )
+    .await;
+    let (s, d) = send(
+        &e1.admin,
+        "POST",
+        "/api/v1/vod/play",
+        Some(json!({"kind":"movie","id":p["items"][0]["id"],"preset":"webos"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{d}");
+    assert!(
+        d["subtitles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["url"].is_null())
+    );
+    assert!(d["selected"]["subtitle_index"].is_null());
+    assert!(
+        d["selected"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("single-connection"),
+        "{d}"
+    );
 }
