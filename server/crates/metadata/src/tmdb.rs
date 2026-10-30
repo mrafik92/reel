@@ -1,6 +1,11 @@
 //! Minimal typed TMDB v3 client (API key or v4 bearer token).
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+use dashmap::DashMap;
 
 use serde::{Deserialize, de::DeserializeOwned};
 use tokio::sync::Semaphore;
@@ -23,7 +28,12 @@ pub struct TmdbClient {
     base: String,
     auth: Auth,
     gate: Arc<Semaphore>,
+    /// Short-lived response cache (person pages, reviews, details), shared between clones.
+    cache: Arc<DashMap<String, (Instant, serde_json::Value)>>,
 }
+
+/// How long cached TMDB responses live.
+const CACHE_TTL: Duration = Duration::from_secs(3600);
 
 // ---- models (only fields we use) ----
 
@@ -163,6 +173,7 @@ pub struct MovieDetails {
     pub release_date: Option<String>,
     pub overview: Option<String>,
     pub vote_average: Option<f64>,
+    pub vote_count: Option<i64>,
     /// Minutes.
     pub runtime: Option<i64>,
     pub poster_path: Option<String>,
@@ -204,6 +215,7 @@ pub struct TvDetails {
     pub first_air_date: Option<String>,
     pub overview: Option<String>,
     pub vote_average: Option<f64>,
+    pub vote_count: Option<i64>,
     #[serde(default)]
     pub episode_run_time: Vec<i64>,
     pub poster_path: Option<String>,
@@ -251,6 +263,83 @@ pub struct SeasonDetails {
     pub episodes: Vec<EpisodeDetails>,
 }
 
+/// `/person/{id}` with combined credits.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PersonDetails {
+    pub id: i64,
+    #[serde(default)]
+    pub name: String,
+    pub biography: Option<String>,
+    pub birthday: Option<String>,
+    pub deathday: Option<String>,
+    pub place_of_birth: Option<String>,
+    pub known_for_department: Option<String>,
+    pub profile_path: Option<String>,
+    pub imdb_id: Option<String>,
+    pub external_ids: Option<ExternalIds>,
+    pub combined_credits: Option<CombinedCredits>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CombinedCredits {
+    #[serde(default)]
+    pub cast: Vec<CombinedCredit>,
+    #[serde(default)]
+    pub crew: Vec<CombinedCredit>,
+}
+
+/// One cast or crew entry of a person's filmography (movie or TV).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CombinedCredit {
+    pub id: i64,
+    /// `movie` | `tv`
+    pub media_type: Option<String>,
+    pub title: Option<String>,
+    pub name: Option<String>,
+    pub release_date: Option<String>,
+    pub first_air_date: Option<String>,
+    pub overview: Option<String>,
+    pub poster_path: Option<String>,
+    pub backdrop_path: Option<String>,
+    pub vote_average: Option<f64>,
+    pub character: Option<String>,
+    pub job: Option<String>,
+}
+
+impl CombinedCredit {
+    pub fn date(&self) -> Option<&str> {
+        self.release_date
+            .as_deref()
+            .or(self.first_air_date.as_deref())
+            .filter(|d| !d.is_empty())
+    }
+}
+
+/// `/{movie|tv}/{id}/reviews`
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ReviewsPage {
+    #[serde(default)]
+    pub results: Vec<TmdbReview>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TmdbReview {
+    #[serde(default)]
+    pub author: String,
+    pub author_details: Option<AuthorDetails>,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub created_at: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AuthorDetails {
+    pub avatar_path: Option<String>,
+    pub rating: Option<f64>,
+}
+
 impl TmdbClient {
     /// Create a client against the public TMDB API. A key starting with `eyJ`
     /// (JWT) is treated as a v4 bearer token, otherwise as a v3 API key.
@@ -283,7 +372,70 @@ impl TmdbClient {
             base: base.into().trim_end_matches('/').to_string(),
             auth,
             gate: Arc::new(Semaphore::new(8)),
+            cache: Arc::default(),
         }
+    }
+
+    /// Like [`Self::get`] but memoised for an hour (keyed by path + params).
+    async fn get_cached<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        params: &[(&str, String)],
+    ) -> Result<T> {
+        let key = format!("{path}?{params:?}");
+        if let Some(hit) = self.cache.get(&key) {
+            if hit.0.elapsed() < CACHE_TTL {
+                if let Ok(v) = serde_json::from_value(hit.1.clone()) {
+                    return Ok(v);
+                }
+            }
+        }
+        let v: serde_json::Value = self.get(path, params).await?;
+        if self.cache.len() > 2000 {
+            self.cache.retain(|_, (t, _)| t.elapsed() < CACHE_TTL);
+        }
+        self.cache.insert(key, (Instant::now(), v.clone()));
+        serde_json::from_value(v)
+            .map_err(|e| Error::Other(format!("unexpected TMDB response: {e}")))
+    }
+
+    /// Person with biography, external ids and combined credits (cached 1 h).
+    pub async fn person(&self, id: i64) -> Result<PersonDetails> {
+        self.get_cached(
+            &format!("/person/{id}"),
+            &[("append_to_response", "combined_credits,external_ids".into())],
+        )
+        .await
+    }
+
+    /// First page of user reviews (cached 1 h).
+    pub async fn reviews(&self, tv: bool, id: i64) -> Result<ReviewsPage> {
+        let kind = if tv { "tv" } else { "movie" };
+        self.get_cached(&format!("/{kind}/{id}/reviews"), &[]).await
+    }
+
+    /// [`Self::movie`], cached 1 h (for read-only display paths).
+    pub async fn movie_cached(&self, id: i64) -> Result<MovieDetails> {
+        self.get_cached(
+            &format!("/movie/{id}"),
+            &[(
+                "append_to_response",
+                "credits,release_dates,external_ids".into(),
+            )],
+        )
+        .await
+    }
+
+    /// [`Self::tv`], cached 1 h.
+    pub async fn tv_cached(&self, id: i64) -> Result<TvDetails> {
+        self.get_cached(
+            &format!("/tv/{id}"),
+            &[(
+                "append_to_response",
+                "external_ids,credits,content_ratings".into(),
+            )],
+        )
+        .await
     }
 
     async fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, String)]) -> Result<T> {

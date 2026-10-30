@@ -23,6 +23,9 @@ services:
       TZ: ${TZ:-UTC}
       # metadata (optional; without a key only local .nfo/artwork is used)
       REEL_TMDB_API_KEY: ${REEL_TMDB_API_KEY:-}
+      # extra ratings/reviews sources (optional)
+      REEL_OMDB_API_KEY: ${REEL_OMDB_API_KEY:-}
+      REEL_TRAKT_CLIENT_ID: ${REEL_TRAKT_CLIENT_ID:-}
       # Radarr/Sonarr webhook shared secret (webhooks are rejected while empty)
       REEL_WEBHOOK_SECRET: ${REEL_WEBHOOK_SECRET:-}
       # public URL used in invite links, e.g. https://reel.example.com

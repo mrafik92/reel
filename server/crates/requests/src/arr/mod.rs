@@ -205,6 +205,27 @@ pub struct QueueItem {
     pub download_id: Option<String>,
     pub error_message: Option<String>,
     pub episode: Option<QueueEpisode>,
+    /// Radarr (`includeMovie=true`).
+    pub movie: Option<QueueMedia>,
+    /// Sonarr (`includeSeries=true`).
+    pub series: Option<QueueMedia>,
+}
+
+/// Movie / series embedded in a queue record.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct QueueMedia {
+    pub title: Option<String>,
+    pub tmdb_id: Option<i64>,
+    pub tvdb_id: Option<i64>,
+    pub images: Vec<QueueImage>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct QueueImage {
+    pub cover_type: Option<String>,
+    pub remote_url: Option<String>,
 }
 
 /// Episode embedded with `includeEpisode=true`.

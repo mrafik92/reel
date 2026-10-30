@@ -58,6 +58,7 @@ pub(crate) struct Shared {
     pub wake: Notify,
     pub notifier: Notifier,
     pub cfg: TrackerConfig,
+    pub(crate) downloads: tokio::sync::Mutex<crate::downloads::DlCache>,
 }
 
 impl Shared {

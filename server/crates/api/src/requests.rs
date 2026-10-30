@@ -101,7 +101,7 @@ fn progress_dto(p: &Progress) -> ProgressDto {
 }
 
 /// `/api/v1/images/tmdb/{kind}?path=…&w=…`
-fn tmdb_image(
+pub(crate) fn tmdb_image(
     sg: &reel_auth::UrlSigner,
     kind: &str,
     path: &Option<String>,
@@ -134,9 +134,12 @@ pub struct DiscoverCardDto {
     pub status: Availability,
     /// Live download progress when a request is in flight.
     pub progress: Option<ProgressDto>,
+    /// Library item (movie or show) holding this title, when it is in the library.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub library_item_id: Option<i64>,
 }
 
-fn card_dto(c: &DiscoverCard, sg: &reel_auth::UrlSigner) -> DiscoverCardDto {
+pub(crate) fn card_dto(c: &DiscoverCard, sg: &reel_auth::UrlSigner) -> DiscoverCardDto {
     DiscoverCardDto {
         tmdb_id: c.tmdb_id,
         media_type: c.media_type.into(),
@@ -148,6 +151,7 @@ fn card_dto(c: &DiscoverCard, sg: &reel_auth::UrlSigner) -> DiscoverCardDto {
         vote_average: c.vote_average,
         status: via(&c.status),
         progress: c.progress.as_ref().map(progress_dto),
+        library_item_id: c.library_item_id,
     }
 }
 
@@ -168,6 +172,8 @@ pub struct DiscoverDetailDto {
     pub tvdb_id: Option<i64>,
     /// Season numbers (TV; specials excluded).
     pub seasons: Vec<i64>,
+    /// Top-billed cast (max 20).
+    pub cast: Vec<crate::dto::CastMember>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -353,6 +359,18 @@ pub async fn discover_detail(
         imdb_id: d.imdb_id,
         tvdb_id: d.tvdb_id,
         seasons: d.seasons,
+        cast: {
+            let sg = st.signer(u.id());
+            d.cast
+                .iter()
+                .map(|c| crate::dto::CastMember {
+                    name: c.name.clone(),
+                    character: c.character.clone(),
+                    photo_url: tmdb_image(&sg, "profile", &c.profile_path, 185),
+                    person_tmdb_id: Some(c.person_tmdb_id),
+                })
+                .collect()
+        },
     }))
 }
 

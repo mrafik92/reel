@@ -48,3 +48,8 @@ data_dir = "./data"
 # allow_private_fetch = true
 # Channel logos come from third-party playlists: private/loopback/link-local targets are blocked.
 # allow_private_logo_fetch = false
+
+# ── Ratings & reviews (optional) ─────────────────────────────────────────────
+# TMDB ratings/reviews always work with a TMDB key. These add more sources:
+# omdb_api_key = ""        # https://www.omdbapi.com → IMDb, Rotten Tomatoes, Metacritic scores (cached 24 h)
+# trakt_client_id = ""     # https://trakt.tv/oauth/applications → Trakt comments

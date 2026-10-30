@@ -7,9 +7,11 @@
 pub mod arr;
 mod discover;
 mod dispatch;
+pub mod downloads;
 mod error;
 pub mod models;
 pub mod notify;
+pub mod reviews;
 mod service;
 mod shared;
 pub mod state;
@@ -17,7 +19,9 @@ pub mod torrent;
 mod tracker;
 pub mod webhook;
 
-pub use discover::{DiscoverCard, DiscoverDetail, DiscoverPage, Discovery};
+pub use discover::{
+    DiscoverCard, DiscoverCast, DiscoverDetail, DiscoverPage, Discovery, PersonCredit, PersonDetail,
+};
 pub use error::{Error, Result};
 pub use models::{
     ArrKind, ArrServer, ItemProgress, MediaType, Progress, RequestRecord, parse_state, state_str,

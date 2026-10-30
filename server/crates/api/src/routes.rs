@@ -55,7 +55,7 @@ fn summary_from(uid: i64) -> String {
 }
 
 /// Signed `/api/v1/images/{kind}/{id}?w=…` URL.
-fn image_url(sg: &reel_auth::UrlSigner, kind: &str, id: i64, w: u32) -> String {
+pub(crate) fn image_url(sg: &reel_auth::UrlSigner, kind: &str, id: i64, w: u32) -> String {
     sg.url(
         &format!("/api/v1/images/{kind}/{id}?w={w}"),
         &format!("img:{kind}:{id}"),
@@ -317,7 +317,7 @@ pub async fn get_item(
     .await?;
 
     let cast = sqlx::query(
-        "SELECT p.id, p.name, p.photo, c.character FROM credits c \
+        "SELECT p.id, p.name, p.photo, p.tmdb_id, c.character FROM credits c \
          JOIN people p ON p.id = c.person_id \
          WHERE c.item_id = ? AND c.role = 'actor' ORDER BY c.ord, p.id",
     )
@@ -331,6 +331,7 @@ pub async fn get_item(
             name: r.get("name"),
             character: r.get("character"),
             photo_url: photo.map(|_| image_url(&sg, "person", r.get("id"), 185)),
+            person_tmdb_id: r.get("tmdb_id"),
         }
     })
     .collect();

@@ -26,6 +26,8 @@ pub struct DiscoverCard {
     pub status: Availability,
     /// Live request progress, if the title is being requested/downloaded.
     pub progress: Option<Progress>,
+    /// Library item (movie, or show) holding this title, if it is in the library.
+    pub library_item_id: Option<i64>,
 }
 
 /// A page of cards.
@@ -47,6 +49,42 @@ pub struct DiscoverDetail {
     pub tvdb_id: Option<i64>,
     /// TV: season numbers (excluding specials).
     pub seasons: Vec<i64>,
+    /// Top-billed cast (max 20).
+    pub cast: Vec<DiscoverCast>,
+}
+
+/// Cast entry of a discover detail.
+#[derive(Debug, Clone, Serialize)]
+pub struct DiscoverCast {
+    pub name: String,
+    pub character: Option<String>,
+    pub profile_path: Option<String>,
+    pub person_tmdb_id: i64,
+}
+
+/// `GET /people/{tmdb_id}`.
+#[derive(Debug, Clone, Serialize)]
+pub struct PersonDetail {
+    pub tmdb_id: i64,
+    pub name: String,
+    pub biography: Option<String>,
+    pub birthday: Option<String>,
+    pub deathday: Option<String>,
+    pub place_of_birth: Option<String>,
+    pub known_for_department: Option<String>,
+    pub profile_path: Option<String>,
+    pub imdb_id: Option<String>,
+    pub credits: Vec<PersonCredit>,
+}
+
+/// One filmography entry: a discover card plus the person's part in it.
+#[derive(Debug, Clone, Serialize)]
+pub struct PersonCredit {
+    pub card: DiscoverCard,
+    /// `cast` | `crew`
+    pub role: &'static str,
+    pub character: Option<String>,
+    pub job: Option<String>,
 }
 
 /// Discovery facade.
@@ -94,6 +132,7 @@ impl Discovery {
             }
             typed.push((mt, r));
         }
+        let (movies_ids, tv_ids) = (movies.clone(), tv.clone());
         let svc = self.svc();
         let mut badges: HashMap<(MediaType, i64), Availability> = HashMap::new();
         for (mt, ids) in [(MediaType::Movie, movies), (MediaType::Tv, tv)] {
@@ -102,6 +141,12 @@ impl Discovery {
             }
             for (id, a) in svc.availability_for(mt, &ids).await? {
                 badges.insert((mt, id), a);
+            }
+        }
+        let mut lib_ids: HashMap<(MediaType, i64), i64> = HashMap::new();
+        for (mt, ids) in [(MediaType::Movie, &movies_ids), (MediaType::Tv, &tv_ids)] {
+            for (id, item) in crate::service::library_item_ids(&self.s.pool, mt, ids).await? {
+                lib_ids.insert((mt, id), item);
             }
         }
         // Live progress by (media_type, tmdb_id).
@@ -127,6 +172,7 @@ impl Discovery {
                     .copied()
                     .unwrap_or(Availability::None),
                 progress: live.get(&(mt, r.id)).cloned(),
+                library_item_id: lib_ids.get(&(mt, r.id)).copied(),
             })
             .collect())
     }
@@ -218,7 +264,7 @@ impl Discovery {
 
     pub async fn detail(&self, media: MediaType, tmdb_id: i64) -> Result<DiscoverDetail> {
         let t = self.tmdb()?;
-        let (mut sr, genres, runtime, imdb, tvdb, seasons) = match media {
+        let (mut sr, genres, runtime, imdb, tvdb, seasons, credits) = match media {
             MediaType::Movie => {
                 let m = t.movie(tmdb_id).await?;
                 (
@@ -237,6 +283,7 @@ impl Discovery {
                     m.imdb_id.clone(),
                     None,
                     vec![],
+                    m.credits.clone(),
                 )
             }
             MediaType::Tv => {
@@ -262,6 +309,7 @@ impl Discovery {
                         .map(|s| s.season_number)
                         .filter(|n| *n > 0)
                         .collect(),
+                    m.credits.clone(),
                 )
             }
         };
@@ -279,6 +327,117 @@ impl Discovery {
             imdb_id: imdb,
             tvdb_id: tvdb,
             seasons,
+            cast: credits
+                .map(|c| {
+                    let mut cast = c.cast;
+                    cast.sort_by_key(|m| m.order);
+                    cast.into_iter()
+                        .take(20)
+                        .map(|m| DiscoverCast {
+                            name: m.name,
+                            character: m.character.filter(|c| !c.is_empty()),
+                            profile_path: m.profile_path,
+                            person_tmdb_id: m.id,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+    }
+
+    /// Person page: biography plus filmography as discover cards (availability, progress).
+    pub async fn person(&self, tmdb_id: i64) -> Result<PersonDetail> {
+        let p = self.tmdb()?.person(tmdb_id).await?;
+        let mut seen: HashMap<(MediaType, i64), usize> = HashMap::new();
+        let mut entries: Vec<(SearchResult, &'static str, Option<String>, Option<String>)> = vec![];
+        let all = p.combined_credits.iter().flat_map(|c| {
+            c.cast
+                .iter()
+                .map(|x| (x, "cast"))
+                .chain(c.crew.iter().map(|x| (x, "crew")))
+        });
+        for (c, role) in all {
+            let mt = match c.media_type.as_deref().and_then(MediaType::parse) {
+                Some(m) => m,
+                None => continue,
+            };
+            let key = (mt, c.id);
+            let job = c.job.clone().filter(|j| !j.is_empty());
+            let character = c.character.clone().filter(|j| !j.is_empty());
+            if let Some(&i) = seen.get(&key) {
+                // cast wins over crew; several crew jobs on one title are merged
+                let e = &mut entries[i];
+                if e.1 == "crew" && role == "crew" {
+                    if let Some(j) = job {
+                        match &mut e.3 {
+                            Some(old) if !old.split(", ").any(|x| x == j) => {
+                                old.push_str(", ");
+                                old.push_str(&j);
+                            }
+                            None => e.3 = Some(j),
+                            _ => {}
+                        }
+                    }
+                }
+                continue;
+            }
+            let year_known = c.date().is_some();
+            if c.poster_path.is_none() && !year_known {
+                continue;
+            }
+            seen.insert(key, entries.len());
+            let sr = SearchResult {
+                id: c.id,
+                title: c.title.clone(),
+                name: c.name.clone(),
+                release_date: c.release_date.clone().filter(|d| !d.is_empty()),
+                first_air_date: c.first_air_date.clone().filter(|d| !d.is_empty()),
+                overview: c.overview.clone(),
+                poster_path: c.poster_path.clone(),
+                backdrop_path: c.backdrop_path.clone(),
+                vote_average: c.vote_average,
+                media_type: Some(mt.as_str().to_string()),
+                ..Default::default()
+            };
+            entries.push((sr, role, character, job));
+        }
+        // newest first; undated entries last
+        entries.sort_by(|a, b| {
+            let d = |e: &(SearchResult, _, _, _)| {
+                e.0.release_date
+                    .clone()
+                    .or_else(|| e.0.first_air_date.clone())
+                    .unwrap_or_default()
+            };
+            d(b).cmp(&d(a))
+        });
+        let cards = self
+            .cards(entries.iter().map(|e| e.0.clone()).collect(), None)
+            .await?;
+        let credits = cards
+            .into_iter()
+            .zip(entries)
+            .map(|(card, (_, role, character, job))| PersonCredit {
+                card,
+                role,
+                character: if role == "cast" { character } else { None },
+                job: if role == "crew" { job } else { None },
+            })
+            .collect();
+        Ok(PersonDetail {
+            tmdb_id: p.id,
+            name: p.name,
+            biography: p.biography.filter(|b| !b.trim().is_empty()),
+            birthday: p.birthday.filter(|b| !b.is_empty()),
+            deathday: p.deathday.filter(|b| !b.is_empty()),
+            place_of_birth: p.place_of_birth.filter(|b| !b.is_empty()),
+            known_for_department: p.known_for_department.filter(|b| !b.is_empty()),
+            profile_path: p.profile_path,
+            imdb_id: p
+                .imdb_id
+                .or_else(|| p.external_ids.and_then(|e| e.imdb_id))
+                .filter(|i| !i.is_empty()),
+            credits,
         })
     }
 }

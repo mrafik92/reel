@@ -167,6 +167,9 @@ pub struct CastMember {
     pub character: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub photo_url: Option<String>,
+    /// TMDB person id; open `/people/{id}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub person_tmdb_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

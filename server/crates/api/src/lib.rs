@@ -4,6 +4,7 @@ pub mod auth;
 pub mod dto;
 pub mod enrich;
 pub mod error;
+mod extras;
 mod iptv;
 mod playback;
 mod requests;
@@ -53,6 +54,10 @@ pub struct AppState {
     pub requests: RequestsService,
     pub auth: AuthService,
     pub iptv: Arc<reel_iptv::IptvService>,
+    /// TMDB client (set by [`AppState::with_tmdb`]).
+    pub tmdb: Option<reel_metadata::TmdbClient>,
+    pub omdb: Option<reel_requests::reviews::OmdbClient>,
+    pub trakt: Option<reel_requests::reviews::TraktClient>,
     watcher: Arc<tokio::sync::Mutex<Option<LibraryWatcher>>>,
 }
 
@@ -98,6 +103,17 @@ impl AppState {
             },
         );
         Self {
+            tmdb: None,
+            omdb: config
+                .omdb_api_key
+                .as_deref()
+                .filter(|k| !k.trim().is_empty())
+                .map(|k| reel_requests::reviews::OmdbClient::new(k.trim())),
+            trakt: config
+                .trakt_client_id
+                .as_deref()
+                .filter(|k| !k.trim().is_empty())
+                .map(|k| reel_requests::reviews::TraktClient::new(k.trim())),
             iptv,
             auth,
             requests,
@@ -122,9 +138,22 @@ impl AppState {
 
     /// Enable TMDB discovery/requests metadata (rebuilds the requests service; call before
     /// `spawn_tracker`).
-    pub fn with_tmdb(self, tmdb: reel_metadata::TmdbClient) -> Self {
-        let requests = RequestsService::new(self.db.clone(), Some(tmdb), self.events.clone());
+    pub fn with_tmdb(mut self, tmdb: reel_metadata::TmdbClient) -> Self {
+        let requests =
+            RequestsService::new(self.db.clone(), Some(tmdb.clone()), self.events.clone());
+        self.tmdb = Some(tmdb);
         self.with_requests(requests)
+    }
+
+    /// Override the OMDb / Trakt clients (tests; normally built from the config).
+    pub fn with_review_sources(
+        mut self,
+        omdb: Option<reel_requests::reviews::OmdbClient>,
+        trakt: Option<reel_requests::reviews::TraktClient>,
+    ) -> Self {
+        self.omdb = omdb;
+        self.trakt = trakt;
+        self
     }
 
     /// Use a pre-built requests service (custom tracker options, tests).
@@ -375,8 +404,33 @@ async fn forward_events(
     user: User,
 ) {
     let mut owners = std::collections::HashMap::new();
+    // Download activity of all Arr queues is pushed as `{"type":"downloads","items":[…]}`: every
+    // 2 s while something is active, otherwise only a cheap check every 10 s. The snapshot is
+    // cached by the service, so any number of sockets cost the Arrs one poll per 2 s.
+    let mut dl_tick = tokio::time::interval(Duration::from_secs(2));
+    dl_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let (mut dl_active, mut dl_idle, mut dl_last) = (false, 0u32, String::from("[]"));
     loop {
         tokio::select! {
+            _ = dl_tick.tick() => {
+                if !dl_active {
+                    dl_idle += 1;
+                    if dl_idle % 5 != 1 {
+                        continue;
+                    }
+                }
+                let Ok(items) = st.requests.downloads().await else { continue };
+                let dtos = extras::downloads_for(&st, &user, &items).await;
+                dl_active = !dtos.is_empty();
+                let Ok(items_json) = serde_json::to_string(&dtos) else { continue };
+                if items_json != dl_last {
+                    let text = format!("{{\"type\":\"downloads\",\"items\":{items_json}}}");
+                    dl_last = items_json;
+                    if socket.send(Message::text(text)).await.is_err() {
+                        break;
+                    }
+                }
+            },
             ev = rx.recv() => match ev {
                 Ok(ev) => {
                     if !event_visible(&st, &user, &mut owners, &ev).await {
@@ -468,6 +522,9 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(requests::approve_request))
         .routes(routes!(requests::decline_request))
         .routes(routes!(requests::retry_request))
+        .routes(routes!(extras::get_person))
+        .routes(routes!(extras::get_reviews))
+        .routes(routes!(extras::list_downloads))
         .routes(routes!(requests::arr_webhook))
         .routes(routes!(
             requests::list_arr_servers,

@@ -37,6 +37,7 @@ impl Error {
             Error::QuotaExceeded(_) => 429,
             Error::NotConfigured(_) => 424,
             Error::Parse(_) => 400,
+            Error::Metadata(reel_metadata::Error::Status(404)) => 404,
             Error::Http(_) | Error::Remote { .. } | Error::Metadata(_) => 502,
             Error::Db(_) => 500,
         }

@@ -1851,6 +1851,27 @@
         }
       }
     },
+    "/api/v1/downloads": {
+      "get": {
+        "summary": "Everything in the Radarr/Sonarr queues (including downloads not started from Reel). Admins see\nall; other users only downloads of their own requests. Snapshot cached ~2 s server-side; the\nsame data is pushed as `{\"type\":\"downloads\",\"items\":[…]}` on `/events` while anything is active.",
+        "operationId": "list_downloads",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DownloadDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/events": {
       "get": {
         "summary": "WebSocket stream of [`ServerEvent`]s as JSON text frames. Authenticate with\n`Authorization: Bearer` or `?token=`. `request_progress` is delivered to the requester (and\nadmins); `scan_progress` to admins only.",
@@ -3115,6 +3136,56 @@
         }
       }
     },
+    "/api/v1/people/{tmdb_id}": {
+      "get": {
+        "summary": "A person from TMDB with their filmography as discovery cards.",
+        "operationId": "get_person",
+        "parameters": [
+          {
+            "name": "tmdb_id",
+            "in": "path",
+            "description": "TMDB person id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "TMDB not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/playback/{file_id}/decide": {
       "post": {
         "summary": "Decide how to play a file and start a playback session.",
@@ -3549,6 +3620,65 @@
           },
           "409": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/reviews/{media}/{tmdb_id}": {
+      "get": {
+        "summary": "Ratings (TMDB; IMDb / Rotten Tomatoes / Metacritic with an OMDb key), user reviews (TMDB; Trakt\nwith a client id) and outbound links for a title.",
+        "operationId": "get_reviews",
+        "parameters": [
+          {
+            "name": "media",
+            "in": "path",
+            "description": "movie | tv",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tmdb_id",
+            "in": "path",
+            "description": "TMDB id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewsDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "TMDB not configured",
             "content": {
               "application/json": {
                 "schema": {
@@ -4684,6 +4814,14 @@
           "name": {
             "type": "string"
           },
+          "person_tmdb_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "TMDB person id; open `/people/{id}`."
+          },
           "photo_url": {
             "type": [
               "string",
@@ -5316,6 +5454,14 @@
               "null"
             ]
           },
+          "library_item_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Library item (movie or show) holding this title, when it is in the library."
+          },
           "media_type": {
             "$ref": "#/components/schemas/MediaTypeDto"
           },
@@ -5374,11 +5520,19 @@
         "required": [
           "card",
           "genres",
-          "seasons"
+          "seasons",
+          "cast"
         ],
         "properties": {
           "card": {
             "$ref": "#/components/schemas/DiscoverCardDto"
+          },
+          "cast": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CastMember"
+            },
+            "description": "Top-billed cast (max 20)."
           },
           "genres": {
             "type": "array",
@@ -5476,6 +5630,148 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "DownloadDto": {
+        "type": "object",
+        "description": "One Radarr/Sonarr queue record (also the `items` of the `downloads` WebSocket event).",
+        "required": [
+          "id",
+          "arr_server_id",
+          "arr_name",
+          "media_type",
+          "title",
+          "state",
+          "progress"
+        ],
+        "properties": {
+          "arr_name": {
+            "type": "string"
+          },
+          "arr_server_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "episode": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "episode_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "eta_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "`\"{arr_server_id}:{queue_id}\"`"
+          },
+          "library_item_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "media_type": {
+            "$ref": "#/components/schemas/MediaTypeDto",
+            "description": "`movie` | `tv`"
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "progress": {
+            "type": "number",
+            "format": "float",
+            "description": "0..1"
+          },
+          "release_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Reel request this belongs to, if any."
+          },
+          "season": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "sizeleft_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "speed_bps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Needs a torrent client configured (admin → download clients).",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/RequestState",
+            "description": "queued | downloading | stalled | importing | failed"
+          },
+          "title": {
+            "type": "string"
+          },
+          "tmdb_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "tvdb_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           }
         }
       },
@@ -6636,6 +6932,104 @@
           }
         }
       },
+      "PersonCreditDto": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DiscoverCardDto",
+            "description": "The same card shape as discovery (status, progress, `library_item_id`, …)."
+          },
+          {
+            "type": "object",
+            "required": [
+              "role"
+            ],
+            "properties": {
+              "character": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "job": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "description": "`cast` | `crew`"
+              }
+            }
+          }
+        ]
+      },
+      "PersonDto": {
+        "type": "object",
+        "required": [
+          "tmdb_id",
+          "name",
+          "credits"
+        ],
+        "properties": {
+          "biography": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "birthday": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "credits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonCreditDto"
+            },
+            "description": "Filmography, newest first (cast preferred over crew for the same title)."
+          },
+          "deathday": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "imdb_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "known_for_department": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "photo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "place_of_birth": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tmdb_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "PlaybackDecision": {
         "type": "object",
         "required": [
@@ -6879,6 +7273,47 @@
           }
         }
       },
+      "RatingDto": {
+        "type": "object",
+        "required": [
+          "source",
+          "label",
+          "value"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "score_100": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "source": {
+            "type": "string",
+            "description": "`imdb` | `rotten_tomatoes` | `metacritic` | `tmdb`"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "description": "Display value, e.g. `7.8/10`, `94%`."
+          },
+          "votes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
       "RequestDto": {
         "type": "object",
         "required": [
@@ -6998,6 +7433,96 @@
           "failed",
           "declined"
         ]
+      },
+      "ReviewDto": {
+        "type": "object",
+        "required": [
+          "source",
+          "author",
+          "content",
+          "created_at"
+        ],
+        "properties": {
+          "author": {
+            "type": "string"
+          },
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "description": "Plain text / light markdown."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO-8601 timestamp."
+          },
+          "rating": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "0..10"
+          },
+          "source": {
+            "type": "string",
+            "description": "`tmdb` | `trakt`"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ReviewLinkDto": {
+        "type": "object",
+        "required": [
+          "source",
+          "url"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "`imdb` | `rotten_tomatoes` | `letterboxd` | `tmdb` | `trakt`"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "ReviewsDto": {
+        "type": "object",
+        "required": [
+          "ratings",
+          "reviews",
+          "links"
+        ],
+        "properties": {
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewLinkDto"
+            }
+          },
+          "ratings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RatingDto"
+            }
+          },
+          "reviews": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewDto"
+            }
+          }
+        }
       },
       "RoleDto": {
         "type": "string",

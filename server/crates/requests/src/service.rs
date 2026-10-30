@@ -106,6 +106,7 @@ impl RequestsService {
                 wake: Notify::new(),
                 notifier,
                 cfg: opts.tracker,
+                downloads: Default::default(),
             }),
         }
     }
@@ -671,4 +672,29 @@ impl Shared {
         self.progress.remove(&req.id);
         Ok(changed)
     }
+}
+
+/// Library item ids for TMDB ids: movies with a file, or shows.
+pub(crate) async fn library_item_ids(
+    pool: &SqlitePool,
+    media_type: MediaType,
+    tmdb_ids: &[i64],
+) -> Result<Vec<(i64, i64)>> {
+    if tmdb_ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let kind = match media_type {
+        MediaType::Movie => "movie",
+        MediaType::Tv => "show",
+    };
+    Ok(sqlx::query_as(
+        "SELECT i.tmdb_id, MIN(i.id) FROM media_items i
+         WHERE i.kind = ?1 AND i.tmdb_id IN (SELECT value FROM json_each(?2))
+           AND (i.kind != 'movie' OR EXISTS (SELECT 1 FROM media_files f WHERE f.item_id = i.id))
+         GROUP BY i.tmdb_id",
+    )
+    .bind(kind)
+    .bind(serde_json::to_string(tmdb_ids).unwrap_or_else(|_| "[]".into()))
+    .fetch_all(pool)
+    .await?)
 }

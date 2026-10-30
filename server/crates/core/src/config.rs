@@ -63,6 +63,10 @@ pub struct Config {
     /// Channel logos come from third-party playlists, so private/loopback targets are blocked
     /// unless this is true (default false).
     pub allow_private_logo_fetch: bool,
+    /// OMDb API key (`REEL_OMDB_API_KEY`): adds IMDb / Rotten Tomatoes / Metacritic scores.
+    pub omdb_api_key: Option<String>,
+    /// Trakt client id (`REEL_TRAKT_CLIENT_ID`): adds Trakt comments.
+    pub trakt_client_id: Option<String>,
     /// Libraries created on boot if no library with the same name exists.
     #[serde(default)]
     pub libraries: Vec<LibraryConfig>,
@@ -102,6 +106,8 @@ impl Default for Config {
             iptv_epg_days: 7,
             allow_private_fetch: true,
             allow_private_logo_fetch: false,
+            omdb_api_key: None,
+            trakt_client_id: None,
             libraries: Vec::new(),
         }
     }
