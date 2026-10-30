@@ -28,7 +28,7 @@ const NAV: NavItem[] = [
   { path: "/requests", label: "Requests", icon: "inbox", match: (p) => p.indexOf("/requests") === 0 },
   { path: "/downloads", label: "Downloads", icon: "download", match: (p) => p.indexOf("/downloads") === 0 },
   // Next: Live TV (IPTV guide + zapping). Flip `hidden` when the route lands.
-  { path: "/live", label: "Live TV", icon: "live", match: (p) => p.indexOf("/live") === 0, hidden: true },
+  { path: "/live", label: "Live TV", icon: "live", match: (p) => p.indexOf("/live") === 0 },
 ];
 
 /** Routes reachable without a session. */

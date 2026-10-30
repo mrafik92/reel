@@ -3,3 +3,7 @@ dist
 .staging
 *.ipk
 *.wgt
+data/
+*.db
+*.db-shm
+*.db-wal
