@@ -663,6 +663,12 @@ pub struct SourceDto {
     pub last_refresh_at: Option<i64>,
     pub last_epg_at: Option<i64>,
     pub last_error: Option<String>,
+    /// Channels in the guide delivered by the last import.
+    pub epg_channel_count: i64,
+    /// Programmes stored for this source's channels.
+    pub epg_programme_count: i64,
+    /// This source's channels linked to a guide channel (tvg-id or name match).
+    pub epg_matched_channels: i64,
     pub refreshing: bool,
     /// Upstream connections open right now (live + warm).
     pub open_connections: usize,
@@ -678,14 +684,21 @@ fn source_dto(st: &AppState, s: &Source) -> SourceDto {
         password_set: s.password.as_deref().is_some_and(|p| !p.is_empty()),
         max_connections: s.max_connections,
         epg_url: s.epg_url.clone(),
-        detected_epg_url: s.detected_epg_url.clone(),
+        // credentials in the guide URL (Xtream `xmltv.php?username=…&password=…`) are masked
+        detected_epg_url: s
+            .detected_epg_url
+            .as_deref()
+            .map(reel_iptv::net::redact_url),
         refresh_interval: s.refresh_interval,
         user_agent: s.user_agent.clone(),
         enabled: s.enabled,
         channel_count: s.channel_count,
         last_refresh_at: s.last_refresh_at,
         last_epg_at: s.last_epg_at,
-        last_error: s.last_error.clone(),
+        last_error: s.last_error.as_deref().map(reel_iptv::net::redact_text),
+        epg_channel_count: s.epg_channel_count,
+        epg_programme_count: s.epg_programme_count,
+        epg_matched_channels: s.epg_matched_channels,
         refreshing: st.iptv.is_refreshing(s.id),
         open_connections: st
             .iptv
@@ -951,6 +964,38 @@ pub async fn refresh_source(
     Ok(StatusCode::ACCEPTED)
 }
 
+/// Re-run only the guide (EPG) import of a source, in the background. Poll the source:
+/// `refreshing`, `last_epg_at`, `last_error` (set when the guide was empty or unusable) and the
+/// `epg_*` counters.
+#[utoipa::path(
+    post,
+    path = "/admin/iptv/sources/{id}/refresh-epg",
+    params(("id" = i64, Path, description = "Source id")),
+    responses((status = 202, description = "Started"), (status = 404, body = ErrorBody), (status = 409, description = "A refresh is already running", body = ErrorBody))
+)]
+pub async fn refresh_source_epg(
+    State(st): State<AppState>,
+    AdminUser(a): AdminUser,
+    Path(id): Path<i64>,
+) -> ApiResult<StatusCode> {
+    store::get_source(&st.db, id).await?;
+    if st.iptv.is_refreshing(id) {
+        return Err(ApiError::Status(
+            StatusCode::CONFLICT,
+            "a refresh is already running".into(),
+        ));
+    }
+    st.audit(
+        &a.user,
+        "iptv_source_refresh_epg",
+        Some(id.to_string()),
+        Value::Null,
+    )
+    .await;
+    st.iptv.spawn_epg_refresh(id);
+    Ok(StatusCode::ACCEPTED)
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AccountDto {
     pub active: bool,
@@ -997,10 +1042,10 @@ async fn run_test(
                 .http
                 .get(url)
                 .timeout(std::time::Duration::from_secs(60));
-            req = req.header("User-Agent", ua.unwrap_or("VLC/3.0.20 LibVLC/3.0.20"));
+            req = req.header("User-Agent", ua.unwrap_or(reel_iptv::net::DEFAULT_UA));
             let resp = match req.send().await {
                 Ok(r) => r,
-                Err(e) => return fail(format!("cannot reach the server: {e}")),
+                Err(e) => return fail(format!("cannot reach the server: {}", e.without_url())),
             };
             if !resp.status().is_success() {
                 return fail(format!(
@@ -1010,7 +1055,7 @@ async fn run_test(
             }
             let body = match resp.bytes().await {
                 Ok(b) => b,
-                Err(e) => return fail(format!("download failed: {e}")),
+                Err(e) => return fail(format!("download failed: {}", e.without_url())),
             };
             let (entries, epg) = reel_iptv::m3u::parse(&String::from_utf8_lossy(&body));
             if entries.is_empty() {
@@ -1021,14 +1066,15 @@ async fn run_test(
                 message: format!("{} channels found", entries.len()),
                 channels: Some(entries.len()),
                 account: None,
-                epg_url: epg,
+                epg_url: epg.as_deref().map(reel_iptv::net::redact_url),
             }
         }
         SourceKind::Xtream => {
             let (Some(u), Some(p)) = (user, pass) else {
                 return fail("username and password are required".into());
             };
-            let x = XtreamClient::new(st.iptv.ingest.http.clone(), url, u, p);
+            let x = XtreamClient::new(st.iptv.ingest.http.clone(), url, u, p)
+                .with_user_agent(ua.map(str::to_string));
             let acc = match x.account_info().await {
                 Ok(a) => a,
                 Err(e) => return fail(e.to_string()),
@@ -1360,7 +1406,8 @@ pub struct LiveSessionDto {
 pub struct TranscodeStatus {
     /// Configured encoder backend: `vaapi`, `qsv`, `nvenc`, `videotoolbox` or `software`.
     pub encoder: String,
-    /// The hardware encoder failed at runtime; software encoding is used instead.
+    /// The hardware encoder failed several starts in a row (not merely once) and is disabled for
+    /// a 10-minute cool-down; software encoding is used meanwhile.
     pub fell_back_to_software: bool,
 }
 

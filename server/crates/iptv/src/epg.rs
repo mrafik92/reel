@@ -27,9 +27,38 @@ pub fn norm_name(name: &str) -> String {
         .map(str::to_string)
         .collect();
     const NOISE: &[&str] = &[
-        "hd", "fhd", "uhd", "sd", "4k", "8k", "hevc", "h265", "h264", "hq", "lq", "raw", "50fps",
-        "60fps", "channel", "tv",
+        "hd",
+        "fhd",
+        "uhd",
+        "sd",
+        "4k",
+        "8k",
+        "hevc",
+        "h265",
+        "h264",
+        "hq",
+        "lq",
+        "raw",
+        "50fps",
+        "60fps",
+        "channel",
+        "tv",
+        "vip",
+        "backup",
+        "ᴴᴰ",
+        "ᶠʰᴰ",
+        "ʰᴰ",
+        "ᵁᴴᴰ",
     ];
+    // trailing single-letter provider tag after quality tags: "MBC 2 FHD HEVC M"
+    if tokens.len() >= 3
+        && tokens.last().is_some_and(|t| t == "m")
+        && tokens
+            .get(tokens.len() - 2)
+            .is_some_and(|t| NOISE.contains(&t.as_str()))
+    {
+        tokens.pop();
+    }
     // leading country/provider tag: "UK: …", "|UK| …", "[UK] …", "UK - …"
     let t = name.trim_start_matches(['|', '[', ' ']);
     let letters: String = t.chars().take_while(char::is_ascii_alphabetic).collect();
@@ -128,6 +157,12 @@ mod tests {
         }
         assert_ne!(norm_name("BBC Two"), k);
         assert_eq!(norm_name("CNN"), "cnn");
+        assert_eq!(norm_name("AR: MBC 2 FHD HEVC M"), norm_name("MBC 2"));
+        assert_eq!(
+            norm_name("UK| Sky Sports Main Event UHD"),
+            norm_name("Sky Sports Main Event")
+        );
+        assert_eq!(norm_name("AR| MBC 1 ᴴᴰ"), "mbc1");
         // short real words are not mistaken for country tags without a separator
         assert_eq!(norm_name("ESPN News"), "espnnews");
         assert_eq!(token_key("One BBC"), token_key("BBC One"));

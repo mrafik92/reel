@@ -939,6 +939,49 @@
         }
       }
     },
+    "/api/v1/admin/iptv/sources/{id}/refresh-epg": {
+      "post": {
+        "summary": "Re-run only the guide (EPG) import of a source, in the background. Poll the source:\n`refreshing`, `last_epg_at`, `last_error` (set when the guide was empty or unusable) and the\n`epg_*` counters.",
+        "operationId": "refresh_source_epg",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Source id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Started"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A refresh is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/iptv/sources/{id}/test": {
       "post": {
         "summary": "Re-test a saved source: reachability, credentials, channel count, Xtream account info\n(expiry, allowed and active connections).",
@@ -8326,6 +8369,9 @@
           "password_set",
           "enabled",
           "channel_count",
+          "epg_channel_count",
+          "epg_programme_count",
+          "epg_matched_channels",
           "refreshing",
           "open_connections"
         ],
@@ -8342,6 +8388,21 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "epg_channel_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Channels in the guide delivered by the last import."
+          },
+          "epg_matched_channels": {
+            "type": "integer",
+            "format": "int64",
+            "description": "This source's channels linked to a guide channel (tvg-id or name match)."
+          },
+          "epg_programme_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Programmes stored for this source's channels."
           },
           "epg_url": {
             "type": [
@@ -8736,7 +8797,7 @@
           },
           "fell_back_to_software": {
             "type": "boolean",
-            "description": "The hardware encoder failed at runtime; software encoding is used instead."
+            "description": "The hardware encoder failed several starts in a row (not merely once) and is disabled for\na 10-minute cool-down; software encoding is used meanwhile."
           }
         }
       },

@@ -53,11 +53,17 @@ pub struct Source {
     pub last_epg_at: Option<i64>,
     pub last_error: Option<String>,
     pub channel_count: i64,
+    /// Guide channels delivered by the last import.
+    pub epg_channel_count: i64,
+    /// Programmes stored for this source's channels.
+    pub epg_programme_count: i64,
+    /// This source's channels that are linked to a guide channel.
+    pub epg_matched_channels: i64,
 }
 
 pub const SOURCE_COLS: &str = "id, name, kind, url, username, password, max_connections, epg_url, \
     refresh_interval, user_agent, enabled, detected_epg_url, last_refresh_at, last_epg_at, \
-    last_error, channel_count";
+    last_error, channel_count, epg_channel_count, epg_programme_count, epg_matched_channels";
 
 fn source_from_row(r: &SqliteRow) -> Source {
     Source {
@@ -79,6 +85,9 @@ fn source_from_row(r: &SqliteRow) -> Source {
         last_epg_at: r.get("last_epg_at"),
         last_error: r.get("last_error"),
         channel_count: r.get("channel_count"),
+        epg_channel_count: r.get("epg_channel_count"),
+        epg_programme_count: r.get("epg_programme_count"),
+        epg_matched_channels: r.get("epg_matched_channels"),
     }
 }
 

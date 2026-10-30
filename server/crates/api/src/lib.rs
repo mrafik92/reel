@@ -489,6 +489,7 @@ fn api_router() -> OpenApiRouter<AppState> {
             iptv::delete_source
         ))
         .routes(routes!(iptv::refresh_source))
+        .routes(routes!(iptv::refresh_source_epg))
         .routes(routes!(iptv::test_source))
         .routes(routes!(iptv::admin_channels))
         .routes(routes!(iptv::patch_channel))

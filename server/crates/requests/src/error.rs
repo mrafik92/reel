@@ -7,7 +7,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("http error: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(reqwest::Error),
     #[error("arr/download client returned status {status}: {body}")]
     Remote { status: u16, body: String },
     #[error("database error: {0}")]
@@ -26,6 +26,12 @@ pub enum Error {
     NotConfigured(String),
     #[error("parse error: {0}")]
     Parse(String),
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(e: reqwest::Error) -> Self {
+        Error::Http(e.without_url())
+    }
 }
 
 impl Error {

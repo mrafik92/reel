@@ -83,6 +83,11 @@ pub struct HubConfig {
     pub ffmpeg_path: String,
     /// Allow upstream URLs on private networks (default true: LAN tuners are common).
     pub allow_private_upstream: bool,
+    /// Providers with a connection limit release slots with a lag: a fresh channel whose first
+    /// connection is refused (HTTP 503/429, connection refused) is retried every
+    /// `busy_retry_step` for this long before the pipe gives up with a clear error.
+    pub busy_retry_window: Duration,
+    pub busy_retry_step: Duration,
 }
 
 impl Default for HubConfig {
@@ -102,6 +107,8 @@ impl Default for HubConfig {
             default_user_agent: "VLC/3.0.20 LibVLC/3.0.20".into(),
             ffmpeg_path: "ffmpeg".into(),
             allow_private_upstream: true,
+            busy_retry_window: Duration::from_secs(3),
+            busy_retry_step: Duration::from_millis(250),
         }
     }
 }
@@ -299,12 +306,24 @@ pub struct Pipe {
     state: Mutex<PipeState>,
     last_error: Mutex<Option<String>>,
     active_url_host: Mutex<Option<String>>,
+    /// Provider connection limit of the source (0 = unlimited / unknown).
+    max_conn: u32,
+    /// Set when the pipe gave up for good (the provider kept refusing the connection).
+    fatal: Mutex<Option<String>>,
 }
 
 impl Pipe {
     fn new(spec: &ChannelSpec, cfg: &HubConfig, source_id: i64, keep: Duration) -> Arc<Self> {
         let (tx, _) = broadcast::channel(cfg.ring_chunks.max(16));
         let now = Instant::now();
+        let max_conn = spec
+            .candidates
+            .first()
+            .and_then(|c| c.max_connections)
+            .unwrap_or(0);
+        // A single-connection provider cannot afford warm/grace channels: release at once.
+        let single = max_conn == 1;
+        let keep = if single { Duration::ZERO } else { keep };
         Arc::new(Self {
             id: spec.channel_id,
             name: spec.name.clone(),
@@ -315,7 +334,7 @@ impl Pipe {
                 keep_until: now + keep,
                 last_viewed: now,
             }),
-            grace: cfg.grace,
+            grace: if single { Duration::ZERO } else { cfg.grace },
             pinned: AtomicBool::new(false),
             cancel: CancellationToken::new(),
             source_id: AtomicI64::new(source_id),
@@ -337,11 +356,21 @@ impl Pipe {
             state: Mutex::new(PipeState::Connecting),
             last_error: Mutex::new(None),
             active_url_host: Mutex::new(None),
+            max_conn,
+            fatal: Mutex::new(None),
         })
     }
 
     pub fn viewers(&self) -> usize {
         self.viewers.load(Relaxed)
+    }
+
+    fn single_connection(&self) -> bool {
+        self.max_conn == 1
+    }
+
+    fn fatal(&self) -> Option<String> {
+        self.fatal.lock().unwrap().clone()
     }
 
     fn source(&self) -> i64 {
@@ -376,8 +405,11 @@ impl Pipe {
                 if let Some(i) = rx.borrow_and_update().clone() {
                     return Some(i);
                 }
-                if rx.changed().await.is_err() {
-                    return None;
+                tokio::select! {
+                    _ = self.cancel.cancelled() => return None,
+                    c = rx.changed() => if c.is_err() {
+                        return None;
+                    },
                 }
             }
         })
@@ -578,6 +610,27 @@ impl Subscription {
 
     pub async fn wait_info(&self, max: Duration) -> Option<StreamInfo> {
         self.pipe.wait_info(max).await
+    }
+
+    /// Wait (bounded) until the upstream delivers data. Errors immediately when the provider
+    /// refused the connection for good (e.g. its connection limit is still in use); a plain
+    /// timeout is not an error.
+    pub async fn wait_ready(&self, max: Duration) -> Result<()> {
+        let end = Instant::now() + max;
+        loop {
+            if let Some(m) = self.pipe.fatal() {
+                return Err(Error::Unavailable(m));
+            }
+            if self.pipe.ttfb_ms.load(Relaxed) != UNSET || Instant::now() >= end {
+                return Ok(());
+            }
+            if self.pipe.cancel.is_cancelled() {
+                return Err(Error::Unavailable(
+                    "the channel was closed before it delivered data".into(),
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
     }
 
     /// Next piece of the stream; `None` when the pipe was shut down.
@@ -783,13 +836,58 @@ impl ChannelHub {
         }
     }
 
+    /// `(source id, connection limit)` of a channel's primary source, if limited.
+    pub async fn channel_budget(&self, channel_id: i64) -> Result<Option<(i64, u32)>> {
+        Ok(self
+            .inner
+            .resolver
+            .resolve(channel_id)
+            .await?
+            .and_then(|s| {
+                s.candidates.first().and_then(|c| {
+                    c.max_connections
+                        .filter(|m| *m > 0)
+                        .map(|m| (c.source_id, m))
+                })
+            }))
+    }
+
+    /// Would opening one more connection on `source_id` succeed (free slot, or an unwatched
+    /// pipe that can be evicted)? `except` is the channel about to be opened.
+    pub fn slot_available(&self, source_id: i64, max: u32, except: i64) -> bool {
+        let st = self.inner.state.lock().unwrap();
+        let at: Vec<&Arc<Pipe>> = st
+            .pipes
+            .values()
+            .filter(|p| p.source() == source_id && p.id != except)
+            .collect();
+        (at.len() as u32) < max || at.iter().any(|p| p.viewers() == 0)
+    }
+
+    /// Is a connection of this channel open right now?
+    pub fn has_pipe(&self, channel_id: i64) -> bool {
+        self.is_open(channel_id)
+    }
+
     fn note_user(&self, st: &mut HubState, user: Option<i64>, channel: i64) {
         let Some(u) = user else { return };
         if let Some(prev) = st.user_last.insert(u, channel) {
             if prev != channel {
-                if let Some(p) = st.pipes.get(&prev) {
-                    // previous channel stays warm for instant "channel back"
-                    p.extend_keep(Instant::now() + self.inner.cfg.warm_ttl);
+                if let Some(p) = st.pipes.get(&prev).cloned() {
+                    if p.single_connection() {
+                        // one provider slot: the old channel must give it up right now
+                        if p.viewers() == 0 && !p.pinned.load(Relaxed) {
+                            info!(
+                                channel = prev,
+                                "releasing the previous channel (single-connection provider)"
+                            );
+                            p.cancel.cancel();
+                            st.pipes.remove(&prev);
+                        }
+                    } else {
+                        // previous channel stays warm for instant "channel back"
+                        p.extend_keep(Instant::now() + self.inner.cfg.warm_ttl);
+                    }
                 }
             }
         }
@@ -868,6 +966,15 @@ impl ChannelHub {
         let Some(spec) = self.inner.resolver.resolve(channel_id).await? else {
             return Ok(false);
         };
+        // a single-connection provider has no slot to spare for warm channels
+        if spec
+            .candidates
+            .first()
+            .and_then(|c| c.max_connections)
+            .is_some_and(|m| m == 1)
+        {
+            return Ok(false);
+        }
         let mut st = self.inner.state.lock().unwrap();
         if st.pipes.contains_key(&channel_id) {
             return Ok(false);
@@ -921,7 +1028,8 @@ async fn open_upstream(inner: &Inner, c: &Candidate) -> std::result::Result<Upst
         .user_agent
         .clone()
         .unwrap_or_else(|| inner.cfg.default_user_agent.clone());
-    crate::net::check_url(&c.url, inner.cfg.allow_private_upstream).map_err(|e| e.to_string())?;
+    crate::net::check_url(&c.url, inner.cfg.allow_private_upstream)
+        .map_err(|e| crate::net::redact_text(&e.to_string()))?;
     let looks_hls = reqwest::Url::parse(&c.url)
         .map(|u| u.path().to_ascii_lowercase().ends_with(".m3u8"))
         .unwrap_or(false);
@@ -939,7 +1047,7 @@ async fn open_upstream(inner: &Inner, c: &Candidate) -> std::result::Result<Upst
     let resp = tokio::time::timeout(inner.cfg.connect_timeout, req.send())
         .await
         .map_err(|_| "connect timeout".to_string())?
-        .map_err(|e| format!("connect failed: {e}"))?;
+        .map_err(|e| format!("connect failed: {}", e.without_url()))?;
     if !resp.status().is_success() {
         return Err(format!("provider answered HTTP {}", resp.status().as_u16()));
     }
@@ -992,6 +1100,20 @@ fn open_ffmpeg(inner: &Inner, c: &Candidate, ua: &str) -> std::result::Result<Up
         stream: Box::pin(tokio_util::io::ReaderStream::with_capacity(out, 64 * 1024)),
         _child: Some(child),
     })
+}
+
+/// Errors that mean "the provider has no free slot (yet)" rather than "the channel is broken".
+fn is_busy_err(err: &str) -> bool {
+    [
+        "HTTP 503",
+        "HTTP 429",
+        "HTTP 502",
+        "HTTP 509",
+        "HTTP 504",
+        "connect failed",
+    ]
+    .iter()
+    .any(|p| err.contains(p))
 }
 
 enum ConnEnd {
@@ -1104,6 +1226,44 @@ async fn upstream_loop(inner: Arc<Inner>, pipe: Arc<Pipe>, spec: ChannelSpec) {
         match run_connection(&inner, &pipe, cand, &mut ingest).await {
             ConnEnd::Cancelled => return,
             ConnEnd::Failed { err, flowed } => {
+                let err = crate::net::redact_text(&err);
+                // Providers with a connection limit free slots with a lag after a disconnect:
+                // retry a fresh channel quickly for a short window, then give up with a clear error
+                // instead of spinning.
+                let never_live = pipe.ttfb_ms.load(Relaxed) == UNSET;
+                if never_live && pipe.max_conn > 0 && is_busy_err(&err) {
+                    *pipe.last_error.lock().unwrap() = Some(err.clone());
+                    if pipe.created.elapsed() < inner.cfg.busy_retry_window {
+                        debug!(channel = pipe.id, "provider busy ({err}); retrying shortly");
+                        tokio::select! {
+                            _ = pipe.cancel.cancelled() => return,
+                            _ = tokio::time::sleep(inner.cfg.busy_retry_step) => {}
+                        }
+                        continue;
+                    }
+                    if spec.candidates.len() == 1 {
+                        let msg = format!(
+                            "the provider refused the connection ({err}); its limit of {} \
+                             concurrent connection(s) is probably still in use. Try again in a few seconds",
+                            pipe.max_conn
+                        );
+                        warn!(channel = pipe.id, name = %pipe.name, "{msg}");
+                        *pipe.fatal.lock().unwrap() = Some(msg);
+                        pipe.set_state(PipeState::Reconnecting);
+                        {
+                            let mut st = inner.state.lock().unwrap();
+                            if st
+                                .pipes
+                                .get(&pipe.id)
+                                .is_some_and(|p| Arc::ptr_eq(p, &pipe))
+                            {
+                                st.pipes.remove(&pipe.id);
+                            }
+                        }
+                        pipe.cancel.cancel();
+                        return;
+                    }
+                }
                 warn!(channel = pipe.id, name = %pipe.name, url_host = ?host_of(&cand.url), "upstream failed: {err}");
                 *pipe.last_error.lock().unwrap() = Some(err);
                 pipe.reconnects.fetch_add(1, Relaxed);

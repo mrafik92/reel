@@ -123,10 +123,13 @@ impl From<reel_iptv::Error> for ApiError {
         use reel_iptv::Error as E;
         match e {
             E::NotFound(_) => Self::NotFound,
-            E::Invalid(m) | E::Parse(m) => Self::BadRequest(m),
+            E::Invalid(m) | E::Parse(m) => Self::BadRequest(reel_iptv::net::redact_text(&m)),
             e @ E::BudgetExhausted { .. } => Self::TooManyRequests(e.to_string()),
-            E::Unavailable(m) => Self::Status(StatusCode::SERVICE_UNAVAILABLE, m),
-            E::Http(e) => Self::BadGateway(e.to_string()),
+            E::Unavailable(m) => Self::Status(
+                StatusCode::SERVICE_UNAVAILABLE,
+                reel_iptv::net::redact_text(&m),
+            ),
+            E::Http(e) => Self::BadGateway(reel_iptv::net::redact_text(&e.to_string())),
             E::Db(e) => Self::Internal(e.to_string()),
             E::Io(e) => Self::Internal(e.to_string()),
         }

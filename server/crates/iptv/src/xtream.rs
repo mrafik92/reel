@@ -35,6 +35,7 @@ pub struct XtreamClient {
     base: String,
     user: String,
     pass: String,
+    ua: Option<String>,
 }
 
 fn flex_i64(v: &Value) -> Option<i64> {
@@ -63,7 +64,14 @@ impl XtreamClient {
             base: b.to_string(),
             user: user.to_string(),
             pass: pass.to_string(),
+            ua: None,
         }
+    }
+
+    /// User-Agent for the API calls (default: a VLC-like player; providers often reject unknown ones).
+    pub fn with_user_agent(mut self, ua: Option<String>) -> Self {
+        self.ua = ua.filter(|u| !u.trim().is_empty());
+        self
     }
 
     fn api(&self, action: Option<&str>) -> String {
@@ -84,6 +92,10 @@ impl XtreamClient {
         let resp = self
             .http
             .get(url)
+            .header(
+                "User-Agent",
+                self.ua.as_deref().unwrap_or(crate::net::DEFAULT_UA),
+            )
             .timeout(Duration::from_secs(60))
             .send()
             .await?;

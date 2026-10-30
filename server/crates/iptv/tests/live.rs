@@ -246,7 +246,11 @@ async fn video_transcode_falls_back_to_software_when_the_hardware_encoder_fails(
         "MPEG-2 must be re-encoded"
     );
     assert_eq!(h.encoder, "software", "hardware failed → software fallback");
-    assert_eq!(live.hw_status(), ("vaapi", true), "remembered");
+    assert_eq!(
+        live.hw_status(),
+        ("vaapi", false),
+        "per-attempt fallback: one failure does not disable the hardware"
+    );
     let index = live.hls_file(&s.id, "index.m3u8").await.unwrap();
     let probe = std::process::Command::new("ffprobe")
         .args([

@@ -1183,3 +1183,144 @@ async fn ssrf_guard_defaults_and_strict_mode() {
     assert_eq!(s, StatusCode::BAD_REQUEST);
     e.state.iptv.shutdown().await;
 }
+
+#[tokio::test]
+async fn source_dto_masks_guide_credentials_exposes_epg_stats_and_can_rerun_only_the_guide() {
+    let e = env(|_| {}).await;
+    let dir = tempfile::tempdir().unwrap();
+    let guide = dir.path().join("guide.xml");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let stamp = |t: i64| {
+        let days = t.div_euclid(86_400);
+        let secs = t.rem_euclid(86_400);
+        let z = days + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z.rem_euclid(146_097);
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = yoe + era * 400 + i64::from(m <= 2);
+        format!(
+            "{y:04}{m:02}{d:02}{:02}{:02}{:02} +0000",
+            secs / 3600,
+            secs % 3600 / 60,
+            secs % 60
+        )
+    };
+    std::fs::write(
+        &guide,
+        format!(
+            "<?xml version=\"1.0\"?><tv><channel id=\"c1\"><display-name>One</display-name></channel>\
+             <programme start=\"{}\" stop=\"{}\" channel=\"c1\"><title>Now</title></programme></tv>",
+            stamp(now - 600),
+            stamp(now + 3000)
+        ),
+    )
+    .unwrap();
+    let sid: i64 = sqlx::query_scalar(
+        "INSERT INTO iptv_sources (name, kind, url, username, password, epg_url, detected_epg_url, last_error) \
+         VALUES ('X','xtream','http://p.example','bob','hunter2', ?1, \
+         'http://p.example/xmltv.php?username=bob&password=hunter2', \
+         'EPG: error sending request for url (http://p.example/xmltv.php?username=bob&password=hunter2)') RETURNING id",
+    )
+    .bind(format!("file://{}", guide.display()))
+    .fetch_one(&e.state.db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO channels (source_id, ext_id, name, stream_url, tvg_id) VALUES (?, '1', 'One', 'http://p.example/live/bob/hunter2/1.ts', 'c1')")
+        .bind(sid)
+        .execute(&e.state.db)
+        .await
+        .unwrap();
+
+    let (s, v) = get(&e.admin, &format!("/api/v1/admin/iptv/sources/{sid}")).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(
+        v["detected_epg_url"],
+        "http://p.example/xmltv.php?username=***&password=***"
+    );
+    let raw = v.to_string();
+    assert!(
+        !raw.contains("hunter2") || raw.contains("password_set"),
+        "{raw}"
+    );
+    assert!(
+        !v["last_error"].as_str().unwrap().contains("hunter2"),
+        "{v}"
+    );
+    assert!(v["last_error"].as_str().unwrap().contains("password=***"));
+    assert_eq!(v["password_set"], true);
+    for k in [
+        "epg_channel_count",
+        "epg_programme_count",
+        "epg_matched_channels",
+    ] {
+        assert_eq!(v[k], 0, "{k}");
+    }
+    let list = get(&e.admin, "/api/v1/admin/iptv/sources")
+        .await
+        .1
+        .to_string();
+    assert!(!list.contains("hunter2"), "{list}");
+
+    // re-run only the guide import
+    assert_eq!(
+        send(
+            &e.admin,
+            "POST",
+            "/api/v1/admin/iptv/sources/999/refresh-epg",
+            None
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send(
+            &e.raw,
+            "POST",
+            &format!("/api/v1/admin/iptv/sources/{sid}/refresh-epg"),
+            None
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (s, _) = send(
+        &e.admin,
+        "POST",
+        &format!("/api/v1/admin/iptv/sources/{sid}/refresh-epg"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    let mut v = Value::Null;
+    for _ in 0..100 {
+        v = get(&e.admin, &format!("/api/v1/admin/iptv/sources/{sid}"))
+            .await
+            .1;
+        if v["last_epg_at"].is_i64() && v["refreshing"] == false {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(v["last_epg_at"].is_i64(), "{v}");
+    assert_eq!(
+        (
+            v["epg_channel_count"].as_i64(),
+            v["epg_programme_count"].as_i64(),
+            v["epg_matched_channels"].as_i64()
+        ),
+        (Some(1), Some(1), Some(1)),
+        "{v}"
+    );
+    assert!(
+        v["last_error"].is_null(),
+        "the old EPG error is cleared: {v}"
+    );
+}

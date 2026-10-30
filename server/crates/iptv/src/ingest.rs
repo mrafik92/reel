@@ -96,7 +96,7 @@ impl Ingest {
         Ok(self
             .http
             .get(url)
-            .header("User-Agent", ua.unwrap_or("VLC/3.0.20 LibVLC/3.0.20")))
+            .header("User-Agent", ua.unwrap_or(crate::net::DEFAULT_UA)))
     }
 
     // ───────────── channels ─────────────
@@ -133,7 +133,8 @@ impl Ingest {
             ));
         };
         crate::net::check_url(&src.url, self.allow_private)?;
-        Ok(XtreamClient::new(self.http.clone(), &src.url, u, p))
+        Ok(XtreamClient::new(self.http.clone(), &src.url, u, p)
+            .with_user_agent(src.user_agent.clone()))
     }
 
     async fn gather(&self, src: &Source) -> Result<(Vec<Incoming>, Option<String>, Option<u32>)> {
@@ -431,6 +432,16 @@ impl Ingest {
         let (path, temp) = self
             .epg_file(&url, src.user_agent.as_deref(), src.id)
             .await?;
+        let sniff_path = path.clone();
+        let verdict = tokio::task::spawn_blocking(move || xmltv::sniff_guide(&sniff_path))
+            .await
+            .map_err(|e| Error::Unavailable(format!("guide check crashed: {e}")))?;
+        if let Err(e) = verdict {
+            if temp {
+                let _ = tokio::fs::remove_file(&path).await;
+            }
+            return Err(e);
+        }
         let now = now_unix();
         let window = (now - self.epg_back_secs, now + self.epg_fwd_secs);
         let before_max: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM epg_programs")
@@ -506,13 +517,79 @@ impl Ingest {
             .bind(now - self.epg_back_secs)
             .execute(&self.pool)
             .await?;
-        sqlx::query("UPDATE iptv_sources SET last_epg_at = ? WHERE id = ?")
-            .bind(now)
-            .bind(src.id)
-            .execute(&self.pool)
-            .await?;
+        self.store_epg_stats(src.id).await?;
+        // Never report success without data.
+        if report.programmes_seen == 0 {
+            return Err(Error::Parse(if report.epg_channels == 0 {
+                "the guide contained no channels and no programmes".into()
+            } else {
+                format!(
+                    "the guide returned 0 programmes ({} channels, none with schedule data)",
+                    report.epg_channels
+                )
+            }));
+        }
+        if report.programmes_inserted == 0 {
+            let days = self.epg_fwd_secs / 86_400;
+            return Err(Error::Parse(if report.programmes_kept == 0 {
+                format!(
+                    "the guide has {} programmes but none fall inside the {days}-day window \
+                     (check the server clock / guide timestamps)",
+                    report.programmes_seen
+                )
+            } else {
+                format!(
+                    "the guide has {} programmes but none belong to your channels \
+                     ({} of your channels matched a guide channel); \
+                     the playlist has no tvg-ids and names did not match",
+                    report.programmes_kept, report.channels_mapped
+                )
+            }));
+        }
+        sqlx::query(
+            "UPDATE iptv_sources SET last_epg_at = ?, \
+             last_error = CASE WHEN last_error LIKE 'EPG:%' THEN NULL ELSE last_error END \
+             WHERE id = ?",
+        )
+        .bind(now)
+        .bind(src.id)
+        .execute(&self.pool)
+        .await?;
         info!(source = src.id, ?report, "EPG refreshed");
         Ok(report)
+    }
+
+    /// Persist guide statistics for the admin UI.
+    async fn store_epg_stats(&self, source_id: i64) -> Result<()> {
+        sqlx::query(
+            "UPDATE iptv_sources SET \
+               epg_channel_count = (SELECT count(*) FROM epg_channels), \
+               epg_programme_count = (SELECT count(*) FROM epg_programs WHERE channel_tvg_id IN \
+                  (SELECT DISTINCT epg_channel_id FROM channels WHERE source_id = ?1 \
+                   AND epg_channel_id IS NOT NULL \
+                   UNION SELECT DISTINCT tvg_id FROM channels WHERE source_id = ?1 \
+                   AND tvg_id IS NOT NULL)), \
+               epg_matched_channels = (SELECT count(*) FROM channels WHERE source_id = ?1 \
+                  AND missing = 0 AND epg_channel_id IS NOT NULL) \
+             WHERE id = ?1",
+        )
+        .bind(source_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Re-run only the guide import; failures are recorded on the source (`last_error`).
+    pub async fn refresh_epg_recorded(&self, src: &Source) -> Result<EpgReport> {
+        match self.refresh_epg(src).await {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                let msg = crate::net::redact_text(&e.to_string());
+                warn!(source = src.id, "EPG refresh failed: {msg}");
+                self.record_error(src.id, &format!("EPG: {msg}")).await;
+                Err(e)
+            }
+        }
     }
 
     /// Channels first, then the guide; failures are recorded on the source.
@@ -520,7 +597,8 @@ impl Ingest {
         let channels = match self.refresh_channels(src).await {
             Ok(c) => c,
             Err(e) => {
-                self.record_error(src.id, &e.to_string()).await;
+                self.record_error(src.id, &crate::net::redact_text(&e.to_string()))
+                    .await;
                 return Err(e);
             }
         };
@@ -532,9 +610,10 @@ impl Ingest {
             match self.refresh_epg(&fresh).await {
                 Ok(r) => (Some(r), None),
                 Err(e) => {
-                    warn!(source = src.id, "EPG refresh failed: {e}");
-                    self.record_error(src.id, &format!("EPG: {e}")).await;
-                    (None, Some(e.to_string()))
+                    let msg = crate::net::redact_text(&e.to_string());
+                    warn!(source = src.id, "EPG refresh failed: {msg}");
+                    self.record_error(src.id, &format!("EPG: {msg}")).await;
+                    (None, Some(msg))
                 }
             }
         } else {

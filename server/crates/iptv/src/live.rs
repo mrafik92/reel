@@ -150,9 +150,12 @@ impl LiveManager {
         mode: LiveMode,
         opts: &HlsOptions,
     ) -> Result<LiveSessionInfo> {
+        self.make_room(user_id, channel_id).await?;
         let (pre, lease, name) = match mode {
             LiveMode::Passthrough => {
                 let sub = self.hub.subscribe(channel_id, Some(user_id)).await?;
+                // surface a refused provider connection now, not as an empty stream later
+                sub.wait_ready(Duration::from_secs(6)).await?;
                 let name = sub.pipe_metrics().name;
                 (Some(sub), None, name)
             }
@@ -186,6 +189,46 @@ impl LiveManager {
         let info = self.info_of(&s);
         self.sessions.lock().unwrap().insert(s.id.clone(), s);
         Ok(info)
+    }
+
+    /// Provider with a connection limit that is fully used: the user is switching channels, so
+    /// their previous sessions give up the upstream *first* (no grace, no warm channel) and the
+    /// new connection is opened into the freed slot.
+    async fn make_room(&self, user_id: i64, channel_id: i64) -> Result<()> {
+        let Some((source, max)) = self.hub.channel_budget(channel_id).await? else {
+            return Ok(());
+        };
+        if self.hub.has_pipe(channel_id) || self.hub.slot_available(source, max, channel_id) {
+            return Ok(());
+        }
+        let mine: Vec<Arc<Session>> = {
+            let mut s = self.sessions.lock().unwrap();
+            let ids: Vec<String> = s
+                .values()
+                .filter(|v| v.user_id == user_id && v.channel_id != channel_id)
+                .map(|v| v.id.clone())
+                .collect();
+            ids.iter().filter_map(|i| s.remove(i)).collect()
+        };
+        if mine.is_empty() {
+            return Ok(());
+        }
+        tracing::info!(
+            user_id,
+            channel_id,
+            released = mine.len(),
+            "provider limit reached: releasing the user's previous channel before opening the new one"
+        );
+        drop(mine);
+        self.hls.release_unwatched(channel_id).await;
+        // the packager drops its hub subscription asynchronously
+        for _ in 0..40 {
+            if self.hub.slot_available(source, max, channel_id) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        Ok(())
     }
 
     fn info_of(&self, s: &Session) -> LiveSessionInfo {

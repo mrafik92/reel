@@ -183,6 +183,34 @@ impl IptvService {
         self.ingest.refresh_source(&src).await
     }
 
+    /// Re-run only the guide import of one source (in the background; same single-flight guard).
+    pub fn spawn_epg_refresh(self: &Arc<Self>, source_id: i64) {
+        if !self.refreshing.lock().unwrap().insert(source_id) {
+            return;
+        }
+        let me = self.clone();
+        tokio::spawn(async move {
+            let res = async {
+                let src = store::get_source(&me.pool, source_id).await?;
+                me.ingest.refresh_epg_recorded(&src).await
+            }
+            .await;
+            me.refreshing.lock().unwrap().remove(&source_id);
+            match res {
+                Ok(r) => info!(
+                    source_id,
+                    programmes = r.programmes_inserted,
+                    "guide refreshed"
+                ),
+                Err(e) => warn!(
+                    source_id,
+                    "guide refresh failed: {}",
+                    crate::net::redact_text(&e.to_string())
+                ),
+            }
+        });
+    }
+
     pub async fn shutdown(&self) {
         self.live.shutdown().await;
     }

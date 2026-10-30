@@ -92,6 +92,57 @@ pub fn open_maybe_gz(path: &Path) -> Result<Box<dyn BufRead + Send>> {
     }
 }
 
+/// Cheap sanity check of a downloaded guide before parsing: it must be (gzipped) XML. Providers
+/// answer with HTTP 200 and an HTML error page / empty body / JSON for bad credentials or UAs.
+pub fn sniff_guide(path: &Path) -> Result<()> {
+    let mut r =
+        open_maybe_gz(path).map_err(|e| Error::Parse(format!("guide is not readable ({e})")))?;
+    let mut head = vec![0u8; 2048];
+    let mut n = 0;
+    while n < head.len() {
+        match r.read(&mut head[n..]) {
+            Ok(0) => break,
+            Ok(k) => n += k,
+            Err(e) => {
+                return Err(Error::Parse(format!(
+                    "guide is not valid gzip/XML data ({e})"
+                )));
+            }
+        }
+    }
+    head.truncate(n);
+    let text = String::from_utf8_lossy(&head);
+    let t = text.trim_start_matches('\u{feff}').trim_start();
+    if t.is_empty() {
+        return Err(Error::Parse(
+            "the guide download was empty (wrong credentials or the provider blocked the request?)"
+                .into(),
+        ));
+    }
+    let lower = t.to_ascii_lowercase();
+    let is_xml =
+        lower.starts_with("<?xml") || lower.starts_with("<tv") || lower.starts_with("<!doctype tv");
+    if !is_xml {
+        let kind = if lower.starts_with("<!doctype html") || lower.starts_with("<html") {
+            "an HTML page"
+        } else if lower.starts_with('{') || lower.starts_with('[') {
+            "JSON"
+        } else {
+            "non-XML data"
+        };
+        let preview: String = t
+            .chars()
+            .take(80)
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
+        return Err(Error::Parse(format!(
+            "the guide URL returned {kind} instead of XMLTV (starts with: {})",
+            crate::net::redact_text(preview.trim())
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Field {
     None,

@@ -112,9 +112,103 @@ impl Resolve for GuardResolver {
     }
 }
 
+/// Player-like User-Agent used for every provider request unless a source overrides it.
+pub const DEFAULT_UA: &str = "VLC/3.0.20 LibVLC/3.0.20";
+
+const SECRET_PARAMS: &[&str] = &[
+    "username", "password", "user", "pass", "pwd", "token", "api_key", "apikey", "key", "secret",
+    "auth",
+];
+
+/// Mask credentials in a URL: userinfo, secret query parameters and the `user/pass` path segments
+/// of Xtream stream URLs (`/live/USER/PASS/123.ts`).
+pub fn redact_url(url: &str) -> String {
+    let Ok(mut u) = reqwest::Url::parse(url) else {
+        return url.to_string();
+    };
+    if !u.username().is_empty() || u.password().is_some() {
+        let _ = u.set_username("***");
+        let _ = u.set_password(Some("***"));
+    }
+    if u.query().is_some() {
+        let pairs: Vec<(String, String)> = u
+            .query_pairs()
+            .map(|(k, v)| {
+                let secret = SECRET_PARAMS.contains(&k.to_ascii_lowercase().as_str());
+                (
+                    k.into_owned(),
+                    if secret { "***".into() } else { v.into_owned() },
+                )
+            })
+            .collect();
+        // `***` must stay literal: build the query by hand
+        let q: Vec<String> = pairs
+            .iter()
+            .map(|(k, v)| {
+                if v == "***" {
+                    format!("{k}=***")
+                } else {
+                    format!("{k}={}", form_enc(v))
+                }
+            })
+            .collect();
+        u.set_query(Some(&q.join("&")));
+    }
+    let segs: Vec<String> = u
+        .path_segments()
+        .map_or(vec![], |s| s.map(str::to_string).collect());
+    if segs.len() >= 4 && matches!(segs[0].as_str(), "live" | "movie" | "series" | "timeshift") {
+        let mut s = segs;
+        s[1] = "***".into();
+        s[2] = "***".into();
+        u.set_path(&s.join("/"));
+    }
+    u.to_string()
+}
+
+fn form_enc(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' | b':' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// Redact every `http(s)://…` URL inside free text (error messages, ffmpeg stderr).
+pub fn redact_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find("http://").or_else(|| rest.find("https://")) {
+        // earliest of the two
+        let j = match (rest.find("http://"), rest.find("https://")) {
+            (Some(a), Some(b)) => a.min(b),
+            _ => i,
+        };
+        out.push_str(&rest[..j]);
+        let tail = &rest[j..];
+        let end = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '`'))
+            .unwrap_or(tail.len());
+        let mut url = &tail[..end];
+        // trailing punctuation / closing paren belong to the sentence, not the URL
+        let trimmed = url.trim_end_matches([')', ',', '.', ';', ']']);
+        let suffix = &url[trimmed.len()..];
+        url = trimmed;
+        out.push_str(&redact_url(url));
+        out.push_str(suffix);
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// An HTTP client for fetching admin-supplied URLs under the given policy.
 pub fn client(allow_private: bool) -> reqwest::Client {
     let mut b = reqwest::Client::builder()
+        .user_agent(DEFAULT_UA)
         .connect_timeout(Duration::from_secs(15))
         .tcp_nodelay(true);
     b = if allow_private {
@@ -179,6 +273,44 @@ mod tests {
                 "{ip} should be allowed"
             );
         }
+    }
+
+    #[test]
+    fn redaction_masks_credentials_everywhere() {
+        assert_eq!(
+            redact_url("http://p.example:8080/xmltv.php?username=bob&password=s3cr%21t"),
+            "http://p.example:8080/xmltv.php?username=***&password=***"
+        );
+        assert_eq!(
+            redact_url(
+                "http://p.example/player_api.php?username=u&password=p&action=get_live_streams"
+            ),
+            "http://p.example/player_api.php?username=***&password=***&action=get_live_streams"
+        );
+        assert_eq!(
+            redact_url("http://p.example:80/live/bob/s3cret/123.ts"),
+            "http://p.example/live/***/***/123.ts"
+        );
+        assert_eq!(
+            redact_url("https://user:pw@host.example/list.m3u?x=1"),
+            "https://***:***@host.example/list.m3u?x=1"
+        );
+        assert_eq!(
+            redact_url("https://host.example/a/b.m3u8"),
+            "https://host.example/a/b.m3u8"
+        );
+        let msg = redact_text(
+            "error sending request for url (http://h.example/get.php?username=a&password=b): timed out; also https://x.example/live/u/p/1.ts, fine",
+        );
+        assert!(
+            !msg.contains("=a&") && !msg.contains("/u/p/") && !msg.contains("password=b"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("timed out") && msg.contains("password=***"),
+            "{msg}"
+        );
+        assert_eq!(redact_text("no urls here"), "no urls here");
     }
 
     #[test]
