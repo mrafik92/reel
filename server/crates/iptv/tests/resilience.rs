@@ -262,7 +262,10 @@ async fn hls_channel_switch_on_a_one_slot_provider_releases_the_previous_session
         .tune(2, 3, LiveMode::Hls, &HlsOptions::default())
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::BudgetExhausted { .. }), "{err:?}");
+    assert!(
+        matches!(err, Error::InUseByOthers { max: 1, .. }),
+        "{err:?}"
+    );
     live.shutdown().await;
 }
 
@@ -359,5 +362,118 @@ async fn a_failure_that_is_not_the_hardwares_does_not_fall_back_or_flag_it() {
         ("vaapi", false),
         "GPU not blamed for a bad stream"
     );
+    live.shutdown().await;
+}
+
+#[tokio::test]
+async fn idle_sessions_release_the_slot_hls_after_no_requests_passthrough_on_disconnect() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (_d, ts) = temp_ts(6);
+    let (prov, base) = slot_provider(&ts, Duration::from_millis(200)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let hub = ChannelHub::new(cfg(), resolver(&base, Some(1)));
+    hub.spawn_reaper();
+    // sessions idle out after 1 s here (production: HLS 15 s)
+    let live = LiveManager::new(hub.clone(), dir.path().join("hls"), Duration::from_secs(1));
+    live.spawn_reaper();
+
+    // HLS: the player never asks for the playlist/segments
+    let h = live
+        .tune(1, 1, LiveMode::Hls, &HlsOptions::default())
+        .await
+        .unwrap();
+    assert!(live.session(&h.id).is_some());
+    let t = Instant::now();
+    loop {
+        if live.session(&h.id).is_none() && hub.metrics().is_empty() {
+            break;
+        }
+        assert!(
+            t.elapsed() < Duration::from_secs(5),
+            "slot was not released: {:?}",
+            hub.metrics()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // another user can now tune without any takeover
+    let p = live
+        .tune(2, 2, LiveMode::Passthrough, &HlsOptions::default())
+        .await
+        .unwrap();
+    {
+        use futures_util::StreamExt;
+        let mut s = Box::pin(live.ts_stream(&p.id).await.unwrap());
+        assert!(s.next().await.is_some());
+        // the player disconnects (stream dropped) …
+    }
+    // … and the session + upstream go away shortly after
+    let t = Instant::now();
+    loop {
+        if live.session(&p.id).is_none() && hub.metrics().is_empty() {
+            break;
+        }
+        assert!(
+            t.elapsed() < Duration::from_secs(6),
+            "passthrough slot not released: {:?}",
+            hub.metrics()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let again = live
+        .tune(3, 1, LiveMode::Passthrough, &HlsOptions::default())
+        .await;
+    assert!(again.is_ok(), "{again:?}");
+    assert_eq!(prov.max_active.load(SeqCst), 1);
+    live.shutdown().await;
+}
+
+#[tokio::test]
+async fn stopping_a_running_passthrough_stream_by_takeover_ends_it() {
+    let (_d, ts) = temp_ts(6);
+    let (_prov, base) = slot_provider(&ts, Duration::from_millis(100)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let hub = ChannelHub::new(cfg(), resolver(&base, Some(1)));
+    hub.spawn_reaper();
+    let live = LiveManager::new(hub.clone(), dir.path().join("hls"), Duration::from_secs(30));
+    let a = live
+        .tune(1, 1, LiveMode::Passthrough, &HlsOptions::default())
+        .await
+        .unwrap();
+    use futures_util::StreamExt;
+    let mut stream = Box::pin(live.ts_stream(&a.id).await.unwrap());
+    assert!(stream.next().await.is_some());
+    // the HTTP server polls the body in its own task
+    let drain = tokio::spawn(async move { while stream.next().await.is_some() {} });
+    // same user, other device, other channel: the old *running* stream is cut
+    let b = live
+        .tune(1, 2, LiveMode::Passthrough, &HlsOptions::default())
+        .await
+        .unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), drain)
+            .await
+            .is_ok(),
+        "the old stream must end"
+    );
+    assert!(live.session(&a.id).is_none() && live.session(&b.id).is_some());
+    // an admin takeover of another user's running stream
+    let err = live
+        .tune(2, 1, LiveMode::Passthrough, &HlsOptions::default())
+        .await
+        .unwrap_err();
+    let Error::InUseByOthers { holders, .. } = err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(
+        (holders[0].user_id, holders[0].channel_name.as_str()),
+        (1, "B")
+    );
+    let c = live
+        .tune_ex(2, 1, LiveMode::Passthrough, &HlsOptions::default(), true)
+        .await
+        .unwrap();
+    assert!(live.session(&b.id).is_none() && live.session(&c.id).is_some());
     live.shutdown().await;
 }

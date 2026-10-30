@@ -14,9 +14,10 @@ use std::{
 use bytes::Bytes;
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ChannelHub, Error, Result, Subscription,
+    ChannelHub, Error, Holder, Result, Subscription,
     hls::{AudioMode, HlsLease, HlsManager, HlsOptions, VideoMode, valid_hls_file},
 };
 
@@ -63,7 +64,18 @@ struct Session {
     /// Subscription taken at tune time (reserves the provider slot) until the player connects.
     pre: Mutex<Option<Subscription>>,
     lease: Option<HlsLease>,
+    /// Provider source whose connection budget this session counts against (limited sources only).
+    source: Option<i64>,
+    /// Cancelled when the session is stopped/taken over: ends a running passthrough stream.
+    cancel: CancellationToken,
+    /// A player has connected at least once (passthrough).
+    connected: std::sync::atomic::AtomicBool,
 }
+
+/// HLS sessions with no playlist/segment request for this long are closed (slot released).
+const HLS_IDLE: Duration = Duration::from_secs(15);
+/// A passthrough session whose player disconnected is closed after this (reconnect hiccups).
+const PASSTHROUGH_GRACE: Duration = Duration::from_secs(2);
 
 pub struct LiveManager {
     hub: ChannelHub,
@@ -135,7 +147,20 @@ impl LiveManager {
             let mut s = self.sessions.lock().unwrap();
             let idle = self.idle;
             s.retain(|_, v| {
-                v.ts_active.load(Relaxed) > 0 || v.last_seen.lock().unwrap().elapsed() < idle
+                let keep = v.ts_active.load(Relaxed) > 0 || {
+                    let seen = v.last_seen.lock().unwrap().elapsed();
+                    match v.mode {
+                        LiveMode::Hls => seen < idle.min(HLS_IDLE),
+                        LiveMode::Passthrough if v.connected.load(Relaxed) => {
+                            seen < PASSTHROUGH_GRACE.min(idle)
+                        }
+                        LiveMode::Passthrough => seen < idle,
+                    }
+                };
+                if !keep {
+                    v.cancel.cancel();
+                }
+                keep
             });
         }
         self.hls.reap().await;
@@ -150,7 +175,23 @@ impl LiveManager {
         mode: LiveMode,
         opts: &HlsOptions,
     ) -> Result<LiveSessionInfo> {
-        self.make_room(user_id, channel_id).await?;
+        self.tune_ex(user_id, channel_id, mode, opts, false).await
+    }
+
+    /// [`Self::tune`] with the budget policy spelled out:
+    /// * budget exhausted by the *same user's* other sessions → the oldest of them is stopped and
+    ///   the slot handed over (newest wins, never an error for your own streams);
+    /// * held by other users → [`Error::InUseByOthers`], unless `takeover` (callers pass it only
+    ///   for admins), which stops those sessions.
+    pub async fn tune_ex(
+        &self,
+        user_id: i64,
+        channel_id: i64,
+        mode: LiveMode,
+        opts: &HlsOptions,
+        takeover: bool,
+    ) -> Result<LiveSessionInfo> {
+        let source = self.make_room(user_id, channel_id, takeover).await?;
         let (pre, lease, name) = match mode {
             LiveMode::Passthrough => {
                 let sub = self.hub.subscribe(channel_id, Some(user_id)).await?;
@@ -185,50 +226,126 @@ impl LiveManager {
             ts_active: AtomicUsize::new(0),
             pre: Mutex::new(pre),
             lease,
+            source,
+            cancel: CancellationToken::new(),
+            connected: std::sync::atomic::AtomicBool::new(false),
         });
         let info = self.info_of(&s);
         self.sessions.lock().unwrap().insert(s.id.clone(), s);
         Ok(info)
     }
 
-    /// Provider with a connection limit that is fully used: the user is switching channels, so
-    /// their previous sessions give up the upstream *first* (no grace, no warm channel) and the
-    /// new connection is opened into the freed slot.
-    async fn make_room(&self, user_id: i64, channel_id: i64) -> Result<()> {
-        let Some((source, max)) = self.hub.channel_budget(channel_id).await? else {
-            return Ok(());
-        };
-        if self.hub.has_pipe(channel_id) || self.hub.slot_available(source, max, channel_id) {
-            return Ok(());
-        }
-        let mine: Vec<Arc<Session>> = {
-            let mut s = self.sessions.lock().unwrap();
-            let ids: Vec<String> = s
-                .values()
-                .filter(|v| v.user_id == user_id && v.channel_id != channel_id)
-                .map(|v| v.id.clone())
-                .collect();
-            ids.iter().filter_map(|i| s.remove(i)).collect()
-        };
-        if mine.is_empty() {
-            return Ok(());
-        }
-        tracing::info!(
-            user_id,
-            channel_id,
-            released = mine.len(),
-            "provider limit reached: releasing the user's previous channel before opening the new one"
-        );
-        drop(mine);
-        self.hls.release_unwatched(channel_id).await;
-        // the packager drops its hub subscription asynchronously
-        for _ in 0..40 {
-            if self.hub.slot_available(source, max, channel_id) {
-                break;
+    /// Wait (bounded) until a provider slot is free or evictable.
+    async fn wait_slot(&self, source: i64, max: u32, channel: i64, up_to: Duration) -> bool {
+        let end = Instant::now() + up_to;
+        loop {
+            if self.hub.slot_available(source, max, channel) {
+                return true;
+            }
+            if Instant::now() >= end {
+                return false;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
-        Ok(())
+    }
+
+    /// Stop one session right now: its stream ends, its upstream/packager is released.
+    async fn release_session(&self, s: Arc<Session>) {
+        s.cancel.cancel();
+        self.sessions.lock().unwrap().remove(&s.id);
+        drop(s);
+        self.hls.release_unwatched(i64::MIN).await;
+    }
+
+    /// Make sure `channel_id` can open a provider connection (see [`Self::tune_ex`]); returns the
+    /// limited source it will count against.
+    async fn make_room(
+        &self,
+        user_id: i64,
+        channel_id: i64,
+        takeover: bool,
+    ) -> Result<Option<i64>> {
+        let Some((source, max)) = self.hub.channel_budget(channel_id).await? else {
+            return Ok(None);
+        };
+        if self.hub.has_pipe(channel_id) || self.hub.slot_available(source, max, channel_id) {
+            return Ok(Some(source));
+        }
+        // idle packager outputs (nobody requesting segments) hold slots through their grace
+        self.hls.release_unwatched(channel_id).await;
+        if self
+            .wait_slot(source, max, channel_id, Duration::from_millis(300))
+            .await
+        {
+            return Ok(Some(source));
+        }
+        let on_source = |me: &Self, mine: bool| -> Vec<Arc<Session>> {
+            let mut v: Vec<Arc<Session>> = me
+                .sessions
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|s| s.source == Some(source) && (s.user_id == user_id) == mine)
+                .cloned()
+                .collect();
+            v.sort_by_key(|s| s.started_at);
+            v
+        };
+        // 1. newest wins: the user's own sessions (any device), oldest first
+        for victim in on_source(self, true) {
+            tracing::info!(
+                user_id,
+                channel_id,
+                old_channel = victim.channel_id,
+                "provider limit reached: stopping the user's older session so the new channel gets the slot"
+            );
+            self.release_session(victim).await;
+            if self
+                .wait_slot(source, max, channel_id, Duration::from_secs(1))
+                .await
+            {
+                return Ok(Some(source));
+            }
+        }
+        // 2. everyone else
+        let others = on_source(self, false);
+        if others.is_empty() {
+            // holders without a session (e.g. a raw subscriber): the hub decides
+            return Ok(Some(source));
+        }
+        if takeover {
+            for victim in others {
+                tracing::warn!(
+                    user_id,
+                    channel_id,
+                    taken_from = victim.user_id,
+                    old_channel = victim.channel_id,
+                    "admin takeover: stopping another user's session"
+                );
+                self.release_session(victim).await;
+                if self
+                    .wait_slot(source, max, channel_id, Duration::from_secs(1))
+                    .await
+                {
+                    return Ok(Some(source));
+                }
+            }
+            return Ok(Some(source));
+        }
+        Err(Error::InUseByOthers {
+            source_id: source,
+            max,
+            holders: others
+                .iter()
+                .map(|s| Holder {
+                    session_id: s.id.clone(),
+                    user_id: s.user_id,
+                    channel_id: s.channel_id,
+                    channel_name: s.name.clone(),
+                    since: s.started_at,
+                })
+                .collect(),
+        })
     }
 
     fn info_of(&self, s: &Session) -> LiveSessionInfo {
@@ -284,7 +401,41 @@ impl LiveManager {
     }
 
     pub fn stop(&self, id: &str) -> bool {
-        self.sessions.lock().unwrap().remove(id).is_some()
+        match self.sessions.lock().unwrap().remove(id) {
+            Some(s) => {
+                s.cancel.cancel();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Stop a session and give its provider slot back immediately (no HLS grace).
+    pub async fn stop_and_release(&self, id: &str) -> bool {
+        let s = self.sessions.lock().unwrap().remove(id);
+        let Some(s) = s else { return false };
+        s.cancel.cancel();
+        let limited = s.source.is_some();
+        drop(s);
+        if limited {
+            self.hls.release_unwatched(i64::MIN).await;
+        }
+        true
+    }
+
+    /// Stop the user's oldest live session (for per-user stream limits: newest wins).
+    pub async fn stop_oldest_of_user(&self, user_id: i64) -> bool {
+        let oldest = {
+            let s = self.sessions.lock().unwrap();
+            s.values()
+                .filter(|v| v.user_id == user_id)
+                .min_by_key(|v| v.started_at)
+                .map(|v| v.id.clone())
+        };
+        match oldest {
+            Some(id) => self.stop_and_release(&id).await,
+            None => false,
+        }
     }
 
     /// Raw MPEG-TS byte stream of a passthrough session. Dropping it frees the viewer.
@@ -302,9 +453,14 @@ impl LiveManager {
             None => self.hub.subscribe(s.channel_id, Some(s.user_id)).await?,
         };
         s.ts_active.fetch_add(1, Relaxed);
+        s.connected.store(true, Relaxed);
+        let cancel = s.cancel.clone();
         let guard = ActiveGuard(s);
-        let st = futures_util::stream::unfold((sub, guard), |(mut sub, g)| async move {
-            sub.next().await.map(|b| (Ok(b), (sub, g)))
+        let st = futures_util::stream::unfold((sub, guard, cancel), |(mut sub, g, c)| async move {
+            tokio::select! {
+                _ = c.cancelled() => None,
+                b = sub.next() => b.map(|b| (Ok(b), (sub, g, c))),
+            }
         });
         Ok(st)
     }

@@ -14,6 +14,7 @@ pub mod ts;
 pub mod xmltv;
 pub mod xtream;
 
+pub use error::Holder;
 pub use error::{Error, Result};
 pub use hls::HlsOptions;
 pub use hub::{

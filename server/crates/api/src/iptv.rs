@@ -354,6 +354,9 @@ pub struct TuneBody {
     /// Built-in device preset (decides which codecs HLS may copy).
     pub preset: Option<String>,
     pub profile: Option<DeviceProfile>,
+    /// Admins only: if every provider connection is held by other users, stop their streams and
+    /// take the slot (answer to a 409 with `takeover: true`).
+    pub takeover: Option<bool>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -407,14 +410,18 @@ pub async fn tune(
 ) -> ApiResult<Json<TuneResponse>> {
     let b = body.map(|b| b.0).unwrap_or_default();
     if let Some(max) = u.user.limits.max_streams {
-        let active = st
+        let playing = st
             .playback
             .list()
             .await
             .into_iter()
             .filter(|s| s.user_id == u.id())
-            .count()
-            + st.iptv.live.count_for_user(u.id());
+            .count();
+        // newest wins: a user's older live sessions never block their new channel
+        while (playing + st.iptv.live.count_for_user(u.id())) as i64 >= max
+            && st.iptv.live.stop_oldest_of_user(u.id()).await
+        {}
+        let active = playing + st.iptv.live.count_for_user(u.id());
         if active as i64 >= max {
             return Err(ApiError::TooManyRequests(format!(
                 "You reached your limit of {max} concurrent stream(s); stop another stream first"
@@ -436,7 +443,30 @@ pub async fn tune(
         audio_copy: p.audio.iter().map(|a| a.codec.clone()).collect(),
     });
     let mode: LiveMode = b.mode.unwrap_or(LiveModeDto::Hls).into();
-    let s = st.iptv.live.tune(u.id(), id, mode, &opts).await?;
+    let takeover = u.is_admin() && b.takeover.unwrap_or(false);
+    let s = match st
+        .iptv
+        .live
+        .tune_ex(u.id(), id, mode, &opts, takeover)
+        .await
+    {
+        Ok(s) => s,
+        Err(reel_iptv::Error::InUseByOthers {
+            source_id,
+            max,
+            holders,
+        }) => return Err(in_use_error(&st, &u, source_id, max, &holders).await),
+        Err(e) => return Err(e.into()),
+    };
+    if takeover {
+        st.audit(
+            &u.user,
+            "iptv_takeover",
+            Some(id.to_string()),
+            json!({"channel_id": id}),
+        )
+        .await;
+    }
     let (file, q) = match mode {
         LiveMode::Passthrough => ("stream.ts", "stream.ts"),
         LiveMode::Hls => ("index.m3u8", "index.m3u8"),
@@ -462,6 +492,47 @@ pub async fn tune(
     }))
 }
 
+/// Admins get a 409 with the holders and `takeover: true`; everyone else a friendly 429.
+async fn in_use_error(
+    st: &AppState,
+    u: &AuthUser,
+    _source_id: i64,
+    max: u32,
+    holders: &[reel_iptv::Holder],
+) -> ApiError {
+    if !u.is_admin() {
+        return ApiError::TooManyRequests(crate::error::in_use_message(max));
+    }
+    let mut out = vec![];
+    for h in holders {
+        let name: Option<String> = sqlx::query_scalar("SELECT username FROM users WHERE id = ?")
+            .bind(h.user_id)
+            .fetch_optional(&st.db)
+            .await
+            .ok()
+            .flatten();
+        out.push(json!({
+            "user_id": h.user_id,
+            "username": name,
+            "session_id": h.session_id,
+            "channel_id": h.channel_id,
+            "channel_name": h.channel_name,
+            "since": h.since,
+        }));
+    }
+    ApiError::Json(
+        StatusCode::CONFLICT,
+        json!({
+            "error": format!(
+                "All {max} connection(s) of this provider are in use by other users. \
+                 Retry with takeover=true to stop their stream."
+            ),
+            "takeover": true,
+            "holders": out,
+        }),
+    )
+}
+
 /// Stop watching. Passthrough viewers may also just disconnect; HLS sessions expire when the
 /// player stops requesting segments.
 #[utoipa::path(
@@ -479,7 +550,8 @@ pub async fn stop_session(
     if s.user_id != u.id() && !u.is_admin() {
         return Err(ApiError::NotFound);
     }
-    st.iptv.live.stop(&id);
+    // the provider slot goes back at once (no grace) when the provider has a connection limit
+    st.iptv.live.stop_and_release(&id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

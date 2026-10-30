@@ -24,8 +24,29 @@ pub enum Error {
         max: u32,
         watching: Vec<String>,
     },
+    /// Every provider connection is held by *other* users' live sessions.
+    #[error(
+        "all {max} connection(s) of the provider are in use by other viewers ({})",
+        .holders.iter().map(|h| h.channel_name.as_str()).collect::<Vec<_>>().join(", ")
+    )]
+    InUseByOthers {
+        source_id: i64,
+        max: u32,
+        holders: Vec<Holder>,
+    },
     #[error("{0}")]
     Unavailable(String),
+}
+
+/// A live session holding a provider connection.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Holder {
+    pub session_id: String,
+    pub user_id: i64,
+    pub channel_id: i64,
+    pub channel_name: String,
+    /// Unix seconds.
+    pub since: i64,
 }
 
 impl From<reqwest::Error> for Error {

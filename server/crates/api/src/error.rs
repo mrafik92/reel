@@ -18,6 +18,8 @@ pub enum ApiError {
     Locked(std::time::Duration),
     /// Explicit status (e.g. mapped from `reel_requests::Error::http_status`).
     Status(StatusCode, String),
+    /// Explicit status with a custom JSON body (must contain `error`).
+    Json(StatusCode, serde_json::Value),
     Internal(String),
 }
 
@@ -38,6 +40,9 @@ impl From<sqlx::Error> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let mut extra: Option<(header::HeaderName, String)> = None;
+        if let Self::Json(code, body) = self {
+            return (code, Json(body)).into_response();
+        }
         let (code, msg) = match self {
             Self::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
             Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
@@ -55,6 +60,7 @@ impl IntoResponse for ApiError {
             }
             Self::Forbidden(m) => (StatusCode::FORBIDDEN, m),
             Self::Status(c, m) => (c, m),
+            Self::Json(..) => unreachable!("handled above"),
             Self::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, m),
             Self::Internal(m) => {
                 tracing::error!("internal error: {m}");
@@ -125,6 +131,7 @@ impl From<reel_iptv::Error> for ApiError {
             E::NotFound(_) => Self::NotFound,
             E::Invalid(m) | E::Parse(m) => Self::BadRequest(reel_iptv::net::redact_text(&m)),
             e @ E::BudgetExhausted { .. } => Self::TooManyRequests(e.to_string()),
+            E::InUseByOthers { max, .. } => Self::TooManyRequests(in_use_message(max)),
             E::Unavailable(m) => Self::Status(
                 StatusCode::SERVICE_UNAVAILABLE,
                 reel_iptv::net::redact_text(&m),
@@ -134,4 +141,12 @@ impl From<reel_iptv::Error> for ApiError {
             E::Io(e) => Self::Internal(e.to_string()),
         }
     }
+}
+
+/// Friendly 429 text for non-admins (does not reveal who is watching).
+pub fn in_use_message(max: u32) -> String {
+    format!(
+        "All {max} connection(s) of this provider are in use by other viewers right now. \
+         Try again in a moment."
+    )
 }

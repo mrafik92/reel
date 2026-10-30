@@ -8831,6 +8831,13 @@
                 "$ref": "#/components/schemas/DeviceProfile"
               }
             ]
+          },
+          "takeover": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Admins only: if every provider connection is held by other users, stop their streams and\ntake the slot (answer to a 409 with `takeover: true`)."
           }
         }
       },

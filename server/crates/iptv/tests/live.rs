@@ -184,7 +184,7 @@ async fn passthrough_reserves_slot_at_tune_and_streams_ts_from_gop_start() {
         .err()
         .unwrap();
     assert!(
-        matches!(err, Error::BudgetExhausted { max: 1, .. }),
+        matches!(err, Error::InUseByOthers { max: 1, .. }),
         "{err:?}"
     );
     assert!(err.to_string().contains("One"), "{err}");

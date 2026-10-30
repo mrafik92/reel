@@ -761,12 +761,12 @@ async fn provider_connection_budget_returns_429_and_evicts_warm_channels() {
     };
     let (s, t1) = tune(&e.admin, news).await;
     assert_eq!(s, 200);
-    // the only provider slot is held by a viewer
+    // the only provider slot is held by another user's viewer: friendly 429 for a non-admin
     let (s, v) = tune(&bob, sport).await;
     assert_eq!(s, StatusCode::TOO_MANY_REQUESTS, "{v}");
     let msg = v["error"].as_str().unwrap();
     assert!(
-        msg.contains("connection limit") && msg.contains("UK News HD"),
+        msg.contains("in use by other viewers") && !msg.contains("UK News HD"),
         "{msg}"
     );
     // the admin stops watching: the channel stays warm but is evicted for bob
@@ -830,14 +830,18 @@ async fn user_stream_limit_counts_live_sessions() {
     let url = format!("/api/v1/iptv/channels/{news}/tune");
     let (s, t) = send(&limited, "POST", &url, Some(json!({"mode":"passthrough"}))).await;
     assert_eq!(s, 200);
-    let (s, v) = send(&limited, "POST", &url, Some(json!({"mode":"passthrough"}))).await;
-    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS);
+    // newest wins: the user's own older live session never blocks the new tune
+    let (s, t2) = send(&limited, "POST", &url, Some(json!({"mode":"passthrough"}))).await;
+    assert_eq!(s, 200, "{t2}");
+    assert_eq!(e.state.iptv.live.count_for_user(2), 1);
     assert!(
-        v["error"]
-            .as_str()
-            .unwrap()
-            .contains("limit of 1 concurrent stream")
+        e.state
+            .iptv
+            .live
+            .session(t["session_id"].as_str().unwrap())
+            .is_none()
     );
+    let t = t2;
     send(
         &limited,
         "DELETE",
@@ -1323,4 +1327,165 @@ async fn source_dto_masks_guide_credentials_exposes_epg_stats_and_can_rerun_only
         v["last_error"].is_null(),
         "the old EPG error is cleared: {v}"
     );
+}
+
+async fn user_app(e: &Env, name: &str) -> (Router, i64) {
+    let u = e
+        .state
+        .auth
+        .create_user(reel_auth::NewUser {
+            username: name.into(),
+            password: "another long password".into(),
+            role: reel_auth::Role::User,
+            limits: reel_auth::Limits::default(),
+            library_ids: vec![],
+        })
+        .await
+        .unwrap();
+    let t = e
+        .state
+        .auth
+        .login(name, "another long password", Default::default())
+        .await
+        .unwrap()
+        .token;
+    (common::with_token(e.raw.clone(), &t), u.id)
+}
+
+#[tokio::test]
+async fn one_slot_provider_budget_policy_same_user_newest_wins_others_429_admin_takeover() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let ts = dir.path().join("a.ts");
+    make_ts(&ts, 4);
+    let (prov, _) = Provider::start(&ts, 4).await;
+    let e = env(|c| c.iptv_grace_secs = 30).await;
+    add_source(&e, &prov, Some(1)).await;
+    let (news, sport) = (
+        channel_id(&e, "UK News HD").await,
+        channel_id(&e, "UK Sport").await,
+    );
+    let (alice1, _) = user_app(&e, "alice").await;
+    // a second device of the same user: its own login token
+    let t2 = e
+        .state
+        .auth
+        .login("alice", "another long password", Default::default())
+        .await
+        .unwrap()
+        .token;
+    let alice2 = common::with_token(e.raw.clone(), &t2);
+    let (bob, _) = user_app(&e, "bob").await;
+    let tune = |app: &Router, id: i64, body: Value| {
+        let app = app.clone();
+        async move {
+            send(
+                &app,
+                "POST",
+                &format!("/api/v1/iptv/channels/{id}/tune"),
+                Some(body),
+            )
+            .await
+        }
+    };
+    let pt = || json!({"mode": "passthrough"});
+
+    // device 1 watches News; device 2 zaps to Sport: the older session is stopped, no 429
+    let (s, a1) = tune(&alice1, news, pt()).await;
+    assert_eq!(s, 200, "{a1}");
+    let (s, a2) = tune(&alice2, sport, pt()).await;
+    assert_eq!(s, 200, "own streams never 429: {a2}");
+    assert!(
+        e.state
+            .iptv
+            .live
+            .session(a1["session_id"].as_str().unwrap())
+            .is_none(),
+        "oldest session stopped"
+    );
+    assert!(
+        e.state
+            .iptv
+            .live
+            .session(a2["session_id"].as_str().unwrap())
+            .is_some()
+    );
+    // the same, with HLS sessions (the packager holds the slot)
+    let (s, h1) = tune(&alice1, news, json!({"mode":"hls"})).await;
+    assert_eq!(s, 200, "{h1}");
+    let (s, h2) = tune(&alice2, sport, json!({"mode":"hls"})).await;
+    assert_eq!(s, 200, "{h2}");
+    assert!(
+        e.state
+            .iptv
+            .live
+            .session(h1["session_id"].as_str().unwrap())
+            .is_none()
+    );
+    assert_eq!(
+        e.state
+            .iptv
+            .hub()
+            .connections_by_source()
+            .values()
+            .sum::<usize>(),
+        1
+    );
+
+    // another user holds it → friendly 429 for non-admins
+    let (s, v) = tune(&bob, news, pt()).await;
+    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap()
+            .contains("in use by other viewers")
+    );
+    assert!(
+        v.get("holders").is_none(),
+        "non-admins do not learn who is watching"
+    );
+    // … non-admins cannot take over
+    let (s, _) = tune(&bob, news, json!({"mode":"passthrough","takeover":true})).await;
+    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS);
+
+    // admins get a 409 with the holders and a takeover hint, and can take over
+    let (s, v) = tune(&e.admin, news, pt()).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["takeover"], true);
+    assert_eq!(v["holders"][0]["username"], "alice");
+    assert_eq!(v["holders"][0]["channel_name"], "UK Sport");
+    let victim = v["holders"][0]["session_id"].as_str().unwrap().to_string();
+    let (s, v) = tune(
+        &e.admin,
+        news,
+        json!({"mode":"passthrough","takeover":true}),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(
+        e.state.iptv.live.session(&victim).is_none(),
+        "the other stream was stopped"
+    );
+    let (_, log) = get(&e.admin, "/api/v1/admin/audit").await;
+    assert!(log.to_string().contains("iptv_takeover"));
+
+    // a plain DELETE frees the slot at once, even with a long grace configured
+    let sid = v["session_id"].as_str().unwrap().to_string();
+    assert_eq!(
+        send(
+            &e.admin,
+            "DELETE",
+            &format!("/api/v1/iptv/sessions/{sid}"),
+            None
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let (s, v) = tune(&bob, sport, pt()).await;
+    assert_eq!(s, 200, "{v}");
+    e.state.iptv.shutdown().await;
 }
