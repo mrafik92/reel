@@ -100,7 +100,14 @@ export function friendlyTuneError(e: unknown): TuneError {
     if (e.status === 409 && body && Array.isArray(body.holders)) {
       const holders = (body.holders as Holder[]).filter((h) => h && h.session_id);
       const max = maxOf(msg) ?? (holders.length || undefined);
-      const who = holders.map((h) => `${h.username ?? "Someone"} is watching ${h.channel_name}`).join(" · ");
+      // "sam is watching Arena One and Cine Classics" — one clause per person.
+      const byUser = new Map<string, string[]>();
+      holders.forEach((h) => {
+        const k = h.username ?? "Someone";
+        byUser.set(k, (byUser.get(k) ?? []).concat(h.channel_name));
+      });
+      const and = (l: string[]) => (l.length > 1 ? `${l.slice(0, -1).join(", ")} and ${l[l.length - 1]}` : l[0] ?? "");
+      const who = Array.from(byUser, ([u, chans]) => `${u} is watching ${and(chans)}`).join("; ");
       return {
         kind: "limit",
         provider: true,
@@ -289,6 +296,11 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     stop: (keepalive) => {
       gen++;
       void endSession(keepalive);
+      try {
+        video()?.pause();
+      } catch {
+        /* ignore */
+      }
       setPhase("idle");
       setBuffering(false);
     },

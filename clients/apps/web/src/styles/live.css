@@ -2667,3 +2667,22 @@ html.tv .live--rows .nowp__desc {
     margin: 1.2rem 0 0;
   }
 }
+
+/* Plan limit: a calm notice, not an error — the picture stays dimmed, not greyed out. */
+.live__error.is-calm {
+  background: rgba(16, 18, 25, 0.9);
+  box-shadow: 0 0 0 1px var(--line), 0 1.5rem 3rem rgba(0, 0, 0, 0.45);
+}
+.live__error.is-calm > .icon {
+  color: var(--ink-2);
+}
+.live__error.is-calm h2 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.live__screen.is-limit .live__video {
+  opacity: 0.35;
+  -webkit-filter: none;
+  filter: none;
+}

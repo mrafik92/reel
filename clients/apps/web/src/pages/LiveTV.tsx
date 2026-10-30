@@ -335,13 +335,41 @@ function Watch(): JSX.Element {
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
-    const onHide = () => tuner.stop(true);
+    // Give the provider slot back when nobody's looking: page hidden (pagehide = right away,
+    // tab in the background = after 30 s). Coming back re-tunes the same channel.
+    let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
+    let parked: IptvChannel | undefined;
+    const park = () => {
+      if (tuner.phase() === "idle" || tuner.phase() === "error") return;
+      parked = tuned();
+      tuner.stop(true);
+    };
+    const unpark = () => {
+      if (hiddenTimer) clearTimeout(hiddenTimer);
+      hiddenTimer = undefined;
+      const c = parked;
+      parked = undefined;
+      if (c && tuner.phase() === "idle") tuneNow(c);
+    };
+    const onHide = () => park();
+    const onShow = (e: PageTransitionEvent) => e.persisted && unpark();
+    const onVis = () => {
+      if (document.hidden) {
+        if (hiddenTimer) clearTimeout(hiddenTimer);
+        hiddenTimer = setTimeout(park, 30_000);
+      } else unpark();
+    };
     window.addEventListener("pagehide", onHide);
+    window.addEventListener("pageshow", onShow);
+    document.addEventListener("visibilitychange", onVis);
     onCleanup(() => {
       offKeys();
       offBack();
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("pageshow", onShow);
+      document.removeEventListener("visibilitychange", onVis);
+      if (hiddenTimer) clearTimeout(hiddenTimer);
       [osdTimer, zapTimer, digitTimer].forEach((t) => t && clearTimeout(t));
       tuner.dispose();
     });
@@ -362,7 +390,7 @@ function Watch(): JSX.Element {
         <div
           ref={screen}
           class="live__screen"
-          classList={{ "is-osd": osd() || !!pending(), "is-error": !!tuner.error() }}
+          classList={{ "is-osd": osd() || !!pending(), "is-error": !!tuner.error(), "is-limit": tuner.error()?.kind === "limit" }}
           tabindex={isFull() ? -1 : 0}
           data-focusable={isFull() ? undefined : ""}
           aria-label={isFull() ? `Watching ${tuned()?.name ?? ""}` : "Watch full screen"}
@@ -385,8 +413,13 @@ function Watch(): JSX.Element {
 
           <Show when={tuner.error()}>
             {(e) => (
-              <div class="live__error" role="alert" classList={{ [`is-${e().kind}`]: true }} onClick={(ev) => ev.stopPropagation()}>
-                <Icon name="alert" />
+              <div
+                class="live__error"
+                role={e().kind === "limit" ? "status" : "alert"}
+                classList={{ [`is-${e().kind}`]: true, "is-calm": e().kind === "limit" }}
+                onClick={(ev) => ev.stopPropagation()}
+              >
+                <Icon name={e().kind === "limit" ? "tv" : "alert"} />
                 <h2>{e().title}</h2>
                 <p>{e().body}</p>
                 <div class="actions actions--center">
