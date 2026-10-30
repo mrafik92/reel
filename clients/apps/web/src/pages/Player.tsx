@@ -28,13 +28,31 @@ export default function Player(): JSX.Element {
 const HIDE_AFTER = 4000;
 const TICK_MS = 10_000;
 
-interface PlayError {
+export interface PlayError {
   title: string;
   body: string;
   retry: boolean;
+  /** Extra fix-it action (e.g. "Stop the other stream"); playback restarts after it resolves. */
+  action?: { label: string; run: () => Promise<void> };
 }
 
-function PlayerView(props: { item: ItemDetail }): JSX.Element {
+/**
+ * Non-library playback (IPTV on-demand): the page hands in a synthetic item (title, runtime,
+ * progress) and how to open a session; everything else — tracks, subtitles, progress pings,
+ * stop — is the regular player.
+ */
+export interface PlaySource {
+  decide: (o: { audio: number | null; subtitle: number; start: number }) => Promise<DecideResponse>;
+  /** Map a start failure to a friendly error (falls back to the library wording). */
+  error?: (e: unknown) => PlayError | undefined;
+  /** Eyebrow above the title (e.g. series · S1 E3). */
+  eyebrow?: string;
+  /** Where Back goes when there's no history. */
+  back: string;
+  onClose?: () => void;
+}
+
+export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JSX.Element {
   const navigate = useNavigate();
   const [search] = useSearchParams<{ file?: string; start?: string; t?: string; audio?: string; sub?: string }>();
   const file: MediaFile | undefined =
@@ -123,10 +141,12 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
     endSession();
     let d: DecideResponse;
     try {
-      d = await decide(file.id, { itemId: creditItem(file, props.item.id), audio: audio(), subtitle: sub(), start: at });
+      d = props.source
+        ? await props.source.decide({ audio: audio(), subtitle: sub(), start: at })
+        : await decide(file.id, { itemId: creditItem(file, props.item.id), audio: audio(), subtitle: sub(), start: at });
     } catch (e) {
       setBuffering(false);
-      setError(decideError(e));
+      setError(props.source?.error?.(e) ?? decideError(e));
       return;
     }
     if (closed) {
@@ -298,6 +318,23 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
     syncTracks();
   }
 
+  // A failed start puts its card on screen: move the remote onto its first action.
+  // Once it recovers, hand focus back to play (the card's buttons are gone).
+  let hadError = false;
+  createEffect(() => {
+    const e = error();
+    if (!e && !hadError) return;
+    hadError = !!e;
+    requestAnimationFrame(() => {
+      if (e) {
+        const el = root?.querySelector<HTMLElement>(".player__error [data-autofocus]");
+        if (el) focusElement(el, { smooth: false });
+      } else if (playBtn && (!document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected)) {
+        focusElement(playBtn, { smooth: false });
+      }
+    });
+  });
+
   /** Keep subtitles above the control bar while it's up (measured, not guessed). */
   const measureLift = () => {
     if (!root || !bar) return;
@@ -369,7 +406,7 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
 
   const exit = () => {
     if (window.history.length > 1) window.history.back();
-    else navigate(`/item/${props.item.id}`);
+    else navigate(props.source ? props.source.back : `/item/${props.item.id}`);
   };
   const fullscreen = () => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => undefined);
@@ -484,6 +521,7 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
       adapter?.destroy();
       invalidate("home");
       invalidate("item");
+      props.source?.onClose?.();
       if (document.fullscreenElement) document.exitFullscreen().catch(() => undefined);
     });
   });
@@ -564,8 +602,11 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
             <h2>{e().title}</h2>
             <p>{e().body}</p>
             <div class="actions actions--center">
+              <Show when={e().action}>
+                {(a) => <ActionButton label={a().label} run={a().run} onDone={() => void start(pos() || resumeAt())} />}
+              </Show>
               <Show when={e().retry}>
-                <button type="button" class="btn btn--primary" data-autofocus onClick={() => void start(pos() || resumeAt())}>
+                <button type="button" class={e().action ? "btn" : "btn btn--primary"} data-autofocus={e().action ? undefined : ""} onClick={() => void start(pos() || resumeAt())}>
                   <Icon name="retry" /> <span>Try again</span>
                 </button>
               </Show>
@@ -587,8 +628,8 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
             <Icon name="back" />
           </button>
           <div class="player__titles">
-            <Show when={props.item.kind === "episode"} fallback={<h1>{props.item.title}</h1>}>
-              <p class="eyebrow">{series() ?? ""}{series() ? " · " : ""}{episodeCode(props.item)}</p>
+            <Show when={props.item.kind === "episode" || props.source?.eyebrow} fallback={<h1>{props.item.title}</h1>}>
+              <p class="eyebrow">{props.source?.eyebrow ?? `${series() ?? ""}${series() ? " · " : ""}${episodeCode(props.item)}`}</p>
               <h1>{props.item.title}</h1>
             </Show>
           </div>
@@ -704,6 +745,40 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
         />
       </Show>
     </div>
+  );
+}
+
+/** Fix-it button on the error card: busy while it runs, then playback restarts. */
+function ActionButton(props: { label: string; run: () => Promise<void>; onDone: () => void }): JSX.Element {
+  const [busy, setBusy] = createSignal(false);
+  const [failed, setFailed] = createSignal("");
+  return (
+    <>
+      <button
+        type="button"
+        class="btn btn--primary"
+        data-autofocus
+        aria-busy={busy()}
+        onClick={async () => {
+          if (busy()) return;
+          setBusy(true);
+          setFailed("");
+          try {
+            await props.run();
+            props.onDone();
+          } catch (e) {
+            setFailed(e instanceof Error ? e.message : "That didn't work");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Icon name={busy() ? "clock" : "x"} /> <span>{busy() ? "Stopping…" : props.label}</span>
+      </button>
+      <Show when={failed()}>
+        <p class="player__error-note" role="status">{failed()}</p>
+      </Show>
+    </>
   );
 }
 

@@ -10,6 +10,7 @@ import { isBusy, useRequestActions } from "../lib/requests";
 import { ErrorState } from "./States";
 import { RatingsStrip, ReviewsSection, useReviews } from "./Reviews";
 import { CastTile } from "./Cast";
+import { vodTwin } from "./vod/links";
 
 /** TMDB title detail (SPEC §7.1): availability, live ring, season picker, Add / Play / Retry. */
 export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: DiscoverCard; onClose: () => void }): JSX.Element {
@@ -151,6 +152,13 @@ export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: 
                             {props.media === "tv" && picked() != null ? ` ${picked()!.length} season${picked()!.length === 1 ? "" : "s"}` : ""}
                           </span>
                         </button>
+                      </Show>
+                      <Show when={!available() && vodTwin(c())}>
+                        {(h) => (
+                          <a class="btn btn--iptv" href={h()} onClick={() => props.onClose()}>
+                            <Icon name="live" /> <span>Play now (IPTV)</span>
+                          </a>
+                        )}
                       </Show>
                       <button type="button" class="btn" onClick={() => props.onClose()}>
                         <span>Close</span>

@@ -1,10 +1,11 @@
 import { createSignal, Show, type JSX } from "solid-js";
-import { DiscoverCard as Card } from "@reel/ui";
+import { DiscoverCard as Card, Icon } from "@reel/ui";
 import type { DiscoverCard, MediaType } from "../api";
 import { progressFor } from "../lib/downloads";
 import { canAutoAdd } from "../lib/auth";
 import { isBusy, useRequestActions } from "../lib/requests";
 import { DiscoverSheet } from "./DiscoverSheet";
+import { vodTwin } from "./vod/links";
 
 /** One sheet per page; tiles call `open(card)`. */
 export function useDiscoverSheet() {
@@ -22,7 +23,8 @@ export function DiscoverTile(props: { card: DiscoverCard; onOpen: (c: DiscoverCa
   const actions = useRequestActions();
   // Reel request progress, else raw Radarr/Sonarr queue activity for this title.
   const dl = () => progressFor(props.card.tmdb_id);
-  return (
+  const twin = () => vodTwin(props.card);
+  const card = () => (
     <Card
       card={props.card}
       download={dl()}
@@ -38,5 +40,16 @@ export function DiscoverTile(props: { card: DiscoverCard; onOpen: (c: DiscoverCa
       onPlay={() => void actions.play(props.card)}
       onRetry={dl()?.request_id ? () => void actions.retry(dl()!.request_id, props.card.title) : undefined}
     />
+  );
+  return (
+    <Show when={twin()} fallback={card()}>
+      {/* Not in the library but on IPTV: Play now sits right under Add. */}
+      <div class="dtile">
+        {card()}
+        <a class="pill pill--iptv" href={twin()!} aria-label={`Play now on IPTV: ${props.card.title}`}>
+          <Icon name="live" /> <span>Play now</span> <small>IPTV</small>
+        </a>
+      </div>
+    </Show>
   );
 }

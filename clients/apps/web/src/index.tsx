@@ -22,6 +22,9 @@ const Person = lazy(() => import("./pages/Person"));
 const Admin = lazy(() => import("./pages/admin/Admin"));
 const LiveTV = lazy(() => import("./pages/LiveTV"));
 const LiveGuide = lazy(() => import("./pages/LiveGuide"));
+const VodMovie = lazy(() => import("./pages/VodMovie"));
+const VodSeries = lazy(() => import("./pages/VodSeries"));
+const VodPlayer = lazy(() => import("./pages/VodPlayer"));
 const DevRings = lazy(() => import("./pages/DevRings"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
@@ -47,6 +50,9 @@ function Routes() {
       <Route path="/person/:id" component={Person} />
       <Route path="/live" component={LiveTV} />
       <Route path="/live/guide" component={LiveGuide} />
+      <Route path="/vod/movie/:id" component={VodMovie} />
+      <Route path="/vod/series/:id" component={VodSeries} />
+      <Route path="/vod/play/:kind/:id" component={VodPlayer} />
       <Route path="/admin/:section?" component={Admin} />
       <Route path="/dev/rings" component={DevRings} />
       <Route path="*" component={NotFound} />

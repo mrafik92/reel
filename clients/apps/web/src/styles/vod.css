@@ -1,0 +1,679 @@
+/* ==========================================================================
+   IPTV on-demand (VOD): source switch, provider categories, cards, details.
+   Chromium 68 floor (webOS 5 / Tizen 5.5): no flex gap, no aspect-ratio,
+   no inset, no clamp(), no backdrop-filter, no :focus-visible.
+   ========================================================================== */
+
+/* ---------- Source switch: My library · IPTV ------------------------------ */
+.srcrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 1.1rem;
+}
+.srcrow > * {
+  margin-bottom: 0.5rem;
+}
+.srcrow .tabs {
+  margin: 0 0 0.5rem 1.4rem;
+  padding-left: 1.4rem;
+  border-left: 1px solid var(--line);
+}
+.srcrow .tabs .tab {
+  margin-bottom: 0;
+}
+.srcswitch {
+  display: inline-flex;
+  padding: 0.28rem;
+  border-radius: 999px;
+  background: var(--ink-5);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.srcswitch__btn {
+  display: inline-flex;
+  align-items: center;
+  height: 2.75rem;
+  padding: 0 1.2rem 0 1rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-3);
+  font: 700 1rem/1 var(--font-body);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t) var(--ease-out);
+}
+.srcswitch__btn + .srcswitch__btn {
+  margin-left: 0.2rem;
+}
+.srcswitch__icon {
+  margin-right: 0.55rem;
+  font-size: 1.15em;
+}
+.srcswitch__n {
+  margin-left: 0.6rem;
+  font: 400 0.82rem/1 var(--font-body);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+.srcswitch__btn:hover {
+  color: var(--ink);
+}
+.srcswitch__btn[aria-pressed="true"] {
+  background: var(--bg-3);
+  color: var(--ink);
+  box-shadow: 0 0.35rem 1.2rem rgba(0, 0, 0, 0.35);
+}
+.srcswitch__btn[aria-pressed="true"] .srcswitch__icon {
+  color: var(--accent);
+}
+.srcswitch__btn:focus {
+  background: var(--ink);
+  color: var(--bg);
+  transform: scale(1.04);
+}
+.srcswitch__btn:focus .srcswitch__icon {
+  color: inherit;
+}
+html[data-input="key"] .srcswitch__btn:focus {
+  box-shadow: var(--focus-ring);
+}
+html[data-input="pointer"] .srcswitch__btn:focus:not(:hover) {
+  background: transparent;
+  color: var(--ink-3);
+  transform: none;
+}
+html[data-input="pointer"] .srcswitch__btn[aria-pressed="true"]:focus:not(:hover) {
+  background: var(--bg-3);
+  color: var(--ink);
+}
+html[data-input="pointer"] .srcswitch__btn[aria-pressed="true"]:focus:not(:hover) .srcswitch__icon {
+  color: var(--accent);
+}
+.library__pending {
+  padding-top: 6.5rem;
+}
+
+/* ---------- IPTV picker header ------------------------------------------- */
+.vpicker .picker__title-row {
+  align-items: center;
+}
+.vsearch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 22rem;
+  max-width: 100%;
+  height: 3rem;
+  padding: 0 0.4rem 0 1.1rem;
+  border-radius: 999px;
+  background: rgba(243, 238, 228, 0.07);
+  box-shadow: inset 0 0 0 1.5px var(--line);
+  transition: box-shadow var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
+}
+.vsearch__icon {
+  flex-shrink: 0;
+  margin-right: 0.7rem;
+  font-size: 1.2rem;
+  color: var(--ink-3);
+}
+.vsearch__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 700 1.02rem/1 var(--font-body);
+  outline: none;
+  -webkit-appearance: none;
+}
+.vsearch__input::placeholder {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.vsearch__input::-webkit-search-cancel-button {
+  display: none;
+}
+.vsearch__clear {
+  width: 2.4rem;
+  height: 2.4rem;
+  font-size: 1.1rem;
+}
+.vsearch:focus-within {
+  background: rgba(243, 238, 228, 0.1);
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+.vsearch:focus-within .vsearch__icon,
+.vsearch.has-value .vsearch__icon {
+  color: var(--accent);
+}
+
+/* Category chips: provider prefix as a tag ("AR", "NETFLIX"), name after it. */
+.ctag {
+  display: inline-block;
+  margin-right: 0.5rem;
+  padding: 0.2rem 0.38rem;
+  border-radius: 0.3rem;
+  background: var(--ink-5);
+  box-shadow: inset 0 0 0 1px var(--ink-4);
+  font: 800 0.64rem/1 var(--font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.cname {
+  white-space: nowrap;
+}
+.cchip[aria-pressed="true"] .ctag,
+.cchip:focus .ctag {
+  background: rgba(10, 11, 15, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(10, 11, 15, 0.25);
+  color: inherit;
+}
+html[data-input="pointer"] .cchip:focus:not(:hover):not([aria-pressed="true"]) .ctag {
+  background: var(--ink-5);
+  box-shadow: inset 0 0 0 1px var(--ink-4);
+  color: var(--ink-3);
+}
+.cbar__more {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ink-4);
+  color: var(--ink);
+}
+.cbar__more .icon {
+  margin-right: 0.45rem;
+  color: var(--accent);
+}
+.cbar__more:focus .icon {
+  color: inherit;
+}
+.fchip--cat .ctag {
+  margin-right: 0.4rem;
+  background: rgba(10, 11, 15, 0.25);
+  color: var(--ink-2);
+}
+
+/* ---------- Category sheet --------------------------------------------- */
+.csheet__panel {
+  width: 34rem;
+}
+.csheet__head {
+  padding: 2.4rem 2.25rem 1rem;
+}
+.csheet__head h2 {
+  margin: 0.35rem 0 1.1rem;
+  font: 750 1.9rem/1.1 var(--font-display);
+  letter-spacing: -0.02em;
+}
+.csheet__count {
+  margin-left: 0.5rem;
+  font: 400 1rem/1 var(--font-body);
+  color: var(--ink-3);
+}
+.csheet__field {
+  display: flex;
+  align-items: center;
+  height: 3rem;
+  padding: 0 1rem;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1.5px var(--line);
+  color: var(--ink-3);
+}
+.csheet__field:focus-within {
+  box-shadow: inset 0 0 0 2px var(--ink);
+  color: var(--accent);
+}
+.csheet__field input {
+  flex: 1;
+  height: 100%;
+  margin-left: 0.7rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 700 1rem/1 var(--font-body);
+  outline: none;
+  -webkit-appearance: none;
+}
+.csheet__field input::-webkit-search-cancel-button {
+  display: none;
+}
+.csheet__group {
+  margin-top: 0.6rem;
+}
+.csheet__tag {
+  position: -webkit-sticky;
+  position: sticky;
+  top: -0.5rem;
+  z-index: 1;
+  margin: 0;
+  padding: 0.7rem 1rem 0.45rem;
+  background: var(--bg-1);
+  font: 800 0.72rem/1 var(--font-body);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.csheet__opt {
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.15rem;
+}
+.csheet__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 1rem;
+}
+.csheet__n {
+  margin-left: 1rem;
+  font: 400 0.85rem/1 var(--font-body);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+}
+.csheet__none {
+  padding: 1rem;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+/* ---------- Cards ------------------------------------------------------- */
+.vbadge {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  height: 1.45rem;
+  padding: 0 0.5rem 0 0.4rem;
+  border-radius: 0.4rem;
+  background: rgba(var(--bg-rgb), 0.8);
+  box-shadow: inset 0 0 0 1px var(--ink-4);
+  color: var(--ink);
+  font: 800 0.64rem/1 var(--font-body);
+  letter-spacing: 0.14em;
+}
+.vbadge .icon {
+  margin-right: 0.3rem;
+  font-size: 1.15em;
+  color: var(--accent);
+}
+.vbadge--inline {
+  position: static;
+  height: 1.55rem;
+  font-size: 0.7rem;
+  vertical-align: middle;
+}
+.vcard__fallback {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  background: linear-gradient(160deg, #1a1e2a, var(--bg-1) 70%);
+}
+.vcard__fallback-icon {
+  margin-top: 1.6rem;
+  font-size: 1.6rem;
+  color: var(--ink-4);
+}
+.vcard .card__fallback span {
+  max-height: 6.4em;
+}
+
+/* Discover: "Play now · IPTV" under Add */
+.dtile {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--poster-w);
+}
+.results-grid .dtile {
+  width: auto;
+}
+.dtile .dcard {
+  width: 100%;
+}
+.dtile .dcard__action {
+  min-height: 0;
+}
+.pill--iptv {
+  margin-top: 0.45rem;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px rgba(198, 244, 50, 0.55);
+  color: var(--accent);
+  text-decoration: none;
+}
+.pill--iptv small {
+  margin-left: 0.4rem;
+  font: 800 0.62rem/1 var(--font-body);
+  letter-spacing: 0.12em;
+  opacity: 0.8;
+}
+.pill--iptv:hover {
+  background: var(--accent-dim);
+}
+.pill--iptv:focus {
+  box-shadow: none;
+}
+html[data-input="key"] .pill--iptv:focus {
+  box-shadow: var(--focus-ring);
+}
+html[data-input="pointer"] .pill--iptv:focus:not(:hover) {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px rgba(198, 244, 50, 0.55);
+  color: var(--accent);
+  transform: none;
+}
+.btn--iptv {
+  box-shadow: inset 0 0 0 1.5px rgba(198, 244, 50, 0.55);
+  background: transparent;
+  color: var(--accent);
+}
+.btn--iptv:hover {
+  background: var(--accent-dim);
+}
+html[data-input="pointer"] .btn--iptv:focus:not(:hover) {
+  background: transparent;
+  color: var(--accent);
+}
+
+/* ---------- Detail ------------------------------------------------------ */
+.veyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0;
+}
+.veyebrow > * {
+  margin-right: 0.8rem;
+}
+.veyebrow__cat {
+  display: inline-flex;
+  align-items: center;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--ink-2);
+}
+.veyebrow__cat .ctag {
+  margin-right: 0.45rem;
+}
+/* Arabic titles/overviews keep their own direction but sit on the hero's left edge. */
+.vdetail .detail__title[dir="auto"],
+.vdetail .detail__overview[dir="auto"],
+.eprow [dir="auto"] {
+  unicode-bidi: plaintext;
+  text-align: left;
+}
+.vlib {
+  display: flex;
+  align-items: center;
+  max-width: 42rem;
+  margin: 1rem 0 0;
+  padding: 0.65rem 1rem 0.65rem 0.8rem;
+  border-radius: var(--radius);
+  background: rgba(198, 244, 50, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(198, 244, 50, 0.3);
+  color: var(--ink-2);
+  font: 400 0.98rem/1.4 var(--font-body);
+}
+.vlib .icon {
+  flex-shrink: 0;
+  margin-right: 0.65rem;
+  font-size: 1.25rem;
+  color: var(--accent);
+}
+.vlib strong {
+  color: var(--ink);
+}
+.vcredit {
+  margin: 0.8rem 0 0;
+  color: var(--ink-3);
+  font: 400 0.98rem/1.4 var(--font-body);
+}
+.vcredit strong {
+  color: var(--ink-2);
+}
+.vfine {
+  display: flex;
+  align-items: center;
+  margin: 0.2rem 0 0;
+  color: var(--ink-3);
+  font: 400 0.85rem/1.4 var(--font-body);
+}
+.vfine .icon {
+  flex-shrink: 0;
+  margin-right: 0.5rem;
+  color: var(--ink-3);
+}
+
+/* Trailer */
+.trailer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.trailer__scrim {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(5, 6, 9, 0.92);
+  animation: fade-in 220ms var(--ease) both;
+}
+.trailer__frame {
+  position: relative;
+  width: 80vw;
+  max-width: 120rem;
+  height: 45vw;
+  max-height: 78vh;
+  border-radius: var(--radius-l);
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 2rem 6rem rgba(0, 0, 0, 0.8);
+  animation: chip-in 320ms var(--ease-out) both;
+}
+.trailer__frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.trailer__close {
+  position: relative;
+  margin-top: 1.6rem;
+}
+
+/* Seasons + episode list */
+.vseasons {
+  padding-bottom: 1.4rem;
+}
+.vseasons .tabs--seasons {
+  margin-bottom: 1rem;
+}
+.eplist {
+  max-width: 64rem;
+}
+.eplist__head {
+  display: flex;
+  align-items: baseline;
+  margin: 0 0 0.8rem;
+  color: var(--ink-3);
+  font: 400 0.92rem/1.2 var(--font-body);
+}
+.eplist__head .eyebrow {
+  margin-right: 0.9rem;
+  color: var(--ink);
+}
+.eprow {
+  display: flex;
+  align-items: flex-start;
+  padding: 0.75rem;
+  margin: 0 -0.75rem 0.25rem;
+  border-radius: var(--radius-l);
+  color: var(--ink);
+  text-decoration: none;
+  transition: background-color var(--t-fast) var(--ease), transform var(--t) var(--ease-out);
+}
+.eprow__still {
+  position: relative;
+  flex: 0 0 15rem;
+  width: 15rem;
+  height: 8.44rem;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: linear-gradient(150deg, var(--bg-3), var(--bg-1));
+  box-shadow: 0 0.4rem 1.2rem rgba(0, 0, 0, 0.35);
+}
+.eprow__still > .img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+.eprow__num {
+  position: absolute;
+  left: 1rem;
+  bottom: 0.4rem;
+  font: 780 4rem/1 var(--font-display);
+  letter-spacing: -0.05em;
+  color: var(--ink-4);
+}
+.eprow__play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  margin: -1.5rem 0 0 -1.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 1.2rem;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity var(--t-fast) var(--ease), transform var(--t) var(--ease-out);
+}
+.eprow__body {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0 0 1.4rem;
+}
+.eprow__meta {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  color: var(--ink-3);
+  font: 400 0.88rem/1.2 var(--font-body);
+}
+.eprow__meta > * {
+  margin-right: 0.9rem;
+}
+.eprow__code {
+  font: 800 0.8rem/1 var(--font-body);
+  letter-spacing: 0.12em;
+  color: var(--ink-2);
+}
+.eprow__left {
+  color: var(--accent);
+  font-weight: 700;
+}
+.eprow__title {
+  margin: 0.4rem 0 0.35rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 720 1.3rem/1.2 var(--font-display);
+  letter-spacing: -0.01em;
+}
+.eprow__overview {
+  margin: 0;
+  max-width: 44rem;
+  color: var(--ink-3);
+  font: 400 0.95rem/1.45 var(--font-body);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.eprow.is-watched .eprow__title {
+  color: var(--ink-2);
+}
+.eprow.is-next .eprow__code {
+  color: var(--accent);
+}
+.eprow:hover {
+  background: var(--ink-5);
+}
+.eprow:hover .eprow__play {
+  opacity: 1;
+  transform: none;
+}
+html[data-input="key"] .eprow:focus {
+  background: var(--ink-5);
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+html[data-input="key"] .eprow:focus .eprow__play {
+  opacity: 1;
+  transform: none;
+}
+html[data-input="key"] .eprow:focus .eprow__overview {
+  color: var(--ink-2);
+}
+
+/* Player: note under a failed fix-it action */
+.player__error-note {
+  flex-basis: 100%;
+  margin: 0.2rem 0 0;
+  color: var(--warn);
+  font: 400 0.92rem/1.4 var(--font-body);
+}
+
+/* ---------- 10-foot -------------------------------------------------------- */
+html.tv .vsearch {
+  width: 19rem;
+}
+html.tv .eprow__still {
+  flex-basis: 13rem;
+  width: 13rem;
+  height: 7.31rem;
+}
+html.tv .eplist .eprow {
+  --nav-anchor-top: 40vh;
+}
+
+@media (max-width: 760px) {
+  .srcrow .tabs {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+  .vsearch {
+    width: 100%;
+    margin-top: 0.8rem;
+  }
+  .eprow__still {
+    flex-basis: 9rem;
+    width: 9rem;
+    height: 5.06rem;
+  }
+  .eprow__overview {
+    display: none;
+  }
+  .trailer__frame {
+    width: 94vw;
+    height: 53vw;
+  }
+}

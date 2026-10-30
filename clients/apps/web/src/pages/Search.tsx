@@ -9,6 +9,8 @@ import { itemActivity, primeFromCards } from "../lib/downloads";
 import { EmptyState, ErrorState } from "../components/States";
 import { DiscoverTile, useDiscoverSheet } from "../components/Discover";
 import { clearRecent, forgetRecent, recentSearches, rememberSearch } from "../lib/recent";
+import { VodCard } from "../components/vod/VodCard";
+import type { SearchAllVod, VodCard as VodHit } from "../api/vod";
 
 const MOCK_SUGGESTIONS = ["Lantern", "Harbour", "Night", "Comet", "Glass", "Kingfisher"];
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -142,6 +144,12 @@ export default function Search(): JSX.Element {
   const eps = () => full()?.r.episodes ?? [];
   const people = () => full()?.r.people ?? [];
   const disc = () => full()?.r.discover ?? [];
+  /** IPTV on-demand hits; titles already shown as library results are left out. */
+  const vodHits = (): VodHit[] => {
+    const all = (full()?.r as SearchAllVod | undefined)?.vod ?? [];
+    const shown = new Set(lib().map((x) => x.id));
+    return all.filter((v) => !v.library_item_id || !shown.has(v.library_item_id));
+  };
   const peopleFirst = () => people().some((p) => p.in_library_count > 0);
   const peopleRow = () => (
     <Show when={people().length}>
@@ -150,7 +158,7 @@ export default function Search(): JSX.Element {
       </Row>
     </Show>
   );
-  const anything = () => lib().length + eps().length + people().length + disc().length > 0;
+  const anything = () => lib().length + eps().length + people().length + disc().length + vodHits().length > 0;
   const settled = () => !loading() && !!full() && full()!.t === typed();
 
   const hint = () => {
@@ -160,6 +168,7 @@ export default function Search(): JSX.Element {
     if (lib().length) bits.push(`${lib().length} in your library`);
     if (eps().length) bits.push(`${eps().length} episode${eps().length === 1 ? "" : "s"}`);
     if (people().length) bits.push(`${people().length} ${people().length === 1 ? "person" : "people"}`);
+    if (vodHits().length) bits.push(`${vodHits().length} on IPTV`);
     if (disc().length) bits.push(`${disc().length} you can add`);
     return bits.join(" · ");
   };
@@ -290,6 +299,11 @@ export default function Search(): JSX.Element {
           </Show>
           {/* People you actually have films with lead; otherwise titles you could add come first. */}
           <Show when={peopleFirst()}>{peopleRow()}</Show>
+          <Show when={vodHits().length}>
+            <Row title="On IPTV" subtitle="Streams from your provider" class="row--results row--vod">
+              <For each={vodHits()}>{(v) => <VodCard card={v} />}</For>
+            </Row>
+          </Show>
           <Show when={disc().length}>
             <Row title="Not in your library" subtitle="Add it and watch the ring fill" class="row--results row--discover">
               <For each={disc()}>{(c) => <DiscoverTile card={c} onOpen={sheet.open} />}</For>

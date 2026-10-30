@@ -11,6 +11,7 @@ import { buildTmdb, type TmdbEntry } from "./discover";
 import { castOfTmdb, createQueue, mockPerson, mockReviews } from "./extras";
 import type { DownloadItem } from "../types";
 import { enrichSummaries, genreCounts, lanes, libraryRecs, matches, searchAll, sortRecs } from "./browse";
+import { searchVod, vodIdsFor } from "./vod";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const latency = () => sleep(120 + Math.random() * 220);
@@ -180,7 +181,8 @@ export function createMockApi(): MockApi {
     const sim = Array.from(sims.values()).find((s) => s.req.tmdb_id === c.tmdb_id);
     const { genres: _g, runtime_minutes: _r, seasons: _s, lists: _l, ...card } = c;
     const lib = tmdbIndex(db).get(c.tmdb_id);
-    return { ...card, progress: sim ? progressDto(sim) : null, ...(lib ? { library_item_id: lib } : {}) };
+    // The IPTV provider's twin of this title (Play now (IPTV) next to Add).
+    return { ...card, progress: sim ? progressDto(sim) : null, ...(lib ? { library_item_id: lib } : {}), ...vodIdsFor(c.tmdb_id) };
   };
 
   // ---- Admin fixtures ----------------------------------------------------------
@@ -291,7 +293,7 @@ export function createMockApi(): MockApi {
       } catch {
         /* TMDB off */
       }
-      return searchAll(db, q, limit, tm);
+      return { ...searchAll(db, q, limit, tm), vod: searchVod(q, limit) };
     },
     async item(iid) {
       await latency();

@@ -12,6 +12,8 @@ import { itemHref, libraryHref } from "../lib/links";
 import { activeCount, filterChips, filtersFrom, laneHref, paramsFrom, RUNTIMES, type BrowseParams } from "../lib/browse";
 import { EmptyState, ErrorState, FirstRun, SkeletonRow } from "../components/States";
 import { FilterPanel, GenreBar, Glyph, Spotlight } from "../components/Picker";
+import { VodBrowser } from "../components/vod/VodBrowser";
+import { rememberSource, SourceSwitch, storedSource, useVodCount, type Source } from "../components/vod/SourceSwitch";
 
 const SORTS: { value: LibrarySort; label: string; detail?: string }[] = [
   { value: "title", label: "A–Z" },
@@ -45,6 +47,32 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
   const nFilters = () => activeCount(filters());
   const movies = props.kind === "movies";
   const noun = movies ? "films" : "series";
+
+  // ---- Source: My library · IPTV (remembered per page) ----------------------
+  const vodCount = useVodCount(props.kind);
+  const vodOn = () => (vodCount() ?? 0) > 0;
+  const wanted = (): Source => {
+    const p = params.source;
+    if (p === "iptv" || p === "library") return p;
+    return storedSource(props.kind) ?? (libs() && ofKind().length === 0 ? "iptv" : "library");
+  };
+  /** Waiting to learn whether IPTV exists before showing a remembered IPTV choice. */
+  const pending = () => wanted() === "iptv" && vodCount.loading;
+  const iptv = () => wanted() === "iptv" && vodOn();
+  const setSource = (s: Source) => {
+    rememberSource(props.kind, s);
+    setParams(
+      { ...paramsFrom({}), source: s, lib: undefined, view: undefined, sort: undefined, seed: undefined, cat: undefined, q: undefined },
+      { replace: true },
+    );
+  };
+  const libCount = () => (libs() ? ofKind().reduce((a, l) => a + l.item_count, 0) : undefined);
+  const [vodReady, setVodReady] = createSignal(false);
+  const switcher = () => (
+    <Show when={vodOn()}>
+      <SourceSwitch value={iptv() ? "iptv" : "library"} libraryCount={libCount()} iptvCount={vodCount()} onChange={setSource} />
+    </Show>
+  );
 
   const [genres] = createResource(() => lib()?.id, (id) => api.genres(id).catch(() => []));
   // Older servers have no lanes: fall back to the plain grid.
@@ -128,25 +156,32 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
   const [sortSheet, setSortSheet] = createSignal(false);
 
   let el!: HTMLDivElement;
-  usePageFocus(() => (grid() ? ready() : !lanes.loading) || (!!libs() && !lib()), () => el);
+  usePageFocus(() => (pending() ? false : iptv() ? vodReady() : (grid() ? ready() : !lanes.loading) || (!!libs() && !lib())), () => el);
 
   const tv = isTvMode();
   const sortLabel = () => SORTS.find((s) => s.value === sort())!.label;
 
   return (
-    <div class="page library" classList={{ "library--grid": grid(), "library--browse": !grid() }} ref={el}>
+    <div class="page library" classList={{ "library--grid": !iptv() && grid(), "library--browse": !iptv() && !grid(), "library--iptv": iptv() }} ref={el}>
+      <Show when={!pending()} fallback={<div class="library__lanes library__pending"><SkeletonRow /><SkeletonRow /></div>}>
+      <Show when={!iptv()} fallback={<VodBrowser kind={movies ? "movie" : "series"} switcher={<div class="srcrow">{switcher()}</div>} onReady={() => setVodReady(true)} />}>
       <Show when={!libs.error} fallback={<ErrorState error={libs.error} onRetry={refetch} />}>
         <header class="page-head picker">
-          <Show when={ofKind().length > 1}>
-            <nav class="tabs" aria-label="Libraries" data-nav-group>
-              <For each={ofKind()}>
-                {(l) => (
-                  <a class="tab" href={libraryHref(l)} aria-current={l.id === lib()?.id ? "page" : undefined}>
-                    {l.name}
-                  </a>
-                )}
-              </For>
-            </nav>
+          <Show when={vodOn() || ofKind().length > 1}>
+            <div class="srcrow">
+              {switcher()}
+              <Show when={ofKind().length > 1}>
+                <nav class="tabs" aria-label="Libraries" data-nav-group>
+                  <For each={ofKind()}>
+                    {(l) => (
+                      <a class="tab" href={libraryHref(l)} aria-current={l.id === lib()?.id ? "page" : undefined}>
+                        {l.name}
+                      </a>
+                    )}
+                  </For>
+                </nav>
+              </Show>
+            </div>
           </Show>
           <div class="page-head__row picker__title-row">
             <h1 class="page-title">
@@ -325,6 +360,8 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
             </Show>
           </div>
         </Show>
+      </Show>
+      </Show>
       </Show>
 
       <Show when={spot() && lib()}>
