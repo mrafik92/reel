@@ -76,7 +76,7 @@ fn hw_decode(hw: &HwAccel, burn: bool, tonemap: bool) -> bool {
 
 /// Seconds past a keyframe at which to seek so ffmpeg lands exactly on that keyframe (ffmpeg
 /// seeks ~0.13s early when the stream has B-frames, otherwise to the last keyframe <= ts).
-pub const KEYFRAME_SEEK_MARGIN: f64 = 0.15;
+pub const KEYFRAME_SEEK_MARGIN: f64 = 0.25;
 
 /// Fixed-grid output (encode, or copy when no keyframe plan is available).
 pub fn build_args(p: &BuildParams<'_>) -> Vec<String> {
@@ -601,7 +601,7 @@ mod tests {
             &plan,
         ));
         // segment 2 starts at kf #6 (8.88s)
-        assert!(got.contains("-ss 9.030 -copyts"), "{got}");
+        assert!(got.contains("-ss 9.130 -copyts"), "{got}");
         assert!(got.contains("-hls_time 0.001"));
         assert!(got.contains("-hls_segment_filename /tmp/o/gop_%05d.m4s"));
         assert!(got.contains("-start_number 6 /tmp/o/ffmpeg.m3u8"), "{got}");

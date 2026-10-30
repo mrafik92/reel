@@ -17,6 +17,7 @@ pub mod decision;
 pub mod error;
 pub mod ffmpeg;
 pub mod hwaccel;
+pub mod keyindex;
 pub mod model;
 pub mod plan;
 pub mod profile;

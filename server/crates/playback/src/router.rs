@@ -55,7 +55,7 @@ async fn variant_file(
         return Err(PlaybackError::SessionNotFound);
     }
     if file == "index.m3u8" {
-        let body = m.media_playlist(&sid)?;
+        let body = m.media_playlist_async(&sid).await?;
         return Ok((
             [
                 (header::CONTENT_TYPE, M3U8),

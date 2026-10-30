@@ -45,6 +45,11 @@ pub struct SessionConfig {
     /// ffprobe binary (keyframe probing for copy-mode playlists).
     pub ffprobe_path: String,
     pub keyframe_probe_timeout: Duration,
+    /// Budget for reading the keyframe index from container metadata during session creation
+    /// (`decide` never waits longer than this for indexing).
+    pub keyframe_fast_timeout: Duration,
+    /// Time limit of the low-priority background ffprobe scan used when no fast index exists.
+    pub background_probe_timeout: Duration,
     /// ffmpeg is paused (SIGSTOP) once it is more than this many segments ahead of the last
     /// requested segment, and resumed when the client catches up. 0 disables throttling.
     pub max_ahead_segments: u32,
@@ -69,6 +74,8 @@ impl SessionConfig {
             lookahead_segments: 3,
             ffprobe_path: "ffprobe".into(),
             keyframe_probe_timeout: Duration::from_secs(300),
+            keyframe_fast_timeout: Duration::from_secs(2),
+            background_probe_timeout: Duration::from_secs(3 * 3600),
             max_ahead_segments: 20,
             throttle_interval: Duration::from_millis(500),
             hw_startup_grace: Duration::from_secs(15),
@@ -108,6 +115,10 @@ pub struct SessionInfo {
     /// ffmpeg is paused by the read-ahead throttle.
     #[serde(default)]
     pub paused: bool,
+    /// No keyframe index was available: ffmpeg's own growing EVENT playlist is served and seeking
+    /// is approximate until the background index completes (next session is exact).
+    #[serde(default)]
+    pub fallback_playlist: bool,
 }
 
 struct Meta {
@@ -133,6 +144,7 @@ struct Session {
     dir: Option<PathBuf>,
     started_at: i64,
     plan: SegmentPlan,
+    event_mode: bool,
     total_segments: u32,
     hw: Mutex<HwAccel>,
     last_req: AtomicU32,
@@ -155,6 +167,7 @@ pub struct SessionManager {
     hw: HwAccel,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     degraded: Mutex<Vec<String>>,
+    indexer: Arc<Indexer>,
 }
 
 impl SessionManager {
@@ -166,6 +179,7 @@ impl SessionManager {
             hw,
             sessions: Mutex::new(HashMap::new()),
             degraded: Mutex::new(Vec::new()),
+            indexer: Arc::new(Indexer::default()),
         })
     }
 
@@ -232,23 +246,30 @@ impl SessionManager {
             return Err(PlaybackError::Invalid("file duration unknown".into()));
         }
         let mut plan = SegmentPlan::fixed(if mode.needs_ffmpeg() { duration } else { 0.0 }, seg);
+        let mut event_mode = false;
         if mode.needs_ffmpeg() && req.decision.video == VideoAction::Copy {
-            match plan::probe_keyframes(
-                &self.cfg.ffprobe_path,
-                &self.cfg.data_dir,
-                req.file.id,
-                &req.file.path,
-                self.cfg.keyframe_probe_timeout,
-            )
-            .await
-            {
-                Ok(k) if !k.is_empty() => plan = SegmentPlan::from_keyframes(&k, duration, seg),
-                Ok(_) => tracing::warn!(
-                    file = req.file.id,
-                    "no keyframes found; using fixed segment grid"
-                ),
-                Err(e) => {
-                    tracing::warn!(file = req.file.id, error = %e, "keyframe probe failed; using fixed segment grid")
+            // 1. disk cache, 2. container metadata (bounded, ms), 3. fall back to an EVENT
+            // playlist while a background scan builds the cache. Never blocks on a full scan.
+            let (dd, fid, path) = (&self.cfg.data_dir, req.file.id, req.file.path.as_str());
+            let kfs = match plan::cached_keyframes(dd, fid, path).await {
+                Some(k) => Some(k),
+                None => {
+                    let k =
+                        plan::fast_keyframes(path, self.cfg.keyframe_fast_timeout, duration).await;
+                    if let Some(k) = &k {
+                        plan::store_keyframes(dd, fid, path, k).await;
+                    }
+                    k
+                }
+            };
+            match kfs {
+                Some(k) if !k.is_empty() => plan = SegmentPlan::from_keyframes(&k, duration, seg),
+                _ => {
+                    tracing::warn!(
+                        file = fid,
+                        "no fast keyframe index; serving EVENT playlist while indexing in background"
+                    );
+                    event_mode = true;
                 }
             }
         }
@@ -293,6 +314,7 @@ impl SessionManager {
             dir: dir.clone(),
             started_at: now_unix(),
             plan,
+            event_mode,
             total_segments,
             hw: Mutex::new(self.effective_hwaccel()),
             last_req: AtomicU32::new(0),
@@ -336,6 +358,10 @@ impl SessionManager {
                 }
             }
             map.insert(id.clone(), session.clone());
+        }
+        if event_mode {
+            self.indexer
+                .acquire(&self.cfg, session.file.id, &session.file.path);
         }
 
         if let Some(dir) = &dir {
@@ -424,6 +450,7 @@ impl SessionManager {
             hwaccel: s.hw.lock().unwrap().name().into(),
             active,
             paused,
+            fallback_playlist: s.event_mode,
         }
     }
 
@@ -483,7 +510,15 @@ impl SessionManager {
         if let Some(dir) = &s.dir {
             let _ = tokio::fs::remove_dir_all(dir).await;
         }
+        if s.event_mode {
+            self.indexer.release(s.file.id);
+        }
         true
+    }
+
+    /// Number of background keyframe scans currently queued or running.
+    pub fn background_index_jobs(&self) -> usize {
+        self.indexer.jobs()
     }
 
     /// Remove every session (graceful shutdown).
@@ -492,6 +527,7 @@ impl SessionManager {
         for id in ids {
             self.remove(&id).await;
         }
+        self.indexer.abort_all();
     }
 
     /// Kill sessions idle beyond their timeout; returns the reaped ids.
@@ -554,10 +590,56 @@ impl SessionManager {
     }
 
     /// Full VOD media playlist (`main/index.m3u8`), generated up front from the duration.
+    ///
+    /// For sessions without a keyframe index (`fallback_playlist`) this returns ffmpeg's growing
+    /// EVENT playlist as written so far (error if nothing is produced yet); prefer
+    /// [`SessionManager::media_playlist_async`], which waits for the first segment.
     pub fn media_playlist(&self, id: &str) -> Result<String, PlaybackError> {
         let s = self.get(id)?;
         self.touch(&s);
+        if s.event_mode {
+            let dir = s.dir.as_ref().ok_or(PlaybackError::SessionNotFound)?;
+            return std::fs::read_to_string(dir.join(ffmpeg::FFMPEG_PLAYLIST))
+                .ok()
+                .and_then(|t| event_playlist(&t))
+                .ok_or_else(|| PlaybackError::SegmentUnavailable("playlist not ready".into()));
+        }
         Ok(build_plan_playlist(&s.plan, self.cfg.segment_secs))
+    }
+
+    /// Like [`SessionManager::media_playlist`] but waits (up to `segment_wait_timeout`) for
+    /// ffmpeg's first segment in fallback (EVENT playlist) mode.
+    pub async fn media_playlist_async(&self, id: &str) -> Result<String, PlaybackError> {
+        let s = self.get(id)?;
+        if !s.event_mode {
+            return self.media_playlist(id);
+        }
+        let dir = s.dir.clone().ok_or(PlaybackError::SessionNotFound)?;
+        let deadline = Instant::now() + self.cfg.segment_wait_timeout;
+        loop {
+            if !self.sessions.lock().unwrap().contains_key(id) {
+                return Err(PlaybackError::SessionNotFound);
+            }
+            self.touch(&s);
+            if let Some(t) = tokio::fs::read_to_string(dir.join(ffmpeg::FFMPEG_PLAYLIST))
+                .await
+                .ok()
+                .and_then(|t| event_playlist(&t))
+            {
+                return Ok(t);
+            }
+            let failed = {
+                let mut p = s.proc.lock().await;
+                matches!(p.child.as_mut().map(|c| c.try_wait()), Some(Ok(Some(st))) if !st.success())
+            };
+            if failed || Instant::now() >= deadline {
+                return Err(PlaybackError::SegmentUnavailable(format!(
+                    "no playlist from ffmpeg: {}",
+                    read_log_tail(&dir).await
+                )));
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 
     fn touch(&self, s: &Session) {
@@ -728,6 +810,118 @@ impl SessionManager {
         p.start_segment = start_segment;
         p.started = Instant::now();
         Ok(())
+    }
+}
+
+/// ffmpeg's playlist, once it lists a segment, with `#EXT-X-START` so players begin at 0
+/// instead of the live edge.
+fn event_playlist(text: &str) -> Option<String> {
+    if !text.contains("#EXTINF") {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len() + 32);
+    for (i, line) in text.lines().enumerate() {
+        out.push_str(line);
+        out.push('\n');
+        if i == 0 {
+            out.push_str("#EXT-X-START:TIME-OFFSET=0\n");
+        }
+    }
+    Some(out)
+}
+
+struct ProbeJob {
+    users: usize,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+/// Deduplicated, globally serialised, low-priority background ffprobe keyframe scans.
+struct Indexer {
+    sem: Arc<tokio::sync::Semaphore>,
+    jobs: Mutex<HashMap<i64, ProbeJob>>,
+}
+
+impl Default for Indexer {
+    fn default() -> Self {
+        Indexer {
+            sem: Arc::new(tokio::sync::Semaphore::new(1)),
+            jobs: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl Indexer {
+    fn acquire(self: &Arc<Self>, cfg: &SessionConfig, file_id: i64, path: &str) {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(j) = jobs.get_mut(&file_id) {
+            j.users += 1;
+            return;
+        }
+        let (weak, sem) = (Arc::downgrade(self), self.sem.clone());
+        let (ffprobe, data_dir, path, timeout) = (
+            cfg.ffprobe_path.clone(),
+            cfg.data_dir.clone(),
+            path.to_string(),
+            cfg.background_probe_timeout,
+        );
+        let handle = tokio::spawn(async move {
+            // one scan at a time; dropping this future (abort) kills the ffprobe child
+            let _permit = sem.acquire_owned().await;
+            if plan::cached_keyframes(&data_dir, file_id, &path)
+                .await
+                .is_none()
+            {
+                match plan::probe_keyframes_cmd(&ffprobe, &path, timeout, true).await {
+                    Ok(k) if !k.is_empty() => {
+                        plan::store_keyframes(&data_dir, file_id, &path, &k).await;
+                        tracing::info!(
+                            file = file_id,
+                            keyframes = k.len(),
+                            "background keyframe index complete"
+                        );
+                    }
+                    Ok(_) => tracing::warn!(
+                        file = file_id,
+                        "background keyframe scan found no keyframes"
+                    ),
+                    Err(e) => {
+                        tracing::warn!(file = file_id, error = %e, "background keyframe scan failed")
+                    }
+                }
+            }
+            if let Some(ix) = weak.upgrade() {
+                ix.jobs.lock().unwrap().remove(&file_id);
+            }
+        });
+        jobs.insert(file_id, ProbeJob { users: 1, handle });
+    }
+
+    /// A session that needed the scan ended; kill the scan when nobody waits for it any more.
+    fn release(&self, file_id: i64) {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(j) = jobs.get_mut(&file_id) {
+            j.users = j.users.saturating_sub(1);
+            if j.users == 0 {
+                j.handle.abort();
+                jobs.remove(&file_id);
+            }
+        }
+    }
+
+    fn jobs(&self) -> usize {
+        self.jobs.lock().unwrap().len()
+    }
+
+    fn abort_all(&self) {
+        for (_, j) in self.jobs.lock().unwrap().drain() {
+            j.handle.abort();
+        }
+    }
+}
+
+impl Drop for Indexer {
+    fn drop(&mut self) {
+        self.abort_all();
     }
 }
 

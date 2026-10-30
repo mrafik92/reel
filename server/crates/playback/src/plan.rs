@@ -164,26 +164,87 @@ fn cache_path(data_dir: &Path, file_id: i64, input: &str) -> Option<PathBuf> {
     )
 }
 
-/// Keyframe times (relative to the container start) of the first video stream, cached under
-/// `data_dir/keyframes/`.
-pub async fn probe_keyframes(
+async fn read_cache(c: &Path) -> Option<Vec<f64>> {
+    let txt = tokio::fs::read_to_string(c).await.ok()?;
+    serde_json::from_str::<KeyframeCache>(&txt)
+        .ok()
+        .map(|k| k.keyframes)
+}
+
+/// Keyframes cached on disk for this file, if any.
+pub async fn cached_keyframes(data_dir: &Path, file_id: i64, input: &str) -> Option<Vec<f64>> {
+    read_cache(&cache_path(data_dir, file_id, input)?).await
+}
+
+/// Persist a keyframe list in the per-file cache.
+pub async fn store_keyframes(data_dir: &Path, file_id: i64, input: &str, kfs: &[f64]) {
+    let Some(c) = cache_path(data_dir, file_id, input) else {
+        return;
+    };
+    if let Some(parent) = c.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    if let Ok(j) = serde_json::to_string(&KeyframeCache {
+        keyframes: kfs.to_vec(),
+    }) {
+        let tmp = c.with_extension("json.tmp");
+        if tokio::fs::write(&tmp, j).await.is_ok() {
+            let _ = tokio::fs::rename(&tmp, &c).await;
+        }
+    }
+}
+
+/// An index is usable only if it is dense enough to cut segments from and covers the file.
+pub fn index_is_usable(kfs: &[f64], duration: f64) -> bool {
+    if kfs.len() < 2 {
+        return false;
+    }
+    let max_gap = kfs.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max);
+    max_gap <= 30.0 && kfs.last().copied().unwrap_or(0.0) >= duration - 60.0
+}
+
+/// Read the keyframe index from container metadata only, bounded by `timeout`.
+/// `None` when the container has no usable index or reading was too slow.
+pub async fn fast_keyframes(input: &str, timeout: Duration, duration: f64) -> Option<Vec<f64>> {
+    let path = input.to_string();
+    let task = tokio::task::spawn_blocking(move || {
+        let f = std::fs::File::open(&path)?;
+        let mut r = crate::keyindex::Limited::new(f, Some(timeout));
+        crate::keyindex::read_keyframes(&mut r)
+    });
+    let res = tokio::time::timeout(timeout + Duration::from_millis(250), task)
+        .await
+        .ok()?
+        .ok()?;
+    match res {
+        Ok(Some(k)) if index_is_usable(&k, duration) => Some(k),
+        _ => None,
+    }
+}
+
+/// Run ffprobe over every packet (reads the whole file!). `low_priority` wraps it in
+/// `ionice -c3`/`nice -n 19` where available. Dropping the future kills the process.
+pub async fn probe_keyframes_cmd(
     ffprobe: &str,
-    data_dir: &Path,
-    file_id: i64,
     input: &str,
     timeout: Duration,
+    low_priority: bool,
 ) -> Result<Vec<f64>, PlaybackError> {
-    let cache = cache_path(data_dir, file_id, input);
-    if let Some(c) = &cache {
-        if let Ok(txt) = tokio::fs::read_to_string(c).await {
-            if let Ok(k) = serde_json::from_str::<KeyframeCache>(&txt) {
-                return Ok(k.keyframes);
-            }
+    let mut prefix: Vec<&str> = Vec::new();
+    if low_priority {
+        if which("ionice") {
+            prefix.extend(["ionice", "-c3"]);
+        }
+        if which("nice") {
+            prefix.extend(["nice", "-n", "19"]);
         }
     }
     let run = |args: Vec<&str>| {
-        let mut cmd = Command::new(ffprobe);
-        cmd.args(args)
+        let mut full: Vec<&str> = prefix.clone();
+        full.push(ffprobe);
+        full.extend(args);
+        let mut cmd = Command::new(full[0]);
+        cmd.args(&full[1..])
             .arg(input)
             .stdin(Stdio::null())
             .kill_on_drop(true);
@@ -224,16 +285,28 @@ pub async fn probe_keyframes(
     for k in kfs.iter_mut() {
         *k = (*k - start).max(0.0);
     }
-    if let Some(c) = &cache {
-        if let Some(parent) = c.parent() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
-        if let Ok(j) = serde_json::to_string(&KeyframeCache {
-            keyframes: kfs.clone(),
-        }) {
-            let _ = tokio::fs::write(c, j).await;
-        }
+    Ok(kfs)
+}
+
+fn which(bin: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
+}
+
+/// Keyframe times (relative to the container start) of the first video stream, via the disk
+/// cache or a full ffprobe scan (slow on big files; prefer [`fast_keyframes`] + background scan).
+pub async fn probe_keyframes(
+    ffprobe: &str,
+    data_dir: &Path,
+    file_id: i64,
+    input: &str,
+    timeout: Duration,
+) -> Result<Vec<f64>, PlaybackError> {
+    if let Some(k) = cached_keyframes(data_dir, file_id, input).await {
+        return Ok(k);
     }
+    let kfs = probe_keyframes_cmd(ffprobe, input, timeout, false).await?;
+    store_keyframes(data_dir, file_id, input, &kfs).await;
     Ok(kfs)
 }
 
