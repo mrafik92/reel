@@ -514,7 +514,10 @@ pub fn app(state: AppState) -> Router {
     let router = match state.config.web_dir.clone() {
         Some(dir) => {
             let index: PathBuf = dir.join("index.html");
-            router.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
+            let web = axum::Router::new()
+                .fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
+                .layer(axum::middleware::from_fn(web_cache_headers));
+            router.fallback_service(web)
         }
         None => router,
     };
@@ -546,6 +549,27 @@ pub fn app(state: AppState) -> Router {
 }
 
 /// Same-origin by default; with `cors_origins` set, those origins may call the API.
+/// Cache policy for the bundled web client: Vite's hashed `/assets/*` are immutable; everything else
+/// (index.html and the SPA fallback for deep links) must be revalidated so a deploy is picked up
+/// immediately instead of a stale index.html pointing at assets that no longer exist.
+async fn web_cache_headers(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let immutable = req.uri().path().starts_with("/assets/");
+    let mut res = next.run(req).await;
+    if res.status().is_success() && !res.headers().contains_key(header::CACHE_CONTROL) {
+        let v = if immutable {
+            "public, max-age=31536000, immutable"
+        } else {
+            "no-cache"
+        };
+        res.headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static(v));
+    }
+    res
+}
+
 fn cors_layer(origins: &[String]) -> Option<CorsLayer> {
     let list: Vec<HeaderValue> = origins
         .iter()
