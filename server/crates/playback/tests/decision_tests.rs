@@ -145,8 +145,8 @@ fn dts_on_web_audio_transcode() {
         d.audio,
         AudioAction::Encode {
             codec: "aac".into(),
-            channels: 2,
-            bitrate_kbps: 160
+            channels: 6,
+            bitrate_kbps: 384
         }
     );
 }
@@ -173,7 +173,7 @@ fn dts_51_on_webos_becomes_eac3_51() {
 }
 
 #[test]
-fn eac3_surround_on_chrome_downmixed_to_aac_stereo() {
+fn eac3_surround_on_chrome_becomes_aac_51() {
     let c = case(
         "/m/a.mp4",
         "mov,mp4",
@@ -184,22 +184,90 @@ fn eac3_surround_on_chrome_downmixed_to_aac_stereo() {
     let d = run(&c);
     assert_eq!(d.mode, PlaybackMode::AudioTranscode);
     assert!(
-        matches!(d.audio, AudioAction::Encode { ref codec, channels: 2, .. } if codec == "aac")
+        matches!(d.audio, AudioAction::Encode { ref codec, channels: 6, .. } if codec == "aac")
     );
 }
 
 #[test]
-fn aac_surround_on_chrome_downmix() {
+fn aac_51_mp4_direct_plays_on_chrome_and_safari() {
+    for p in ["web_chrome", "web_safari"] {
+        let c = case(
+            "/m/a.mp4",
+            "mov,mp4",
+            6000,
+            vec![vid("h264", 1920, 1080), aud(1, "aac", 6, true)],
+            p,
+        );
+        let d = run(&c);
+        assert_eq!(d.mode, PlaybackMode::DirectPlay, "{p}: {}", reasons(&d));
+        assert_eq!(d.audio, AudioAction::Copy);
+        assert!(!reasons(&d).contains("channels"));
+    }
+}
+
+#[test]
+fn aac_51_mkv_only_remuxes_on_chrome() {
     let c = case(
-        "/m/a.mp4",
-        "mov,mp4",
+        "/m/a.mkv",
+        "matroska,webm",
         6000,
         vec![vid("h264", 1920, 1080), aud(1, "aac", 6, true)],
         "web_chrome",
     );
     let d = run(&c);
+    assert_eq!(d.mode, PlaybackMode::Remux, "{}", reasons(&d));
+    assert_eq!(d.audio, AudioAction::Copy);
+}
+
+#[test]
+fn mse_client_reporting_two_channels_still_downmixes_aac_and_opus() {
+    // older clients (and the web app's detected profile) report max 2 channels for aac/opus
+    for codec in ["aac", "opus"] {
+        let mut profile = DeviceProfile::preset("web_chrome").unwrap();
+        for a in profile.audio.iter_mut() {
+            a.max_channels = 2;
+        }
+        let f = file("/m/a.mp4", "mov,mp4", 6000);
+        let streams = vec![vid("h264", 1920, 1080), aud(1, codec, 6, true)];
+        let d = decide(&DecisionInput {
+            file: &f,
+            streams: &streams,
+            audio_index: None,
+            subtitle_index: None,
+            profile: &profile,
+            max_bitrate_kbps: None,
+        });
+        assert_eq!(d.mode, PlaybackMode::DirectPlay, "{codec}: {}", reasons(&d));
+    }
+}
+
+#[test]
+fn native_players_keep_hard_channel_limits_and_other_codecs_are_not_downmixed() {
+    // native player with a 2-channel limit: real transcode needed
+    let mut profile = DeviceProfile::preset("webos").unwrap();
+    for a in profile.audio.iter_mut() {
+        a.max_channels = 2;
+    }
+    let f = file("/m/a.mp4", "mov,mp4", 6000);
+    let streams = vec![vid("h264", 1920, 1080), aud(1, "aac", 6, true)];
+    let d = decide(&DecisionInput {
+        file: &f,
+        streams: &streams,
+        audio_index: None,
+        subtitle_index: None,
+        profile: &profile,
+        max_bitrate_kbps: None,
+    });
     assert_eq!(d.mode, PlaybackMode::AudioTranscode);
-    assert!(reasons(&d).contains("channels"));
+    // MSE: flac (max 2 in preset) is not covered by the AAC/Opus downmix allowance
+    let c = case(
+        "/m/a.mp4",
+        "mov,mp4",
+        6000,
+        vec![vid("h264", 1920, 1080), aud(1, "flac", 6, true)],
+        "web_chrome",
+    );
+    assert_eq!(run(&c).mode, PlaybackMode::AudioTranscode);
 }
 
 #[test]

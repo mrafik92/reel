@@ -138,9 +138,9 @@ pub fn web_chrome() -> DeviceProfile {
             v("av1", "", 0, 10, &[Hdr::Hdr10, Hdr::Hlg]),
         ],
         audio: vec![
-            a("aac", 2),
+            a("aac", 8),
             a("mp3", 2),
-            a("opus", 2),
+            a("opus", 8),
             a("flac", 2),
             a("vorbis", 2),
         ],
@@ -165,7 +165,7 @@ pub fn web_safari() -> DeviceProfile {
             v("hevc", "main 10", 153, 10, &[Hdr::Hdr10, Hdr::Hlg, Hdr::Dv]),
         ],
         audio: vec![
-            a("aac", 6),
+            a("aac", 8),
             a("ac3", 6),
             a("eac3", 6),
             a("mp3", 2),

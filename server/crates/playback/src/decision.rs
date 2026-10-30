@@ -393,12 +393,18 @@ pub fn decide(input: &DecisionInput<'_>) -> PlaybackDecision {
             }
             Some(sup) => {
                 let ch = a.channels.unwrap_or(2);
-                if ch > sup.max_channels as i64 {
+                // MSE browsers downmix multichannel AAC/Opus themselves, so for them
+                // `max_channels` is not a hard limit (only a sanity cap of 8).
+                let limit = if profile.player == PlayerKind::Mse
+                    && matches!(codec.as_str(), "aac" | "opus")
+                {
+                    sup.max_channels.max(8)
+                } else {
+                    sup.max_channels
+                };
+                if ch > limit as i64 {
                     audio_copy_ok = false;
-                    reasons.push(format!(
-                        "{ch} audio channels exceed client max {}",
-                        sup.max_channels
-                    ));
+                    reasons.push(format!("{ch} audio channels exceed client max {}", limit));
                 }
             }
         }

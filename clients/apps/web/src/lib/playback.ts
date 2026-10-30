@@ -32,7 +32,8 @@ function fromBrowserProbe(r: Record<string, unknown>): DeviceProfileWire {
   }));
   const audio = (r.audio as string[]).map((codec) => ({
     codec,
-    max_channels: codec === "aac" || codec === "opus" ? 2 : 6,
+    // browsers downmix multichannel AAC/Opus themselves
+    max_channels: codec === "aac" || codec === "opus" ? 8 : 6,
   }));
   // Browsers decode MP3/FLAC everywhere even though the probe doesn't list them.
   if (!audio.some((a) => a.codec === "mp3")) audio.push({ codec: "mp3", max_channels: 2 });
