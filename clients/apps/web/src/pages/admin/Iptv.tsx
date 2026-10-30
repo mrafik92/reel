@@ -143,7 +143,7 @@ function SourceRow(props: { source: SourceDto; onChange: (s: SourceDto) => void;
             {s().name} <span class="pill pill--status">{s().kind === "xtream" ? "Xtream Codes" : "M3U"}</span>
           </strong>
           <span class="list__sub">
-            <code>{s().url}</code>
+            <code>{redact(s().url)}</code>
             {s().username ? ` · ${s().username}` : ""}
           </span>
           <span class="iptv-src__status">
@@ -158,7 +158,7 @@ function SourceRow(props: { source: SourceDto; onChange: (s: SourceDto) => void;
             <ConnMeter open={s().open_connections} max={s().max_connections ?? null} />
           </span>
           <Show when={s().last_error}>
-            <span class="form-warn"><Icon name="alert" /> {s().last_error}</span>
+            <span class="form-warn"><Icon name="alert" /> {redact(s().last_error)}</span>
           </Show>
         </div>
         <div class="list__actions">
@@ -227,7 +227,7 @@ function TestResult(props: { result: SourceTest; onUseLimit?: (n: number) => voi
     <div class="testres" classList={{ "is-ok": r().ok, "is-bad": !r().ok }} role="status">
       <Icon name={r().ok ? "check" : "alert"} />
       <div class="testres__body">
-        <strong>{r().message}</strong>
+        <strong>{redact(r().message)}</strong>
         <div class="testres__facts">
           <Show when={r().channels != null}><span>{r().channels!.toLocaleString()} channels found</span></Show>
           <Show when={a()}>
@@ -436,6 +436,11 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto) => void
       <Show when={props.extra}><div class="iptv-form__extra">{props.extra}</div></Show>
     </form>
   );
+}
+
+/** Provider errors can echo the request URL — never show credentials from it. */
+function redact(msg: string | null | undefined): string {
+  return (msg ?? "").replace(/((?:password|pass|pwd|token)=)[^&\s)]+/gi, "$1•••").replace(/\/\/([^/:@\s]+):([^@/\s]+)@/g, "//$1:•••@");
 }
 
 function hostOf(u: string): string {
@@ -702,7 +707,7 @@ function MetricRow(props: { m: ChannelMetrics }): JSX.Element {
       <td>
         <strong>{m().name}</strong>
         <Show when={m().active_candidate > 0}><span class="pill pill--status">backup #{m().active_candidate}</span></Show>
-        <Show when={m().last_error}><span class="hub__err" title={m().last_error!}><Icon name="alert" /></span></Show>
+        <Show when={m().last_error}><span class="hub__err" title={redact(m().last_error)}><Icon name="alert" /></span></Show>
       </td>
       <td><span class={`hubstate hubstate--${m().state}`}>{m().viewers ? m().state : "warm"}</span></td>
       <td class="num">{m().viewers}</td>
