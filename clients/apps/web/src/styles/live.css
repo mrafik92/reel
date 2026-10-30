@@ -1900,3 +1900,120 @@ html.is-live-page .topsearch {
     animation-duration: 1ms;
   }
 }
+
+/* ---------- Admin: provider form + first load ------------------------------ */
+.iptv-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: -0.4rem 0 1rem;
+  color: var(--accent);
+  font-size: 0.9rem;
+}
+.iptv-note .icon {
+  margin-right: 0.45rem;
+}
+.iptv-note .btn {
+  margin-left: 0.6rem;
+}
+.testres--pending {
+  align-items: center;
+  color: var(--ink-2);
+}
+.testres--pending .spinner {
+  margin-right: 0.7rem;
+}
+.testres__actions {
+  margin-top: 0.8rem;
+}
+.testres__actions .btn {
+  margin-top: 0;
+}
+.testres__filled {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+}
+.testres__filled .icon {
+  margin-right: 0.3rem;
+}
+.acct {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0.7rem 0 0.2rem;
+}
+.acct > div {
+  min-width: 9rem;
+  margin: 0 1.6rem 0.4rem 0;
+}
+.acct dt {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.acct dd {
+  margin: 0.2rem 0 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.acct dd small {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.acct dd.is-warn {
+  color: var(--warn);
+}
+.acct dd.is-bad {
+  color: var(--danger);
+}
+.loadjob {
+  margin: 0.9rem 0 0.4rem;
+  padding: 0.9rem 1.1rem 0.8rem;
+  border-radius: var(--radius);
+  background: rgba(198, 244, 50, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(198, 244, 50, 0.22);
+  animation: fade-in var(--t) var(--ease-out);
+}
+.loadjob__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.loadjob__clock {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.loadjob__bar {
+  position: relative;
+  height: 0.35rem;
+  margin: 0.7rem 0 0.55rem;
+  border-radius: 999px;
+  background: var(--ink-5);
+  overflow: hidden;
+}
+.loadjob__bar i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 35%;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 12px rgba(198, 244, 50, 0.5);
+  animation: loadjob-slide 1.4s var(--ease) infinite;
+}
+@keyframes loadjob-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(290%); }
+}
+.loadjob__hint {
+  color: var(--ink-3);
+  font-size: 0.86rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .loadjob__bar i {
+    animation-duration: 4s;
+  }
+}

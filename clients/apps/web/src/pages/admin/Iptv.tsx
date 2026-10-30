@@ -1,9 +1,10 @@
-import { createMemo, createResource, createSignal, For, Match, onCleanup, onMount, Show, Switch, type JSX } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, type JSX } from "solid-js";
 import { formatBytes, Icon } from "@reel/ui";
 import "../../styles/live.css";
 import {
   iptv, type AdminChannel, type ChannelMetrics, type HubStatus, type SourceBody, type SourceDto, type SourcePatch, type SourceTest,
 } from "../../api/iptv";
+import { ApiError } from "../../api/http";
 import { toast } from "../../lib/toast";
 import { href } from "../../lib/mode";
 import { Field, PasswordField } from "../../components/Form";
@@ -31,7 +32,14 @@ export default function Iptv(): JSX.Element {
       </div>
       <Switch>
         <Match when={tab() === "providers"}>
-          <Providers sources={sources()} error={sources.error} refetch={refetch} mutate={(s) => mutate((l) => (l ?? []).map((x) => (x.id === s.id ? s : x)))} />
+          <Providers
+            sources={sources()}
+            error={sources.error}
+            refetch={refetch}
+            update={(s) => mutate((l) => (l ?? []).map((x) => (x.id === s.id ? s : x)))}
+            add={(s) => mutate((l) => (l ?? []).filter((x) => x.id !== s.id).concat(s))}
+            remove={(id) => mutate((l) => (l ?? []).filter((x) => x.id !== id))}
+          />
         </Match>
         <Match when={tab() === "channels"}>
           <Channels sources={sources() ?? []} />
@@ -47,8 +55,31 @@ export default function Iptv(): JSX.Element {
 // ---------------------------------------------------------------------------------------
 // Providers
 
-function Providers(props: { sources?: SourceDto[]; error: unknown; refetch: () => void; mutate: (s: SourceDto) => void }): JSX.Element {
+function Providers(props: {
+  sources?: SourceDto[];
+  error: unknown;
+  refetch: () => void;
+  update: (s: SourceDto) => void;
+  add: (s: SourceDto) => void;
+  remove: (id: number) => void;
+}): JSX.Element {
   const [adding, setAdding] = createSignal(false);
+  // The provider just added: its row follows the first channel/guide load.
+  const [fresh, setFresh] = createSignal<number>();
+  // Rows are keyed by id: list refreshes replace the objects but must not remount a row
+  // (it would lose its edit form and the load it's following).
+  const ids = createMemo(() => (props.sources ?? []).map((s) => s.id), undefined, {
+    equals: (a, b) => a.length === b.length && a.every((v, i) => v === b[i]),
+  });
+  const byId = (id: number) => (props.sources ?? []).find((s) => s.id === id);
+  // First provider: open the form straight away.
+  let opened = false;
+  createEffect(() => {
+    if (!opened && props.sources && props.sources.length === 0) {
+      opened = true;
+      setAdding(true);
+    }
+  });
   return (
     <Panel
       title="TV providers"
@@ -60,7 +91,7 @@ function Providers(props: { sources?: SourceDto[]; error: unknown; refetch: () =
       }
     >
       <p class="panel__lede">
-        Reel reads your channel list and guide from an M3U playlist or an Xtream Codes login, opens one connection per channel and shares it with
+        Reel reads your channel list and guide from an Xtream Codes login or an M3U playlist, opens one connection per channel and shares it with
         everyone watching — so it never goes over your provider's connection limit. <a href={href("/live")}>Open Live TV</a>
       </p>
       <Show when={adding()}>
@@ -68,8 +99,8 @@ function Providers(props: { sources?: SourceDto[]; error: unknown; refetch: () =
           onDone={(s) => {
             setAdding(false);
             if (s) {
-              props.refetch();
-              toast(`Added ${s.name} — loading channels`, "success");
+              setFresh(s.id);
+              props.add(s);
             }
           }}
         />
@@ -77,7 +108,7 @@ function Providers(props: { sources?: SourceDto[]; error: unknown; refetch: () =
       <Show when={!props.error} fallback={<ErrorState error={props.error} onRetry={props.refetch} />}>
         <ul class="list">
           <For
-            each={props.sources}
+            each={ids()}
             fallback={
               <Show when={props.sources && !adding()}>
                 <li class="panel__empty iptv-empty">
@@ -86,7 +117,11 @@ function Providers(props: { sources?: SourceDto[]; error: unknown; refetch: () =
               </Show>
             }
           >
-            {(s) => <SourceRow source={s} onChange={props.mutate} onDelete={props.refetch} />}
+            {(id) => (
+              <Show when={byId(id)}>
+                {(s) => <SourceRow source={s()} follow={fresh() === id} onChange={props.update} onDelete={() => props.remove(id)} />}
+              </Show>
+            )}
           </For>
         </ul>
       </Show>
@@ -94,12 +129,106 @@ function Providers(props: { sources?: SourceDto[]; error: unknown; refetch: () =
   );
 }
 
-function SourceRow(props: { source: SourceDto; onChange: (s: SourceDto) => void; onDelete: () => void }): JSX.Element {
+interface Job {
+  /** `last_refresh_at` before we started — a new value means the load finished. */
+  prev: number | null;
+  started: number;
+  /** Saw `refreshing: true` (or the server said one is running). */
+  seen: boolean;
+  kicked: boolean;
+}
+interface Outcome {
+  ok: boolean;
+  channels?: number;
+  withGuide?: number;
+  message?: string;
+}
+
+const nowS = () => Math.floor(Date.now() / 1000);
+
+function SourceRow(props: { source: SourceDto; follow: boolean; onChange: (s: SourceDto) => void; onDelete: () => void }): JSX.Element {
   const s = () => props.source;
   const [editing, setEditing] = createSignal(false);
   const [testing, setTesting] = createSignal(false);
   const [result, setResult] = createSignal<SourceTest>();
-  const [refreshing, setRefreshing] = createSignal(false);
+  const [job, setJob] = createSignal<Job>();
+  const [elapsed, setElapsed] = createSignal(0);
+  const [outcome, setOutcome] = createSignal<Outcome>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let ticker: ReturnType<typeof setInterval> | undefined;
+  onCleanup(() => {
+    if (timer) clearTimeout(timer);
+    if (ticker) clearInterval(ticker);
+  });
+
+  /** Follow a channel + guide load until it finishes, then summarise it. */
+  const follow = (alreadyRunning = false) => {
+    if (timer) clearTimeout(timer);
+    setOutcome(undefined);
+    const j: Job = { prev: s().last_refresh_at ?? null, started: nowS(), seen: alreadyRunning, kicked: alreadyRunning };
+    setJob(j);
+    setElapsed(0);
+    if (ticker) clearInterval(ticker);
+    ticker = setInterval(() => setElapsed(nowS() - j.started), 1000);
+    timer = setTimeout(() => void poll(j), 1200);
+  };
+  const finish = (o: Outcome) => {
+    setJob(undefined);
+    if (ticker) clearInterval(ticker);
+    setOutcome(o);
+  };
+  const poll = async (j: Job) => {
+    if (job() !== j) return;
+    let cur: SourceDto;
+    try {
+      cur = await iptv.source(s().id);
+    } catch {
+      timer = setTimeout(() => void poll(j), 3000);
+      return;
+    }
+    if (job() !== j) return;
+    props.onChange(cur);
+    const since = nowS() - j.started;
+    if (cur.refreshing) {
+      j.seen = true;
+    } else if (cur.last_refresh_at != null && cur.last_refresh_at !== j.prev) {
+      // Done: count how many channels found their guide.
+      let withGuide: number | undefined;
+      try {
+        const ch = await iptv.adminChannels({ source: cur.id, hidden: false });
+        if (ch.length) withGuide = ch.filter((c) => !!c.epg_channel_id).length;
+      } catch {
+        /* the summary still has the channel count */
+      }
+      finish({ ok: true, channels: cur.channel_count, withGuide, message: cur.last_error ?? undefined });
+      return;
+    } else if (j.seen) {
+      finish({ ok: false, message: cur.last_error || "Loading stopped before it finished." });
+      return;
+    } else if (since >= 6 && !j.kicked) {
+      // The background load never showed up (or ended before we looked): start one.
+      j.kicked = true;
+      try {
+        await iptv.refreshSource(cur.id);
+        j.seen = true;
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 409) j.seen = true;
+      }
+    } else if (since >= 20 && !j.seen) {
+      finish({ ok: false, message: cur.last_error || "Reel couldn't start loading this provider." });
+      return;
+    }
+    if (since > 15 * 60) {
+      finish({ ok: false, message: "Still loading after 15 minutes. It carries on in the background — check back later." });
+      return;
+    }
+    timer = setTimeout(() => void poll(j), 2000);
+  };
+
+  onMount(() => {
+    if (props.follow) follow();
+    else if (s().refreshing) follow(true);
+  });
 
   const test = async () => {
     if (testing()) return;
@@ -114,16 +243,13 @@ function SourceRow(props: { source: SourceDto; onChange: (s: SourceDto) => void;
     }
   };
   const refresh = async () => {
-    if (refreshing() || s().refreshing) return;
-    setRefreshing(true);
+    if (job()) return;
     try {
       await iptv.refreshSource(s().id);
-      props.onChange({ ...s(), refreshing: true });
-      toast(`Refreshing ${s().name}…`, "info", 2500);
+      follow(true);
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Couldn't start a refresh", "error");
-    } finally {
-      setRefreshing(false);
+      if (e instanceof ApiError && e.status === 409) follow(true);
+      else toast(e instanceof Error ? e.message : "Couldn't start a refresh", "error");
     }
   };
   const setEnabled = async (v: boolean) => {
@@ -133,6 +259,8 @@ function SourceRow(props: { source: SourceDto; onChange: (s: SourceDto) => void;
       toast(e instanceof Error ? e.message : "Couldn't save", "error");
     }
   };
+  const busy = () => !!job() || s().refreshing;
+  const clock = () => `${Math.floor(elapsed() / 60)}:${String(elapsed() % 60).padStart(2, "0")}`;
 
   return (
     <li class="list__row list__row--stack iptv-src" classList={{ "is-disabled": !s().enabled }}>
@@ -147,17 +275,14 @@ function SourceRow(props: { source: SourceDto; onChange: (s: SourceDto) => void;
             {s().username ? ` · ${s().username}` : ""}
           </span>
           <span class="iptv-src__status">
-            <Show
-              when={!s().refreshing}
-              fallback={<span class="iptv-src__busy"><span class="spinner spinner--xs" /> Loading channels and guide…</span>}
-            >
+            <Show when={!busy()} fallback={<span class="iptv-src__busy"><span class="spinner spinner--xs" /> Loading channels and guide…</span>}>
               <span><strong>{s().channel_count.toLocaleString()}</strong> channels</span>
               <span>{s().last_refresh_at ? `refreshed ${timeAgo(s().last_refresh_at!)}` : "never refreshed"}</span>
               <Show when={s().last_epg_at}><span>guide {timeAgo(s().last_epg_at!)}</span></Show>
             </Show>
             <ConnMeter open={s().open_connections} max={s().max_connections ?? null} />
           </span>
-          <Show when={s().last_error}>
+          <Show when={s().last_error && !busy() && !outcome()}>
             <span class="form-warn"><Icon name="alert" /> {redact(s().last_error)}</span>
           </Show>
         </div>
@@ -165,24 +290,84 @@ function SourceRow(props: { source: SourceDto; onChange: (s: SourceDto) => void;
           <button type="button" class="btn btn--sm" aria-disabled={testing() ? "true" : undefined} onClick={() => void test()}>
             <Icon name="activity" /> <span>{testing() ? "Testing…" : "Test"}</span>
           </button>
-          <button type="button" class="btn btn--sm" aria-disabled={s().refreshing || refreshing() ? "true" : undefined} onClick={() => void refresh()}>
-            <Icon name="retry" /> <span>{s().refreshing ? "Refreshing…" : "Refresh now"}</span>
+          <button type="button" class="btn btn--sm" aria-disabled={busy() ? "true" : undefined} onClick={() => void refresh()}>
+            <Icon name="retry" /> <span>{busy() ? "Refreshing…" : "Refresh now"}</span>
           </button>
           <button type="button" class="btn btn--sm btn--quiet" aria-expanded={editing()} onClick={() => setEditing((v) => !v)}>
             <Icon name="gear" /> <span>Edit</span>
           </button>
         </div>
       </div>
+
+      <Show when={job()}>
+        <div class="loadjob" role="status" aria-live="polite">
+          <div class="loadjob__head">
+            <strong>Loading channels and guide from {s().name}</strong>
+            <span class="loadjob__clock">{clock()}</span>
+          </div>
+          <div class="loadjob__bar" aria-hidden="true"><i /></div>
+          <p class="loadjob__hint">
+            {elapsed() < 25
+              ? "Reading the channel list…"
+              : elapsed() < 90
+                ? "Reading the TV guide — big guides take a minute or two."
+                : "Still working. You can leave this page; it carries on in the background."}
+          </p>
+        </div>
+      </Show>
+
+      <Show when={outcome()}>
+        {(o) => (
+          <div class="testres" classList={{ "is-ok": o().ok, "is-bad": !o().ok }} role="status">
+            <Icon name={o().ok ? "check" : "alert"} />
+            <div class="testres__body">
+              <Show
+                when={o().ok}
+                fallback={
+                  <>
+                    <strong>Couldn't load this provider</strong>
+                    <div class="testres__facts"><span>{redact(o().message)}</span></div>
+                  </>
+                }
+              >
+                <strong>
+                  Ready — {(o().channels ?? 0).toLocaleString()} channel{o().channels === 1 ? "" : "s"}
+                  <Show when={o().withGuide != null}>{o().withGuide ? `, guide found for ${o().withGuide!.toLocaleString()}` : " — no guide matched yet"}</Show>
+                </strong>
+                <Show when={o().message}>
+                  <div class="testres__facts"><span class="form-warn"><Icon name="alert" /> {redact(o().message)}</span></div>
+                </Show>
+              </Show>
+              <div class="actions testres__actions">
+                <Show
+                  when={o().ok}
+                  fallback={
+                    <>
+                      <button type="button" class="btn btn--sm btn--primary" onClick={() => void refresh()}><Icon name="retry" /> <span>Try again</span></button>
+                      <button type="button" class="btn btn--sm" onClick={() => setEditing(true)}><Icon name="gear" /> <span>Check settings</span></button>
+                    </>
+                  }
+                >
+                  <a class="btn btn--sm btn--primary" href={href("/live")}><Icon name="live" /> <span>Open Live TV</span></a>
+                  <a class="btn btn--sm" href={href("/live/guide")}><Icon name="grid" /> <span>Guide</span></a>
+                </Show>
+                <button type="button" class="btn btn--sm btn--quiet" onClick={() => setOutcome(undefined)}><span>Dismiss</span></button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Show>
+
       <Show when={result()}>{(r) => <TestResult result={r()} />}</Show>
       <Show when={editing()}>
         <SourceForm
           source={s()}
-          onDone={(n) => {
+          onDone={(n, reload) => {
             setEditing(false);
-            if (n) {
-              props.onChange(n);
-              toast("Saved", "success", 1800);
-            }
+            if (!n) return;
+            props.onChange(n);
+            if (reload) void refresh();
+            else toast("Saved", "success", 1800);
           }}
           extra={
             <>
@@ -220,37 +405,70 @@ function ConnMeter(props: { open: number; max: number | null }): JSX.Element {
   );
 }
 
-function TestResult(props: { result: SourceTest; onUseLimit?: (n: number) => void }): JSX.Element {
+function fmtDate(unix: number): string {
+  try {
+    return new Date(unix * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  } catch {
+    return new Date(unix * 1000).toDateString();
+  }
+}
+
+/** Test outcome: clear verdict first, then the Xtream account facts. */
+function TestResult(props: { result: SourceTest; filledLimit?: number | null }): JSX.Element {
   const r = () => props.result;
   const a = () => r().account ?? null;
+  const days = () => {
+    const e = a()?.exp_date;
+    return e ? Math.floor((e - nowS()) / 86400) : null;
+  };
+  const expired = () => days() != null && days()! < 0;
+  const ok = () => r().ok && !expired() && (a() ? a()!.active : true);
   return (
-    <div class="testres" classList={{ "is-ok": r().ok, "is-bad": !r().ok }} role="status">
-      <Icon name={r().ok ? "check" : "alert"} />
+    <div class="testres" classList={{ "is-ok": ok(), "is-bad": !ok() }} role="status" aria-live="polite">
+      <Icon name={ok() ? "check" : "alert"} />
       <div class="testres__body">
         <strong>{redact(r().message)}</strong>
-        <div class="testres__facts">
-          <Show when={r().channels != null}><span>{r().channels!.toLocaleString()} channels found</span></Show>
-          <Show when={a()}>
-            {(acc) => (
-              <>
-                <span>Account {(acc().status ?? (acc().active ? "active" : "inactive")).toLowerCase()}{acc().is_trial ? " (trial)" : ""}</span>
-                <Show when={acc().exp_date}><span>expires {new Date(acc().exp_date! * 1000).toLocaleDateString()}</span></Show>
-                <Show when={acc().max_connections != null}>
-                  <span>
-                    {acc().max_connections} connection{acc().max_connections === 1 ? "" : "s"} allowed
-                    {acc().active_connections != null ? `, ${acc().active_connections} in use` : ""}
-                  </span>
-                </Show>
-              </>
-            )}
-          </Show>
-          <Show when={r().epg_url}><span>guide: <code>{r().epg_url}</code></span></Show>
-        </div>
-        <Show when={props.onUseLimit && a()?.max_connections}>
-          <button type="button" class="btn btn--sm" onClick={() => props.onUseLimit!(a()!.max_connections!)}>
-            <Icon name="check" /> <span>Use limit of {a()!.max_connections}</span>
-          </button>
+        <Show when={a()}>
+          {(acc) => (
+            <dl class="acct">
+              <div>
+                <dt>Account</dt>
+                <dd classList={{ "is-bad": !acc().active }}>
+                  {acc().status ? acc().status!.charAt(0).toUpperCase() + acc().status!.slice(1).toLowerCase() : acc().active ? "Active" : "Inactive"}
+                  {acc().is_trial ? " · trial" : ""}
+                </dd>
+              </div>
+              <Show when={acc().exp_date}>
+                <div>
+                  <dt>{expired() ? "Expired" : "Expires"}</dt>
+                  <dd classList={{ "is-bad": expired(), "is-warn": !expired() && days()! < 14 }}>
+                    {fmtDate(acc().exp_date!)}
+                    <small>{expired() ? ` · ${-days()!} days ago` : days() === 0 ? " · today" : ` · in ${days()} day${days() === 1 ? "" : "s"}`}</small>
+                  </dd>
+                </div>
+              </Show>
+              <Show when={acc().max_connections != null}>
+                <div>
+                  <dt>Connections</dt>
+                  <dd classList={{ "is-warn": acc().active_connections != null && acc().active_connections! >= acc().max_connections! }}>
+                    {acc().active_connections ?? 0} in use of {acc().max_connections}
+                  </dd>
+                </div>
+              </Show>
+              <Show when={r().channels != null}>
+                <div>
+                  <dt>Channels</dt>
+                  <dd>{r().channels!.toLocaleString()}</dd>
+                </div>
+              </Show>
+            </dl>
+          )}
         </Show>
+        <div class="testres__facts">
+          <Show when={!a() && r().channels != null}><span>{r().channels!.toLocaleString()} channels found</span></Show>
+          <Show when={r().epg_url}><span>Guide: <code>{redact(r().epg_url)}</code></span></Show>
+          <Show when={props.filledLimit}><span class="testres__filled"><Icon name="check" /> Connection limit set to {props.filledLimit} from your account</span></Show>
+        </div>
       </div>
     </div>
   );
@@ -264,9 +482,35 @@ const REFRESH_OPTS = [
   { value: "0", label: "Only when I press Refresh" },
 ];
 
-function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto) => void; extra?: JSX.Element }): JSX.Element {
+/**
+ * People paste whatever their provider sent: a bare server, `…/player_api.php?username=…`, or the full
+ * `get.php?username=…&password=…&type=m3u_plus` playlist link. Pull the login out of it.
+ */
+function parseProviderLink(input: string): { base: string; username?: string; password?: string; xtreamLink: boolean } | null {
+  let raw = input.trim();
+  if (!raw) return null;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) raw = "http://" + raw;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  const q = u.searchParams;
+  const xtreamLink = /\/(get|player_api|xmltv|panel_api)\.php$/i.test(u.pathname) || (q.has("username") && q.has("password"));
+  // Strip the Xtream endpoint (keep any path prefix the panel lives under).
+  const path = u.pathname.replace(/\/(get|player_api|xmltv|panel_api)\.php$/i, "").replace(/\/+$/, "");
+  return {
+    base: `${u.protocol}//${u.host}${path}`,
+    username: q.get("username") || (u.username ? decodeURIComponent(u.username) : undefined),
+    password: q.get("password") || (u.password ? decodeURIComponent(u.password) : undefined),
+    xtreamLink,
+  };
+}
+
+function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?: boolean) => void; extra?: JSX.Element }): JSX.Element {
   const src = props.source;
-  const [kind, setKind] = createSignal<"xtream" | "m3u">(src?.kind === "m3u" ? "m3u" : src ? "xtream" : "xtream");
+  const [kind, setKind] = createSignal<"xtream" | "m3u">(src?.kind === "m3u" ? "m3u" : "xtream");
   const [name, setName] = createSignal(src?.name ?? "");
   const [url, setUrl] = createSignal(src?.url ?? "");
   const [username, setUsername] = createSignal(src?.username ?? "");
@@ -279,11 +523,49 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto) => void
   const [busy, setBusy] = createSignal(false);
   const [testing, setTesting] = createSignal(false);
   const [error, setError] = createSignal<string>();
+  const [note, setNote] = createSignal<string>();
   const [result, setResult] = createSignal<SourceTest>();
+  const [filled, setFilled] = createSignal<number | null>(null);
+
+  // A test result only describes the settings it ran with.
+  createEffect(on([kind, url, username, password], () => {
+    setResult(undefined);
+    setFilled(null);
+  }, { defer: true }));
+
+  /** Tidy the address; for Xtream, lift the login out of a pasted link. */
+  const tidyUrl = () => {
+    const p = parseProviderLink(url());
+    if (!p) return;
+    if (kind() === "xtream") {
+      const got: string[] = [];
+      if (p.username && p.username !== username()) {
+        setUsername(p.username);
+        got.push("username");
+      }
+      if (p.password && p.password !== password()) {
+        setPassword(p.password);
+        got.push("password");
+      }
+      if (p.base !== url()) setUrl(p.base);
+      setNote(got.length ? `Picked up the ${got.join(" and ")} from the link.` : undefined);
+    } else {
+      if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url().trim())) setUrl("http://" + url().trim());
+      setNote(
+        p.xtreamLink && p.username && p.password
+          ? "This is an Xtream link — switching to “Xtream Codes login” gives faster loading and account details."
+          : undefined,
+      );
+    }
+  };
+  const switchToXtream = () => {
+    setKind("xtream");
+    tidyUrl();
+  };
 
   const body = (): SourceBody => ({
     kind: kind(),
-    name: name().trim() || (kind() === "xtream" ? hostOf(url()) || "IPTV" : "M3U playlist"),
+    name: name().trim() || hostOf(url()) || (kind() === "xtream" ? "IPTV" : "M3U playlist"),
     url: url().trim(),
     username: kind() === "xtream" ? username().trim() || null : null,
     password: kind() === "xtream" && password() ? password() : null,
@@ -295,14 +577,16 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto) => void
 
   const validate = (): string | undefined => {
     if (!url().trim()) return kind() === "xtream" ? "Enter your provider's server address." : "Enter the playlist URL.";
-    if (!/^https?:\/\//i.test(url().trim())) return "The address should start with http:// or https://.";
-    if (kind() === "xtream" && !username().trim()) return "Xtream logins need a username.";
-    if (kind() === "xtream" && !password() && !src?.password_set) return "Xtream logins need a password.";
+    if (!/^https?:\/\/[^/\s]+/i.test(url().trim())) return "The address should look like http://server:port.";
+    if (kind() === "xtream" && !username().trim()) return "Enter your Xtream username.";
+    if (kind() === "xtream" && !password() && !src?.password_set) return "Enter your Xtream password.";
+    if (epg().trim() && !/^https?:\/\//i.test(epg().trim())) return "The guide URL should start with http:// or https://.";
     return undefined;
   };
 
   const test = async () => {
     if (testing()) return;
+    tidyUrl();
     const v = validate();
     if (v) return setError(v);
     setError(undefined);
@@ -312,8 +596,11 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto) => void
       // Editing without retyping the password: test the saved configuration instead.
       const r = src && !password() && src.password_set && kind() === "xtream" ? await iptv.testSource(src.id) : await iptv.testConfig(body());
       setResult(r);
-      if (r.ok && maxConn().trim() === "" && r.account?.max_connections) setMaxConn(String(r.account.max_connections));
-      if (r.ok && !epg().trim() && r.epg_url && !src) setEpg("");
+      const lim = r.account?.max_connections;
+      if (r.ok && lim && (maxConn().trim() === "" || (!src && Number(maxConn()) !== lim))) {
+        setMaxConn(String(lim));
+        setFilled(lim);
+      }
     } catch (e) {
       setResult({ ok: false, message: e instanceof Error ? e.message : "Test failed" });
     } finally {
@@ -324,6 +611,7 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto) => void
   const submit = async (e: Event) => {
     e.preventDefault();
     if (busy()) return;
+    tidyUrl();
     const v = validate();
     if (v) return setError(v);
     setBusy(true);
@@ -336,25 +624,29 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto) => void
           refresh_interval: b.refresh_interval, user_agent: b.user_agent ?? "",
         };
         if (password()) patch.password = password();
-        props.onDone(await iptv.updateSource(src.id, patch));
+        const reload = b.url !== src.url || (b.username ?? "") !== (src.username ?? "") || !!password() || (b.epg_url ?? "") !== (src.epg_url ?? "");
+        props.onDone(await iptv.updateSource(src.id, patch), reload);
       } else {
+        // The server starts the first channel + guide load itself; the row follows it.
         props.onDone(await iptv.createSource({ ...body(), enabled: true }));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save the provider");
+      setError(err instanceof Error ? redact(err.message) : "Couldn't save the provider");
     } finally {
       setBusy(false);
     }
   };
 
+  const failed = () => result() && !result()!.ok;
+
   return (
     <form class="subform iptv-form" onSubmit={submit} novalidate>
       <div class="segmented" role="group" aria-label="Provider type">
-        <button type="button" class="segmented__btn" aria-pressed={kind() === "xtream"} onClick={() => setKind("xtream")}>Xtream Codes login</button>
-        <button type="button" class="segmented__btn" aria-pressed={kind() === "m3u"} onClick={() => setKind("m3u")}>M3U playlist URL</button>
+        <button type="button" class="segmented__btn" aria-pressed={kind() === "xtream"} onClick={switchToXtream}>Xtream Codes login</button>
+        <button type="button" class="segmented__btn" aria-pressed={kind() === "m3u"} onClick={() => { setKind("m3u"); setNote(undefined); }}>M3U playlist URL</button>
       </div>
       <div class="form-grid">
-        <Field label="Name" placeholder={kind() === "xtream" ? "My provider" : "Playlist"} value={name()} onInput={(e) => setName(e.currentTarget.value)} />
+        <Field label="Name" placeholder={hostOf(url()) || (kind() === "xtream" ? "My provider" : "Playlist")} hint="Optional — shown in settings" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
         <Show
           when={kind() === "xtream"}
           fallback={
@@ -364,6 +656,7 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto) => void
               hint="The .m3u / .m3u8 link from your provider"
               value={url()}
               onInput={(e) => setUrl(e.currentTarget.value)}
+              onBlur={tidyUrl}
               autocapitalize="off"
               spellcheck={false}
               inputmode="url"
@@ -372,11 +665,13 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto) => void
           }
         >
           <Field
-            label="Server address"
+            label="Server URL"
             placeholder="http://line.provider.example:8080"
-            hint="Just the server — no /player_api.php"
+            hint="Your provider's server and port. Pasting their full link works too."
             value={url()}
             onInput={(e) => setUrl(e.currentTarget.value)}
+            onBlur={tidyUrl}
+            onPaste={() => setTimeout(tidyUrl, 0)}
             autocapitalize="off"
             spellcheck={false}
             inputmode="url"
@@ -391,10 +686,20 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto) => void
             autocomplete="new-password"
           />
         </Show>
+      </div>
+      <Show when={note()}>
+        <p class="iptv-note">
+          <Icon name="info" /> {note()}
+          <Show when={kind() === "m3u" && note()!.indexOf("Xtream") >= 0}>
+            {" "}<button type="button" class="btn btn--sm" onClick={switchToXtream}><span>Use Xtream login</span></button>
+          </Show>
+        </p>
+      </Show>
+      <div class="form-grid">
         <Field
-          label="Guide (XMLTV) URL"
-          placeholder={src?.detected_epg_url ?? "Optional"}
-          hint={src?.detected_epg_url ? "Leave empty to use the one your provider advertises" : "Optional — most providers advertise their own"}
+          label="Guide (EPG) URL"
+          placeholder={kind() === "xtream" ? "Automatic from your provider" : src?.detected_epg_url ?? "From the playlist, if it has one"}
+          hint={kind() === "xtream" ? "Optional — only to use a different XMLTV guide" : "Optional — an XMLTV link (.xml or .xml.gz)"}
           value={epg()}
           onInput={(e) => setEpg(e.currentTarget.value)}
           autocapitalize="off"
@@ -402,18 +707,21 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto) => void
           inputmode="url"
         />
         <div class="field field--num">
-          <label class="field__label" for="iptv-maxconn">Connection limit</label>
+          <label class="field__label" for="iptv-maxconn">Max connections</label>
           <input
             id="iptv-maxconn"
             class="field__input"
             type="number"
             min="0"
             inputmode="numeric"
-            placeholder="Unknown"
+            placeholder={kind() === "xtream" ? "Filled in by Test" : "Unknown"}
             value={maxConn()}
-            onInput={(e) => setMaxConn(e.currentTarget.value)}
+            onInput={(e) => {
+              setMaxConn(e.currentTarget.value);
+              setFilled(null);
+            }}
           />
-          <span class="field__hint">How many channels your plan can stream at once. Test fills this in for Xtream.</span>
+          <span class="field__hint">How many channels your plan can stream at once. Reel never opens more.</span>
         </div>
         <Select label="Refresh channels & guide" value={interval()} onChange={(e) => setIntervalV(e.currentTarget.value)} options={REFRESH_OPTS} />
       </div>
@@ -422,14 +730,18 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto) => void
           <Field label="User agent" placeholder="Default" hint="Only if your provider requires a specific player" value={ua()} onInput={(e) => setUa(e.currentTarget.value)} autocapitalize="off" spellcheck={false} />
         </div>
       </Show>
-      <Show when={result()}>{(r) => <TestResult result={r()} onUseLimit={maxConn() ? undefined : (n) => setMaxConn(String(n))} />}</Show>
+      <Show when={testing()}>
+        <div class="testres testres--pending" role="status"><span class="spinner spinner--xs" /> <span>Contacting {hostOf(url()) || "your provider"}…</span></div>
+      </Show>
+      <Show when={result()}>{(r) => <TestResult result={r()} filledLimit={filled()} />}</Show>
       <Show when={error()}><p class="form-error" role="alert"><Icon name="alert" /> {error()}</p></Show>
       <div class="actions">
-        <button type="submit" class="btn btn--primary" aria-disabled={busy() ? "true" : undefined}>
-          <Icon name="check" /> <span>{busy() ? "Saving…" : src ? "Save changes" : "Add provider"}</span>
+        <button type="button" class="btn" classList={{ "btn--primary": !result() }} aria-disabled={testing() ? "true" : undefined} onClick={() => void test()}>
+          <Icon name="activity" /> <span>{testing() ? "Testing…" : result() ? "Test again" : "Test connection"}</span>
         </button>
-        <button type="button" class="btn" aria-disabled={testing() ? "true" : undefined} onClick={() => void test()}>
-          <Icon name="activity" /> <span>{testing() ? "Testing…" : "Test connection"}</span>
+        <button type="submit" class="btn" classList={{ "btn--primary": !!result() && !failed() }} aria-disabled={busy() ? "true" : undefined}>
+          <Icon name="check" />
+          <span>{busy() ? "Saving…" : failed() ? "Save anyway" : src ? "Save changes" : "Save & load channels"}</span>
         </button>
         <button type="button" class="btn btn--quiet" onClick={() => props.onDone()}><span>Cancel</span></button>
       </div>
@@ -445,7 +757,7 @@ function redact(msg: string | null | undefined): string {
 
 function hostOf(u: string): string {
   try {
-    return new URL(u.trim()).hostname.replace(/^(www|line)\./, "");
+    return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(u.trim()) ? u.trim() : "http://" + u.trim()).hostname.replace(/^(www|line)\./, "");
   } catch {
     return "";
   }
@@ -483,7 +795,8 @@ function Channels(props: { sources: SourceDto[] }): JSX.Element {
     const l = list() ?? [];
     return { total: l.length, off: l.filter((c) => !c.enabled).length, noEpg: l.filter((c) => !c.epg_channel_id).length };
   });
-  const update = (c: AdminChannel) => mutate((l) => (l ?? []).map((x) => (x.id === c.id ? c : x)));
+  // Rows edit their item in place; this just re-runs the counts / filters.
+  const update = () => mutate((l) => (l ? l.slice() : l));
 
   return (
     <Panel title="Channels" icon="tv" aside={<span class="panel__live">{stats().total.toLocaleString()} total · {stats().off} off · {stats().noEpg} without guide</span>}>
@@ -500,7 +813,7 @@ function Channels(props: { sources: SourceDto[] }): JSX.Element {
         <Show when={!list.loading || list()} fallback={<p class="panel__empty">Loading channels…</p>}>
           <ul class="list chman">
             <For each={rows().slice(0, shown())} fallback={<li class="panel__empty">No channels match.</li>}>
-              {(c) => <ChannelRow channel={c} onChange={update} />}
+              {(c) => <ChannelRow channel={c} onChange={() => update()} />}
             </For>
           </ul>
           <Show when={rows().length > shown()}>
@@ -517,7 +830,9 @@ function Channels(props: { sources: SourceDto[] }): JSX.Element {
 }
 
 function ChannelRow(props: { channel: AdminChannel; onChange: (c: AdminChannel) => void }): JSX.Element {
-  const c = () => props.channel;
+  // Local copy: saving updates the row in place (replacing the list item would remount it and drop focus).
+  const [cur, setCur] = createSignal(props.channel);
+  const c = cur;
   const [open, setOpen] = createSignal(false);
   const [name, setName] = createSignal(c().name);
   const [num, setNum] = createSignal(c().number != null ? String(c().number) : "");
@@ -528,7 +843,9 @@ function ChannelRow(props: { channel: AdminChannel; onChange: (c: AdminChannel) 
   const save = async (patch: Parameters<typeof iptv.patchChannel>[1], local: Partial<AdminChannel>) => {
     try {
       await iptv.patchChannel(c().id, patch);
-      props.onChange({ ...c(), ...local });
+      Object.assign(props.channel, local);
+      setCur({ ...props.channel });
+      props.onChange(props.channel);
       return true;
     } catch (e) {
       toast(e instanceof Error ? e.message : "Couldn't save", "error");
