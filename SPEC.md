@@ -292,9 +292,10 @@ TV series: same mechanics via Sonarr; ring shows aggregate season progress, deta
 - Optional Jellyfin-compatible API shim to bridge iOS (Infuse/Swiftfin) before a native iOS app.
 
 ## 12. Known gaps / backlog
-- Renamed/moved files are treated as delete + add → metadata & watch state lost. Fix: match vanished+new files by
-  (size, duration, stream fingerprint) within a scan and re-point `media_files.path`.
-- Multi-episode files (`S01E02E03`) create one item for the first episode only; needs a file↔episode join table.
 - Toolchain: local rustc 1.86 blocks some deps (wiremock pinned `=0.6.4`); `rustup update` recommended.
-- Local `.nfo`/art enrichment only runs when a TMDB key is configured (it lives inside `TmdbEnricher`); split out a
-  client-less local enricher.
+- Docker image + compose (`deploy/`) written but not yet built/run (no working Docker runtime on the dev Mac).
+- TV apps (webOS/Tizen) not yet verified on real hardware.
+- IPTV: channels aren't access-controlled per user; catch-up/timeshift/DVR not built; HLS-upstream segments
+  fetched by ffmpeg bypass the SSRF guard (playlist URL is checked).
+- Android postponed (no SDK on dev machine).
+- Done: rename/move detection, multi-episode files, local-only `.nfo`/art enrichment, IPTV HW transcode, SSRF guard.
