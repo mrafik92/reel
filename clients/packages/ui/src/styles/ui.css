@@ -727,6 +727,89 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
   font: 400 0.85rem/1 var(--font-body);
   color: var(--ink-3);
 }
+.sheet__desc {
+  margin: 0.6rem 0 0;
+  font: 400 0.95rem/1.4 var(--font-body);
+  color: var(--ink-3);
+}
+.sheet__opt[disabled] {
+  cursor: default;
+  opacity: 0.5;
+}
+.sheet__opt[disabled]:hover {
+  background: transparent;
+}
+/* Target rows (Play on…): a tile icon instead of the check column */
+.sheet__opt--icon .sheet__mark {
+  width: 2.6rem;
+  height: 2.6rem;
+  margin-right: 1rem;
+  border-radius: 0.7rem;
+  background: var(--ink-5);
+  color: var(--ink);
+  font-size: 1.25rem;
+  flex: none;
+}
+.sheet__opt--icon[aria-checked="true"] .sheet__mark {
+  background: var(--accent);
+  color: var(--bg);
+}
+.sheet__opt--icon:focus .sheet__mark {
+  background: rgba(0, 0, 0, 0.12);
+}
+.sheet__tag {
+  display: inline-block;
+  margin-left: 0.55rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 99px;
+  background: var(--ink-5);
+  font: 700 0.68rem/1.2 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: 0.12em;
+}
+.sheet__opt:focus .sheet__tag {
+  background: rgba(0, 0, 0, 0.12);
+}
+.sheet__section {
+  margin: 1.1rem 1rem 0.5rem;
+  font: 700 0.72rem/1 var(--font-body);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.sheet__status {
+  display: flex;
+  align-items: center;
+  margin: 0.25rem 1rem 0.6rem;
+  font: 400 0.9rem/1.4 var(--font-body);
+  color: var(--ink-3);
+}
+.sheet__status .spinner {
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-right: 0.7rem;
+  border-width: 2px;
+}
+.sheet__link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 0.25rem;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: 600 0.9rem/1 var(--font-body);
+  text-decoration: none;
+  cursor: pointer;
+}
+.sheet__link .icon {
+  margin-right: 0.45rem;
+}
+.sheet__link:hover,
+.sheet__link:focus {
+  color: var(--ink);
+  text-decoration: underline;
+}
 @keyframes sheet-in {
   from { transform: translateX(100%); }
   to { transform: none; }

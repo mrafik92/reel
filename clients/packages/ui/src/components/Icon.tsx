@@ -46,12 +46,19 @@ const PATHS = {
   chip: "M7 7h10v10H7zM9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4",
   activity: "M3 12h4l3 8 4-16 3 8h4",
   folder: "M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z",
+  cast: "M3 7V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-6M3 17.5A3.5 3.5 0 0 1 6.5 21M3 13.5a7.5 7.5 0 0 1 7.5 7.5M3 9.5A11.5 11.5 0 0 1 14.5 21",
+  airplay: "M6 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-2M12 14.5l5 6.5H7z",
+  volume: "M4 9v6h4l5 4V5L8 9zM16.5 9.5a3.5 3.5 0 0 1 0 5",
+  mute: "M4 9v6h4l5 4V5L8 9zM16.5 9.5l5 5M21.5 9.5l-5 5",
+  stop: "M6.5 6.5h11v11h-11z",
+  minus: "M5 12h14",
+  up: "M5 15l7-7 7 7",
 } as const;
 
 export type IconName = keyof typeof PATHS;
 
 export function Icon(props: { name: IconName; class?: string; size?: number | string; filled?: boolean; title?: string }): JSX.Element {
-  const filled = () => props.filled ?? (props.name === "play" || props.name === "pause" || props.name === "next");
+  const filled = () => props.filled ?? (props.name === "play" || props.name === "pause" || props.name === "next" || props.name === "stop");
   return (
     <svg
       class={"icon" + (props.class ? " " + props.class : "")}

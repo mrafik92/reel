@@ -153,6 +153,23 @@ export function languageName(code: string | null | undefined): string {
   return intlName(B2T[base] ? B2T[base]! + lower.slice(base.length) : lower) ?? LANGS[lower] ?? LANGS[base] ?? raw.toUpperCase();
 }
 
+/** "eng" / "fre" / "English" → "en" / "fr" (ISO 639-1 when we know one; else the input lower-cased). */
+export function iso1(code: string | null | undefined): string {
+  if (isUnknownLanguage(code)) return "";
+  const lower = code!.trim().toLowerCase().replace("_", "-").split("-")[0]!;
+  if (lower.length === 2) return lower;
+  const name = LANGS[lower] ?? Object.keys(LANGS).map((k) => LANGS[k]!).find((n) => n.toLowerCase() === lower);
+  if (!name) return lower;
+  for (const k in LANGS) if (k.length === 2 && LANGS[k] === name) return k;
+  return lower;
+}
+
+/** Languages offered when adding a preference (ISO 639-1), most common first-ish. */
+export const PICKER_LANGUAGES: string[] = [
+  "en", "fr", "de", "es", "it", "pt", "nl", "sv", "da", "no", "fi", "pl", "cs", "hu", "ro", "el", "tr", "ru", "uk",
+  "ar", "he", "fa", "hi", "ja", "ko", "zh", "th", "vi", "id", "ms", "bg", "hr", "sr", "sk", "sl", "is",
+];
+
 /** Stable key for "same language" comparisons across 2- and 3-letter codes. */
 export function languageKey(code: string | null | undefined): string {
   return isUnknownLanguage(code) ? "" : languageName(code).toLowerCase();

@@ -7,7 +7,7 @@ export function itemHref(it: Pick<ItemSummary, "id" | "kind" | "parent_id">): st
 
 export function playHref(
   it: Pick<ItemSummary, "id">,
-  opts: { file?: number; fromStart?: boolean; audio?: number | null; sub?: number | null } = {},
+  opts: { file?: number; fromStart?: boolean; audio?: number | null; sub?: number | null; cast?: string } = {},
 ): string {
   const q: string[] = [];
   if (opts.file != null) q.push(`file=${opts.file}`);
@@ -15,6 +15,8 @@ export function playHref(
   // Track choices made on the detail page travel with the link (-1 = subtitles off).
   if (opts.audio != null) q.push(`audio=${opts.audio}`);
   if (opts.sub != null) q.push(`sub=${opts.sub}`);
+  // "Play on…": the player starts on that target ("chromecast", "airplay", "dlna:<id>").
+  if (opts.cast) q.push(`cast=${encodeURIComponent(opts.cast)}`);
   return href(`/play/${it.id}${q.length ? "?" + q.join("&") : ""}`);
 }
 

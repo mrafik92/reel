@@ -12,6 +12,7 @@ import { castOfTmdb, createQueue, mockPerson, mockReviews } from "./extras";
 import type { DownloadItem } from "../types";
 import { enrichSummaries, genreCounts, lanes, libraryRecs, matches, searchAll, sortRecs } from "./browse";
 import { searchVod, vodIdsFor } from "./vod";
+import { mockSelected } from "./select";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const latency = () => sleep(120 + Math.random() * 220);
@@ -337,7 +338,10 @@ export function createMockApi(): MockApi {
       const d = need(detail(db, itemId), "File");
       const f = need(d.files.find((x) => x.id === id(fileId)), "File");
       if (body.subtitle_index === 999) throw new ApiError(429, "Transcode limit reached (1 of 1 in use)", 60);
-      const sub = f.subtitles.find((s) => s.index === body.subtitle_index);
+      // Automatic track choice from the (mock) preferences; explicit indexes win.
+      const forCast = !!(body as { for_cast?: boolean }).for_cast;
+      const selected = mockSelected(f, body.audio_index, body.subtitle_index, forCast);
+      const sub = f.subtitles.find((s) => s.index === selected.subtitle_index);
       const imageSub = !!sub && /pgs|dvd/.test(sub.codec);
       const mode: DecideResponse["mode"] = imageSub ? "transcode" : f.container === "mkv" ? "remux" : f.audio.some((a) => a.codec === "truehd") ? "audio_transcode" : "direct_play";
       const reasons: string[] = [];
@@ -346,13 +350,15 @@ export function createMockApi(): MockApi {
       if (f.video && f.video.hdr !== "none") reasons.push(`${f.video.hdr.toUpperCase()} passthrough not supported by this display`);
       const sid = `mock-${Math.random().toString(36).slice(2, 10)}`;
       const res: DecideResponse = {
-        session_id: sid, mode, url: SAMPLE_VIDEO, audio: f.audio,
+        session_id: sid, mode, audio: f.audio,
+        // Cast receivers get absolute URLs on the LAN base.
+        url: forCast ? new URL(SAMPLE_VIDEO, location.href).href : SAMPLE_VIDEO,
         subtitles: f.subtitles.map((s, i) => ({
           index: s.index, stream_id: itemId * 100 + i, language: s.language, title: s.title, forced: s.forced, external: s.external,
           url: /pgs|dvd/.test(s.codec) ? null : `/mock-media/subs.vtt?lang=${s.language ?? "und"}`,
         })),
         decision: {
-          mode, reasons, audio_index: body.audio_index ?? f.audio[0]?.index ?? null, subtitle_index: body.subtitle_index ?? null,
+          mode, reasons, audio_index: selected.audio_index ?? f.audio[0]?.index ?? null, subtitle_index: selected.subtitle_index,
           video: mode === "transcode" ? { type: "encode", codec: "h264", width: 1920, height: 1080, bitrate_kbps: 8000, tonemap: f.video?.hdr !== "none" } : { type: "copy" },
           audio: mode === "audio_transcode" || mode === "transcode" ? { type: "encode", codec: "aac", channels: 2, bitrate_kbps: 192 } : { type: "copy" },
           subtitle: imageSub ? { type: "burn_in" } : sub ? { type: "sidecar", format: "vtt" } : { type: "none" },
@@ -365,7 +371,7 @@ export function createMockApi(): MockApi {
         hwaccel: mode === "transcode" ? "vaapi" : "none", position_s: body.start_s ?? 0, progress: null,
         bitrate_kbps: null, started_at: nowS(), last_ping: nowS(), device_id: body.device_id, reasons, decision: res.decision,
       });
-      return res;
+      return Object.assign(res, { selected });
     },
     async progress(sid, b) {
       const s = playback.get(sid);

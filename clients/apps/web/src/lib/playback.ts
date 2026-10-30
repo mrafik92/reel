@@ -53,16 +53,26 @@ function fromBrowserProbe(r: Record<string, unknown>): DeviceProfileWire {
   };
 }
 
-/** `itemId`: the episode being watched — required for multi-episode files so progress lands on it. */
-export async function decide(fileId: Id, o: { itemId?: Id | null; audio?: number | null; subtitle?: number | null; start?: number }): Promise<DecideResponse> {
-  return api.decide(fileId, {
-    ...decideProfile(),
+/**
+ * `itemId`: the episode being watched — required for multi-episode files so progress lands on it.
+ * Tracks: `null` / omitted = let the server choose from the user's preferences (`selected` in the
+ * response), `subtitle: -1` = explicitly off. `forCast`: the stream goes to a Chromecast / AirPlay
+ * receiver (absolute, long-lived URLs; receiver profile instead of this browser's).
+ */
+export async function decide(
+  fileId: Id,
+  o: { itemId?: Id | null; audio?: number | null; subtitle?: number | null; start?: number; forCast?: "chromecast" | "airplay" },
+): Promise<DecideResponse> {
+  const body: DecideRequest & { for_cast?: boolean } = {
+    ...(o.forCast ? { preset: o.forCast } : decideProfile()),
     item_id: o.itemId ?? null,
     device_id: deviceId(),
     audio_index: o.audio ?? null,
-    subtitle_index: o.subtitle != null && o.subtitle >= 0 ? o.subtitle : null,
+    subtitle_index: o.subtitle ?? null,
     start_s: o.start && o.start > 0 ? o.start : null,
-  });
+  };
+  if (o.forCast) body.for_cast = true;
+  return api.decide(fileId, body);
 }
 
 export const MODE_LABEL: Record<string, string> = {

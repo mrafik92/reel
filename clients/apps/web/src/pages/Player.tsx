@@ -1,14 +1,25 @@
 import { createEffect, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
-  Icon, Sheet, audioLabel, createPlayerAdapter, episodeCode, focusElement, formatClock,
+  Icon, Sheet, audioLabel, createPlayerAdapter, episodeCode, focusElement, formatClock, iso1,
   AvPlayAdapter, mediaUrl, onBack, onRemoteKey, subtitleLabel,
   type ItemDetail, type MediaFile, type PlayerAdapter, type PlayerTracks,
 } from "@reel/ui";
 import { api, ApiError, invalidate, type DecideResponse, type SubtitleOption } from "../api";
-import { creditItem, decide, MODE_LABEL, setTrackPrefs } from "../lib/playback";
-import { initialAudio, initialSubtitle, rememberSubtitle } from "../lib/tracks";
+import { casting, type CastPlayBody } from "../api/casting";
+import { selectedOf, type Selected } from "../api/prefs";
+import { creditItem, decide, MODE_LABEL } from "../lib/playback";
+import { audioQuickSave, previewSelection, subtitleQuickSave, type QuickSave } from "../lib/tracks";
+import { loadPrefs, playbackPrefs, prefsSupported, updatePrefs } from "../lib/prefs";
+import {
+  castFor, onCastEnd, startCast, stopCast, type CastOpen, type CastSource, type CastStream, type CastTarget, type CastTrack,
+} from "../lib/casting";
+import { CastCancelled } from "../lib/casting/chromecast";
+import { TV, href } from "../lib/mode";
+import { toast } from "../lib/toast";
 import { ErrorState } from "../components/States";
+import { CastSheet } from "../components/casting/CastSheet";
+import { CastRemote } from "../components/casting/CastRemote";
 import { getServerUrl } from "@reel/ui";
 
 export default function Player(): JSX.Element {
@@ -42,7 +53,24 @@ export interface PlayError {
  * stop — is the regular player.
  */
 export interface PlaySource {
-  decide: (o: { audio: number | null; subtitle: number; start: number }) => Promise<DecideResponse>;
+  /**
+   * Open a session. `subtitle`: -1 = off / not chosen (legacy). Newer fields — optional to
+   * honour, older sources keep working:
+   *  - `subtitleIndex`: wire value for `subtitle_index` (null = automatic from the user's
+   *    preferences, -1 = off, n = that stream),
+   *  - `forCast`: the stream is for a Chromecast / AirPlay receiver → send `for_cast: true` and
+   *    `preset: forCast` (absolute, long-lived URLs). If the source ignores it, the player
+   *    converts the session with `POST /playback/{id}/cast-url`.
+   */
+  decide: (o: {
+    audio: number | null;
+    subtitle: number;
+    start: number;
+    subtitleIndex?: number | null;
+    forCast?: "chromecast" | "airplay";
+  }) => Promise<DecideResponse>;
+  /** DLNA "Play on TV": what the server should push (omit → DLNA TVs aren't offered). */
+  dlna?: (o: { audio: number | null; subtitle: number | null; start: number }) => CastPlayBody;
   /** Map a start failure to a friendly error (falls back to the library wording). */
   error?: (e: unknown) => PlayError | undefined;
   /** Eyebrow above the title (e.g. series · S1 E3). */
@@ -54,7 +82,7 @@ export interface PlaySource {
 
 export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JSX.Element {
   const navigate = useNavigate();
-  const [search] = useSearchParams<{ file?: string; start?: string; t?: string; audio?: string; sub?: string }>();
+  const [search, setSearch] = useSearchParams<{ file?: string; start?: string; t?: string; audio?: string; sub?: string; cast?: string }>();
   const file: MediaFile | undefined =
     props.item.files.find((f) => String(f.id) === search.file) ?? props.item.files[0];
 
@@ -83,9 +111,18 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   /** AVPlay draws on a plane *behind* the page: keep everything above it transparent. */
   const [nativePlane, setNativePlane] = createSignal(false);
 
-  // URL (picked on the detail page) → this item's last choice → user's subtitle language → off.
-  const [audio, setAudio] = createSignal<number | null>(initialAudio(props.item.id, file?.audio ?? [], search.audio));
-  const [sub, setSub] = createSignal(initialSubtitle(props.item.id, file?.subtitles ?? [], search.sub));
+  // Tracks: picked on the detail page (URL) → else the server's automatic choice from the
+  // user's preferences (`selected`). A pick in the player overrides it for this session.
+  const urlNum = (v?: string) => (v != null && v !== "" && isFinite(Number(v)) ? Number(v) : null);
+  const [audio, setAudio] = createSignal<number | null>(urlNum(search.audio));
+  const [sub, setSub] = createSignal(urlNum(search.sub) ?? -1);
+  /** false until the first session: ask the server to choose (`subtitle_index: null`). */
+  let subChosen = urlNum(search.sub) != null;
+  /** The current subtitle state came from the server's preferences (shows "Auto"). */
+  const [subAuto, setSubAuto] = createSignal(false);
+  const [selection, setSelection] = createSignal<Selected>();
+  const [quick, setQuick] = createSignal<(QuickSave & { saved?: boolean; busy?: boolean })>();
+  void loadPrefs();
 
   let video!: HTMLVideoElement;
   let root!: HTMLDivElement;
@@ -101,7 +138,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     setVisible(true);
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
-      if (playing() && !picker() && scrub() == null && !info()) setVisible(false);
+      if (playing() && !picker() && scrub() == null && !info() && !quick() && !castSheet()) setVisible(false);
     }, HIDE_AFTER);
   };
 
@@ -133,17 +170,26 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     setSession(undefined);
   };
 
+  /** Open a session (library decide or the page's source). */
+  const openSession = (o: CastOpen, forCast?: "chromecast" | "airplay"): Promise<DecideResponse> =>
+    props.source
+      ? props.source.decide({ audio: o.audio, subtitle: o.subtitle ?? -1, subtitleIndex: o.subtitle, start: o.start, forCast })
+      : decide(file!.id, { itemId: creditItem(file!, props.item.id), audio: o.audio, subtitle: o.subtitle, start: o.start, forCast });
+
   /** (Re)start playback: decide → load. Used on open and when audio/burn-in subs change. */
-  const start = async (at: number) => {
+  const start = async (at: number, forCast?: "airplay") => {
     if (!file) return;
     setError(undefined);
     setBuffering(true);
     endSession();
     let d: DecideResponse;
     try {
-      d = props.source
-        ? await props.source.decide({ audio: audio(), subtitle: sub(), start: at })
-        : await decide(file.id, { itemId: creditItem(file, props.item.id), audio: audio(), subtitle: sub(), start: at });
+      d = await openSession({ audio: audio(), subtitle: subChosen ? sub() : null, start: at }, forCast);
+      if (forCast && !/^https?:/i.test(d.url)) {
+        // Source didn't honour for_cast: convert the session for the receiver.
+        const c = await casting.castUrl(d.session_id);
+        d = { ...d, url: c.url };
+      }
     } catch (e) {
       setBuffering(false);
       setError(props.source?.error?.(e) ?? decideError(e));
@@ -154,6 +200,16 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       return;
     }
     setSession(d);
+    const sel = selectedOf(d);
+    if (sel) {
+      setSelection(sel);
+      if (audio() == null && sel.audio_index != null) setAudio(sel.audio_index);
+      if (!subChosen) {
+        setSub(sel.subtitle_index ?? -1);
+        setSubAuto(true);
+      }
+    }
+    subChosen = true;
     if (audio() == null) setAudio(d.decision.audio_index ?? d.audio.find((a) => a.default)?.index ?? d.audio[0]?.index ?? null);
     offs.forEach((f) => f());
     offs = [];
@@ -291,7 +347,8 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       for (let i = 0; i < els.length; i++) {
         const el = els[i] as HTMLTrackElement;
         const on = Number(el.getAttribute("data-index")) === want;
-        const mode: TextTrackMode = on ? "hidden" : "disabled";
+        // AirPlay: let Safari send the track to the TV; otherwise we draw it.
+        const mode: TextTrackMode = on ? (airplaying() ? "showing" : "hidden") : "disabled";
         if (el.track.mode !== mode) el.track.mode = mode;
         if (on) chosen = el.track;
       }
@@ -347,11 +404,43 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     requestAnimationFrame(measureLift);
   });
 
+  /** After a manual change: offer to make it the default ("Always use English subtitles?"). */
+  let quickTimer: ReturnType<typeof setTimeout> | undefined;
+  const offer = (q: QuickSave | undefined) => {
+    if (quickTimer) clearTimeout(quickTimer);
+    if (!q || prefsSupported() === false) return setQuick(undefined);
+    setQuick(q);
+    poke();
+    quickTimer = setTimeout(() => setQuick(undefined), 14_000);
+  };
+  const saveQuick = async () => {
+    const q = quick();
+    if (!q || q.busy) return;
+    setQuick({ ...q, busy: true });
+    try {
+      await updatePrefs(q.patch);
+      setQuick({ ...q, saved: true });
+      if (quickTimer) clearTimeout(quickTimer);
+      quickTimer = setTimeout(() => setQuick(undefined), 2600);
+    } catch (e) {
+      setQuick(undefined);
+      toast(e instanceof Error ? e.message : "Couldn't save your preference", "error");
+    }
+  };
+  const audioLang = () => iso1(audioList().find((a) => a.index === audio())?.language);
+
   const chooseSub = (v: number) => {
     if (v === sub()) return;
     setSub(v);
-    setTrackPrefs(props.item.id, { sub: v });
-    rememberSubtitle(subList().find((x) => x.index === v) ?? null);
+    setSubAuto(false);
+    subChosen = true;
+    const p = playbackPrefs();
+    if (p) {
+      const s = v >= 0 ? subList().find((x) => x.index === v) : null;
+      const cur = audioList().find((a) => a.index === audio());
+      const isDefault = !!cur && (cur.default || audioList()[0] === cur) && !audioList().some((a) => a.default && a !== cur);
+      offer(subtitleQuickSave(s ? { ...s, codec: file?.subtitles.find((x) => x.index === v)?.codec } : null, p, audioLang(), isDefault));
+    }
     const s = session();
     const opt = s?.subtitles.find((x) => x.index === v);
     const burned = s?.decision.subtitle.type === "burn_in";
@@ -362,7 +451,8 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   const chooseAudio = (v: number) => {
     if (v === audio()) return;
     setAudio(v);
-    setTrackPrefs(props.item.id, { audio: v });
+    const p = playbackPrefs();
+    if (p) offer(audioQuickSave(audioList().find((a) => a.index === v), p, audioList()));
     // Native players can switch tracks inside the file they're already playing
     // (direct play / remux copy all audio). Server streams are listed in the same
     // order, so match by position; otherwise ask the server for a new stream.
@@ -374,6 +464,156 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       return;
     }
     void start(pos());
+  };
+
+  // ---- casting ---------------------------------------------------------------
+  // Chromecast / DLNA: the TV plays its own session and this page becomes the remote (local
+  // playback stops). AirPlay: Safari routes this very <video> to the TV, so it keeps playing
+  // here — re-opened with a receiver-reachable URL — under the same remote view.
+  const castKey = props.source ? `vod:${props.item.id}` : `item:${props.item.id}`;
+  const cast = () => castFor(castKey);
+  const airplaying = () => cast()?.remote.kind === "airplay";
+  const [castSheet, setCastSheet] = createSignal(false);
+  const [castBusy, setCastBusy] = createSignal("");
+  const [airAvail, setAirAvail] = createSignal<boolean>();
+  const eyebrow = () =>
+    props.source?.eyebrow ?? (props.item.kind === "episode" ? `${series() ?? ""}${series() ? " · " : ""}${episodeCode(props.item)}` : undefined);
+
+  const audioTracks = (list: { index: number; codec: string; channels: number; language?: string | null; title?: string | null; default?: boolean }[]): CastTrack[] =>
+    list.map((a) => {
+      const l = audioLabel(a);
+      return { index: a.index, title: l.short, detail: l.detail || undefined, language: a.language };
+    });
+  const subTracks = (list: ReturnType<typeof subList>): CastTrack[] =>
+    list.map((x) => {
+      const l = subLabel(x);
+      return { index: x.index, title: l.short, detail: l.detail, language: x.language, forced: x.forced, url: x.url && /^https?:/i.test(x.url) ? x.url : null };
+    });
+
+  /** A session's URLs as the receiver needs them (absolute; converted if the source ignored for_cast). */
+  const toStream = async (d: DecideResponse): Promise<CastStream> => {
+    let url = d.url;
+    let contentType: string | undefined;
+    const subUrls = new Map<number, string>();
+    if (!/^https?:/i.test(url)) {
+      const c = await casting.castUrl(d.session_id);
+      url = c.url;
+      contentType = c.content_type;
+      c.subtitles.forEach((x) => x.url && subUrls.set(x.index, x.url));
+    }
+    const hls = /\.m3u8(\?|$)/i.test(url) || /mpegurl/i.test(contentType ?? "");
+    return {
+      sessionId: d.session_id,
+      url,
+      contentType: hls ? "application/x-mpegURL" : contentType || "video/mp4",
+      fmp4: hls, // our transcoder writes fMP4 segments
+      live: false,
+      audio: audioTracks(d.audio),
+      subtitles: subTracks(d.subtitles).map((t) => ({ ...t, url: subUrls.get(t.index) ?? t.url })),
+      selected: selectedOf(d),
+    };
+  };
+
+  let localStopped = false;
+  /** Hand playback to the TV: stop the local stream (frees the server's stream slot first). */
+  const stopLocal = () => {
+    if (localStopped) return;
+    localStopped = true;
+    offs.forEach((f) => f());
+    offs = [];
+    endSession();
+    adapter?.destroy();
+    adapter = undefined;
+    clearTracks();
+    setPlaying(false);
+    setBuffering(false);
+    setError(undefined);
+    setVisible(true);
+  };
+  const resumeLocal = (at: number) => {
+    localStopped = false;
+    setPos(at);
+    void start(at);
+  };
+
+  const castSource = (): CastSource => ({
+    meta: {
+      key: castKey,
+      title: props.item.title,
+      eyebrow: eyebrow(),
+      poster: props.item.poster_url,
+      backdrop: props.item.backdrop_url,
+      duration: dur() || file?.duration_s,
+    },
+    open: async (target, o) => {
+      if (target === "chromecast") stopLocal();
+      return toStream(await openSession(o, target));
+    },
+    dlna: props.source
+      ? props.source.dlna
+      : (o) => ({
+          kind: "item",
+          id: file ? Number(file.id) : null,
+          file_id: file ? Number(file.id) : null,
+          start_s: o.start > 0 ? Math.floor(o.start) : null,
+          audio_index: o.audio,
+          subtitle_index: o.subtitle,
+        }),
+    audio: audioTracks(audioList()),
+    subtitles: subTracks(subList()),
+  });
+  const castOpen = (): CastOpen => ({
+    audio: audio(),
+    subtitle: subChosen ? sub() : null,
+    start: Math.max(0, scrub() ?? pos()) || resumeAt(),
+  });
+
+  const pickTarget = async (t: CastTarget) => {
+    if (t.kind === "airplay") {
+      // Safari's own picker; the switch is picked up by `webkitcurrentplaybacktargetiswirelesschanged`.
+      (video as HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void }).webkitShowPlaybackTargetPicker?.();
+      return;
+    }
+    const o = castOpen();
+    if (t.kind === "dlna" && file) {
+      // The TV's own session can't report back the server's automatic pick: resolve it here
+      // (same rules) so the remote's Audio / Subtitles buttons show the truth.
+      const pv = playbackPrefs() && previewSelection(file.audio, file.subtitles, playbackPrefs()!);
+      if (o.audio == null) o.audio = pv ? pv.audio : null;
+      if (o.subtitle == null) o.subtitle = pv ? pv.sub ?? -1 : null;
+    }
+    setCastBusy(t.kind === "dlna" ? `Sending to ${t.name}…` : "Connecting to your Chromecast…");
+    try {
+      if (t.kind === "dlna") stopLocal();
+      await startCast(t, castSource(), o);
+      stopLocal();
+    } catch (e) {
+      if (!(e instanceof CastCancelled)) toast(e instanceof Error ? e.message : "Couldn't start casting", "error");
+      if (localStopped && !cast()) resumeLocal(o.start);
+    } finally {
+      setCastBusy("");
+    }
+  };
+
+  const onAirplayTarget = () => {
+    const v = video as HTMLVideoElement & { webkitCurrentPlaybackTargetIsWireless?: boolean; disableRemotePlayback?: boolean };
+    if (!v.webkitCurrentPlaybackTargetIsWireless || cast()) return;
+    void startCast({ kind: "airplay", id: "airplay", name: "AirPlay" }, castSource(), castOpen(), {
+      video,
+      load: async (o) => {
+        if (o.audio != null) setAudio(o.audio);
+        if (o.subtitle != null) {
+          setSub(o.subtitle);
+          subChosen = true;
+        }
+        await start(o.start, "airplay");
+      },
+      stop: () => {
+        // No "disconnect" API: disabling remote playback hands the route back to this device.
+        v.disableRemotePlayback = true;
+        setTimeout(() => (v.disableRemotePlayback = false), 1500);
+      },
+    }).then(() => start(pos(), "airplay"));
   };
 
   // ---- transport -------------------------------------------------------------
@@ -419,7 +659,52 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       setBuffering(false);
       return;
     }
-    void start(resumeAt());
+    // "Play on…" from the detail page lands here with ?cast=…; a cast of this title that's
+    // already running re-attaches the remote view instead of playing locally.
+    const castParam = search.cast;
+    if (castParam) setSearch({ cast: undefined }, { replace: true });
+    if (cast()) {
+      localStopped = true;
+      setBuffering(false);
+    } else if (castParam === "chromecast" || (castParam && castParam.indexOf("dlna:") === 0)) {
+      localStopped = true;
+      setBuffering(false);
+      void (async () => {
+        await loadPrefs();
+        let t: CastTarget = { kind: "chromecast", id: "chromecast", name: "Chromecast" };
+        if (castParam !== "chromecast") {
+          const id = castParam.slice(5);
+          const d = (await casting.devices().catch(() => [])).find((x) => x.id === id);
+          t = { kind: "dlna", id, name: d?.name ?? "your TV", device: d };
+        }
+        await pickTarget(t);
+        if (!cast() && !session()) resumeLocal(resumeAt());
+      })();
+    } else {
+      void start(resumeAt());
+      if (castParam === "airplay") setCastSheet(true);
+    }
+    const offCastEnd = onCastEnd((a, reason, at) => {
+      if (a.source.meta.key !== castKey) return;
+      if (reason === "ended" && a.remote.kind !== "airplay") return exit();
+      if (a.remote.kind === "airplay") {
+        // Back from the TV: reopen with this browser's URL and profile.
+        void start(at || pos());
+        return;
+      }
+      resumeLocal(at);
+    });
+    const onAirAvail = (e: Event) => setAirAvail((e as Event & { availability?: string }).availability === "available");
+    video.addEventListener("webkitplaybacktargetavailabilitychanged", onAirAvail);
+    video.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", onAirplayTarget);
+    onCleanup(() => {
+      offCastEnd();
+      video.removeEventListener("webkitplaybacktargetavailabilitychanged", onAirAvail);
+      video.removeEventListener("webkitcurrentplaybacktargetiswirelesschanged", onAirplayTarget);
+      // AirPlay rides on this page's <video>: it ends with the page.
+      if (airplaying()) void stopCast();
+      if (quickTimer) clearTimeout(quickTimer);
+    });
     // Tracks added by native adapters (webOS) get the same placement once their cues load.
     const onAddTrack = () => syncTracks();
     video.textTracks.addEventListener("addtrack", onAddTrack as EventListener);
@@ -439,8 +724,18 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     }, TICK_MS);
 
     const onKey = (e: KeyboardEvent) => {
-      if (picker()) return;
+      if (picker() || castSheet()) return;
       const k = e.key;
+      const c = cast();
+      if (c) {
+        // The remote view owns the screen: only Space/K reach the TV from anywhere.
+        if (k === " " || k === "k") {
+          e.preventDefault();
+          if (c.remote.state() === "playing") c.remote.pause();
+          else c.remote.play();
+        }
+        return;
+      }
       // Back is handled by onBack below; don't let it re-show the controls first.
       if (k === "Escape" || k === "Backspace" || k === "GoBack" || e.keyCode === 461 || e.keyCode === 10009) return;
       const hidden = !visible();
@@ -479,6 +774,17 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     const offMedia = onRemoteKey((e) => {
       const m = e.key;
       if (m !== "play" && m !== "pause" && m !== "playpause" && m !== "ff" && m !== "rw" && m !== "stop" && m !== "info") return false;
+      const c = cast();
+      if (c) {
+        const r = c.remote;
+        if (m === "playpause") (r.state() === "playing" ? r.pause() : r.play());
+        else if (m === "play") r.play();
+        else if (m === "pause") r.pause();
+        else if (m === "ff" && !c.source.meta.live) r.seek(r.position() + 30);
+        else if (m === "rw" && !c.source.meta.live) r.seek(Math.max(0, r.position() - 10));
+        else if (m === "stop") void stopCast();
+        return true;
+      }
       poke();
       if (!adapter) return true;
       if (m === "playpause") toggle();
@@ -491,7 +797,12 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       return true;
     });
     const offBack = onBack(() => {
-      if (picker()) return false;
+      if (picker() || castSheet()) return false;
+      if (cast()) {
+        // Leave the remote view; the TV keeps playing (come back to this title to control it).
+        exit();
+        return true;
+      }
       if (info()) {
         setInfo(false);
         return true;
@@ -619,7 +930,33 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       </Show>
 
       <Show when={info() && session()}>
-        {(s) => <StreamInfo session={s()} file={file} onClose={() => setInfo(false)} />}
+        {(s) => <StreamInfo session={s()} file={file} selection={selection()} onClose={() => setInfo(false)} />}
+      </Show>
+
+      <Show when={castBusy()}>
+        <div class="player__buffer player__castbusy" role="status">
+          <span class="spinner" />
+          <p>{castBusy()}</p>
+        </div>
+      </Show>
+
+      <Show when={!cast() && quick()}>
+        {(q) => (
+          <div class="quicksave" role="status" data-nav-group>
+            <p class="quicksave__text">
+              {q().saved ? "Saved. Change it any time in Settings → Playback." : q().text}
+              <Show when={!q().saved}><small>Just for you, on every device.</small></Show>
+            </p>
+            <Show when={!q().saved}>
+              <button type="button" class="btn btn--primary btn--sm" aria-busy={q().busy} onClick={() => void saveQuick()}>
+                {q().busy ? "Saving…" : "Save"}
+              </button>
+              <button type="button" class="btn btn--quiet btn--sm" onClick={() => setQuick(undefined)}>
+                Not now
+              </button>
+            </Show>
+          </div>
+        )}
       </Show>
 
       <div class="player__chrome" data-nav-fixed aria-hidden={!visible() && playing() ? "true" : undefined}>
@@ -699,9 +1036,28 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
               <button type="button" class="btn btn--ghost btn--select" onClick={() => setPicker("audio")} disabled={audioList().length < 2}>
                 <Icon name="audio" /> <span class="btn__value">{audioText()}</span>
               </button>
-              <button type="button" class="btn btn--ghost btn--select" onClick={() => setPicker("sub")} disabled={!subList().length}>
+              <button
+                type="button"
+                class="btn btn--ghost btn--select"
+                onClick={() => setPicker("sub")}
+                disabled={!subList().length}
+                title={subAuto() ? "Picked automatically from your playback settings" : undefined}
+              >
                 <Icon name="cc" /> <span class="btn__value">{subText()}</span>
+                <Show when={subAuto()}><small class="btn__tag">Auto</small></Show>
               </button>
+              <Show when={!TV}>
+                <button
+                  type="button"
+                  class="iconbtn"
+                  classList={{ "is-casting": !!cast() }}
+                  aria-label={cast() ? `Playing on ${cast()!.remote.device()}` : "Play on TV"}
+                  title="Play on TV"
+                  onClick={() => setCastSheet(true)}
+                >
+                  <Icon name={airplaying() ? "airplay" : "cast"} />
+                </button>
+              </Show>
               <button type="button" class="iconbtn" aria-label="Stream info" aria-pressed={info()} onClick={() => setInfo((v) => !v)}>
                 <Icon name="info" />
               </button>
@@ -740,6 +1096,38 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
           onSelect={chooseSub}
           onClose={() => {
             setPicker(null);
+            poke();
+          }}
+          description={subAuto() && sub() >= 0 ? "Turned on automatically from your playback settings." : undefined}
+          footer={
+            <a class="sheet__link" href={href("/settings/playback")}>
+              <Icon name="gear" /> Subtitle & audio preferences
+            </a>
+          }
+        />
+      </Show>
+
+      <Show when={cast()}>
+        {(c) => (
+          <CastRemote
+            cast={c()}
+            eyebrow={eyebrow()}
+            onBack={exit}
+            onDevices={() => setCastSheet(true)}
+            onStop={() => void stopCast()}
+          />
+        )}
+      </Show>
+
+      <Show when={castSheet()}>
+        <CastSheet
+          current={cast()?.target.id}
+          airplayAvailable={airAvail()}
+          dlna={!!castSource().dlna}
+          onLocal={cast() ? () => void stopCast() : undefined}
+          onPick={(t) => void pickTarget(t)}
+          onClose={() => {
+            setCastSheet(false);
             poke();
           }}
         />
@@ -826,7 +1214,7 @@ function actionText(a: { type: string; codec?: string; channels?: number; width?
 }
 
 /** Debug overlay: how the server decided to deliver this stream, and why. */
-function StreamInfo(props: { session: DecideResponse; file?: MediaFile; onClose: () => void }): JSX.Element {
+function StreamInfo(props: { session: DecideResponse; file?: MediaFile; selection?: Selected; onClose: () => void }): JSX.Element {
   const d = () => props.session.decision;
   return (
     <aside class="stream-info" aria-label="Stream info">
@@ -848,6 +1236,12 @@ function StreamInfo(props: { session: DecideResponse; file?: MediaFile; onClose:
         <dt>Session</dt>
         <dd class="mono">{props.session.session_id.slice(0, 12)}</dd>
       </dl>
+      <Show when={props.selection?.reason}>
+        <p class="stream-info__label">Track choice</p>
+        <ul>
+          <For each={props.selection!.reason.split(/;\s*/).filter(Boolean)}>{(r) => <li>{r.charAt(0).toUpperCase() + r.slice(1)}</li>}</For>
+        </ul>
+      </Show>
       <Show when={d().reasons.length}>
         <p class="stream-info__label">Why</p>
         <ul>

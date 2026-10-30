@@ -25,6 +25,7 @@ const LiveGuide = lazy(() => import("./pages/LiveGuide"));
 const VodMovie = lazy(() => import("./pages/VodMovie"));
 const VodSeries = lazy(() => import("./pages/VodSeries"));
 const VodPlayer = lazy(() => import("./pages/VodPlayer"));
+const SettingsPlayback = lazy(() => import("./pages/SettingsPlayback"));
 const DevRings = lazy(() => import("./pages/DevRings"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
@@ -53,6 +54,7 @@ function Routes() {
       <Route path="/vod/movie/:id" component={VodMovie} />
       <Route path="/vod/series/:id" component={VodSeries} />
       <Route path="/vod/play/:kind/:id" component={VodPlayer} />
+      <Route path="/settings/playback" component={SettingsPlayback} />
       <Route path="/admin/:section?" component={Admin} />
       <Route path="/dev/rings" component={DevRings} />
       <Route path="*" component={NotFound} />

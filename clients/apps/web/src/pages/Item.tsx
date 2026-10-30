@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show, type JSX } from "solid-js";
-import { useParams } from "@solidjs/router";
+import { useNavigate, useParams } from "@solidjs/router";
 import {
   Backdrop, Icon, Img, PosterCard, Row, Sheet,
   audioLabel, codecName, channelsLabel, episodeCode, fileTags, formatBytes, formatRemaining, formatRuntime,
@@ -9,16 +9,22 @@ import {
 import { api, invalidateLibrary } from "../api";
 import { toast } from "../lib/toast";
 import { usePageFocus } from "../lib/focus";
-import { playHref } from "../lib/links";
-import { getTrackPrefs, setTrackPrefs } from "../lib/playback";
-import { initialSubtitle, rememberSubtitle } from "../lib/tracks";
+import { playHref, toPath } from "../lib/links";
+import { previewSelection } from "../lib/tracks";
+import { loadPrefs, playbackPrefs } from "../lib/prefs";
+import { castFor, type CastTarget } from "../lib/casting";
+import { requestCastSession, CastCancelled } from "../lib/casting/chromecast";
+import { CastSheet } from "../components/casting/CastSheet";
+import { TV } from "../lib/mode";
 import { ErrorState } from "../components/States";
 import { RatingsStrip, ReviewsSection, useReviews } from "../components/Reviews";
 import { CastTile } from "../components/Cast";
 import { href } from "../lib/mode";
 import { itemActivity } from "../lib/downloads";
 
-type Picker = "audio" | "sub" | "version" | null;
+type Picker = "audio" | "sub" | "version" | "cast" | null;
+/** Sheet value for "Automatic" (use my playback settings). */
+const AUTO = -2;
 
 export default function Item(): JSX.Element {
   const params = useParams<{ id: string }>();
@@ -55,23 +61,63 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
   const isShow = () => it().kind === "show" || it().kind === "season";
 
   // ---- Versions & tracks (movies / episodes)
-  const prefs = getTrackPrefs(props.item.id);
+  // Until you pick, the buttons preview what the server will choose from your playback
+  // settings ("Auto"); a pick here travels to the player in the Play link.
+  void loadPrefs();
   const [fileIdx, setFileIdx] = createSignal(0);
   const file = (): MediaFile | undefined => it().files[fileIdx()] ?? it().files[0];
   const defaultAudio = () => (file()?.audio.find((a) => a.default) ?? file()?.audio[0])?.index ?? -1;
-  const [audio, setAudio] = createSignal<number>(prefs.audio ?? -2);
-  // Item choice → user's remembered subtitle language → off (see lib/tracks).
-  const [sub, setSub] = createSignal<number>(initialSubtitle(props.item.id, props.item.files[0]?.subtitles ?? []));
-  const audioIdx = () => (audio() === -2 || !file()?.audio.some((a) => a.index === audio()) ? defaultAudio() : audio());
+  /** null = automatic */
+  const [audio, setAudio] = createSignal<number | null>(null);
+  const [sub, setSub] = createSignal<number | null>(null);
+  const preview = createMemo(() => {
+    const p = playbackPrefs();
+    const f = file();
+    return p && f ? previewSelection(f.audio, f.subtitles, p) : undefined;
+  });
+  const audioIdx = () => {
+    const a = audio();
+    return a != null && file()?.audio.some((x) => x.index === a) ? a : preview()?.audio ?? defaultAudio();
+  };
+  const subIdx = () => sub() ?? preview()?.sub ?? -1;
   const audioText = () => {
     const a = file()?.audio.find((x) => x.index === audioIdx());
     return a ? audioLabel(a).short : "Default";
   };
   const subText = () => {
-    const s = file()?.subtitles.find((x) => x.index === sub());
+    const s = file()?.subtitles.find((x) => x.index === subIdx());
     return s ? subtitleLabel(s).short : "Off";
   };
   const [picker, setPicker] = createSignal<Picker>(null);
+  const trackOpts = () => ({ file: file()!.id, audio: audio(), sub: sub() });
+
+  // ---- Play on… (TVs): the player starts straight on the target.
+  const navigate = useNavigate();
+  const castNow = () => castFor(`item:${it().id}`);
+  const playOn = async (t: CastTarget) => {
+    const target = t.kind === "dlna" ? `dlna:${t.id}` : t.kind;
+    if (t.kind === "chromecast") {
+      // Chrome's device picker needs this click; the player then loads onto the session.
+      try {
+        await requestCastSession();
+      } catch (e) {
+        if (!(e instanceof CastCancelled)) toast(e instanceof Error ? e.message : "Couldn't connect", "error");
+        return;
+      }
+    }
+    navigate(toPath(playHref(it(), { ...trackOpts(), cast: target })));
+  };
+  /** "From your playback settings: English SDH" — what Automatic resolves to right now. */
+  const autoDetail = (kind: "audio" | "sub"): string => {
+    const p = preview();
+    if (!p) return "From your playback settings";
+    if (kind === "audio") {
+      const a = file()?.audio.find((x) => x.index === p.audio);
+      return `From your playback settings: ${a ? audioLabel(a).short : "default track"}`;
+    }
+    const s = file()?.subtitles.find((x) => x.index === p.sub);
+    return `From your playback settings: ${s ? subtitleLabel(s).short : "off"}`;
+  };
 
   // ---- Seasons & episodes (shows)
   const [seasons] = createResource(
@@ -181,7 +227,7 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
         <div class="actions" data-nav-group>
           <Show when={isShow()} fallback={
             <Show when={file()} fallback={<p class="note"><Icon name="alert" /> No playable file for this title yet.</p>}>
-              <a class="btn btn--primary btn--lg" href={playHref(it(), { file: file()!.id, audio: audio() === -2 ? null : audioIdx(), sub: sub() })} data-autofocus>
+              <a class="btn btn--primary btn--lg" href={playHref(it(), trackOpts())} data-autofocus>
                 <Icon name="play" />
                 <span>{progress() ? "Resume" : "Play"}</span>
                 <Show when={progress() && runtime()}>
@@ -189,7 +235,7 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
                 </Show>
               </a>
               <Show when={progress()}>
-                <a class="btn" href={playHref(it(), { file: file()!.id, fromStart: true, audio: audio() === -2 ? null : audioIdx(), sub: sub() })}>
+                <a class="btn" href={playHref(it(), { ...trackOpts(), fromStart: true })}>
                   <Icon name="restart" /> <span>From the beginning</span>
                 </a>
               </Show>
@@ -198,7 +244,13 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
               </button>
               <button type="button" class="btn btn--select" onClick={() => setPicker("sub")}>
                 <Icon name="cc" /> <span class="btn__label">Subtitles</span> <span class="btn__value">{subText()}</span>
+                <Show when={sub() == null && preview()}><small class="btn__tag">Auto</small></Show>
               </button>
+              <Show when={!TV}>
+                <button type="button" class="btn btn--select" onClick={() => setPicker("cast")}>
+                  <Icon name="cast" /> <span class="btn__label">{castNow() ? `On ${castNow()!.remote.device()}` : "Play on…"}</span>
+                </button>
+              </Show>
               <Show when={it().files.length > 1}>
                 <button type="button" class="btn btn--select" onClick={() => setPicker("version")}>
                   <Icon name="layers" /> <span class="btn__label">Version</span>
@@ -345,29 +397,33 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
       <Show when={picker() === "audio" && file()}>
         <Sheet
           title="Audio"
-          selected={audioIdx()}
-          options={file()!.audio.map((a) => ({ value: a.index, ...audioLabel(a) }))}
-          onSelect={(v) => {
-            setAudio(v);
-            setTrackPrefs(it().id, { audio: v });
-          }}
+          selected={audio() ?? AUTO}
+          options={[{ value: AUTO, title: "Automatic", detail: autoDetail("audio") }].concat(
+            file()!.audio.map((a) => ({ value: a.index, ...audioLabel(a) })),
+          )}
+          onSelect={(v) => setAudio(v === AUTO ? null : v)}
           onClose={() => setPicker(null)}
         />
       </Show>
       <Show when={picker() === "sub" && file()}>
         <Sheet
           title="Subtitles"
-          selected={sub()}
-          options={[{ value: -1, title: "Off" }].concat(
-            file()!.subtitles.map((s) => ({ value: s.index, ...subtitleLabel(s) })),
-          )}
-          onSelect={(v) => {
-            setSub(v);
-            setTrackPrefs(it().id, { sub: v });
-            rememberSubtitle(file()!.subtitles.find((x) => x.index === v) ?? null);
-          }}
+          selected={sub() ?? AUTO}
+          options={[
+            { value: AUTO, title: "Automatic", detail: autoDetail("sub") },
+            { value: -1, title: "Off", detail: "" },
+          ].concat(file()!.subtitles.map((s) => ({ value: s.index, ...subtitleLabel(s) })))}
+          onSelect={(v) => setSub(v === AUTO ? null : v)}
+          footer={
+            <a class="sheet__link" href={href("/settings/playback")}>
+              <Icon name="gear" /> Subtitle & audio preferences
+            </a>
+          }
           onClose={() => setPicker(null)}
         />
+      </Show>
+      <Show when={picker() === "cast"}>
+        <CastSheet airplay={false} current={castNow()?.target.id} onPick={(t) => void playOn(t)} onClose={() => setPicker(null)} />
       </Show>
       <Show when={picker() === "version"}>
         <Sheet
