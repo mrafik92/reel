@@ -5,10 +5,16 @@ export function itemHref(it: Pick<ItemSummary, "id" | "kind" | "parent_id">): st
   return href(`/item/${it.id}`);
 }
 
-export function playHref(it: Pick<ItemSummary, "id">, opts: { file?: number; fromStart?: boolean } = {}): string {
+export function playHref(
+  it: Pick<ItemSummary, "id">,
+  opts: { file?: number; fromStart?: boolean; audio?: number | null; sub?: number | null } = {},
+): string {
   const q: string[] = [];
   if (opts.file != null) q.push(`file=${opts.file}`);
   if (opts.fromStart) q.push("start=0");
+  // Track choices made on the detail page travel with the link (-1 = subtitles off).
+  if (opts.audio != null) q.push(`audio=${opts.audio}`);
+  if (opts.sub != null) q.push(`sub=${opts.sub}`);
   return href(`/play/${it.id}${q.length ? "?" + q.join("&") : ""}`);
 }
 

@@ -11,6 +11,7 @@ import { toast } from "../lib/toast";
 import { usePageFocus } from "../lib/focus";
 import { playHref } from "../lib/links";
 import { getTrackPrefs, setTrackPrefs } from "../lib/playback";
+import { initialSubtitle, rememberSubtitle } from "../lib/tracks";
 import { ErrorState } from "../components/States";
 import { RatingsStrip, ReviewsSection, useReviews } from "../components/Reviews";
 import { CastTile } from "../components/Cast";
@@ -59,15 +60,16 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
   const file = (): MediaFile | undefined => it().files[fileIdx()] ?? it().files[0];
   const defaultAudio = () => (file()?.audio.find((a) => a.default) ?? file()?.audio[0])?.index ?? -1;
   const [audio, setAudio] = createSignal<number>(prefs.audio ?? -2);
-  const [sub, setSub] = createSignal<number>(prefs.sub ?? -1);
+  // Item choice → user's remembered subtitle language → off (see lib/tracks).
+  const [sub, setSub] = createSignal<number>(initialSubtitle(props.item.id, props.item.files[0]?.subtitles ?? []));
   const audioIdx = () => (audio() === -2 || !file()?.audio.some((a) => a.index === audio()) ? defaultAudio() : audio());
   const audioText = () => {
     const a = file()?.audio.find((x) => x.index === audioIdx());
-    return a ? audioLabel(a).title + " · " + channelsLabel(a.channels) : "Default";
+    return a ? audioLabel(a).short : "Default";
   };
   const subText = () => {
     const s = file()?.subtitles.find((x) => x.index === sub());
-    return s ? subtitleLabel(s).title : "Off";
+    return s ? subtitleLabel(s).short : "Off";
   };
   const [picker, setPicker] = createSignal<Picker>(null);
 
@@ -179,7 +181,7 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
         <div class="actions" data-nav-group>
           <Show when={isShow()} fallback={
             <Show when={file()} fallback={<p class="note"><Icon name="alert" /> No playable file for this title yet.</p>}>
-              <a class="btn btn--primary btn--lg" href={playHref(it(), { file: file()!.id })} data-autofocus>
+              <a class="btn btn--primary btn--lg" href={playHref(it(), { file: file()!.id, audio: audio() === -2 ? null : audioIdx(), sub: sub() })} data-autofocus>
                 <Icon name="play" />
                 <span>{progress() ? "Resume" : "Play"}</span>
                 <Show when={progress() && runtime()}>
@@ -187,7 +189,7 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
                 </Show>
               </a>
               <Show when={progress()}>
-                <a class="btn" href={playHref(it(), { file: file()!.id, fromStart: true })}>
+                <a class="btn" href={playHref(it(), { file: file()!.id, fromStart: true, audio: audio() === -2 ? null : audioIdx(), sub: sub() })}>
                   <Icon name="restart" /> <span>From the beginning</span>
                 </a>
               </Show>
@@ -362,6 +364,7 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
           onSelect={(v) => {
             setSub(v);
             setTrackPrefs(it().id, { sub: v });
+            rememberSubtitle(file()!.subtitles.find((x) => x.index === v) ?? null);
           }}
           onClose={() => setPicker(null)}
         />

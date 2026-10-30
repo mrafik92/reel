@@ -1,4 +1,4 @@
-import { For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { focusElement, focusFirst, onBack } from "../navigation";
 import { Icon } from "./Icon";
@@ -24,6 +24,18 @@ export interface SheetProps<V> {
 export function Sheet<V>(props: SheetProps<V>): JSX.Element {
   let panel!: HTMLDivElement;
   let returnTo: HTMLElement | null = null;
+  // Optimistic: the tick moves the moment you pick, whatever the parent does next.
+  const [chosen, setChosen] = createSignal<V>(props.selected);
+  let picked = false;
+  const pick = (v: V) => {
+    if (picked) return;
+    picked = true;
+    setChosen(() => v);
+    // Close first, then apply: a selection that restarts playback (new session,
+    // re-render of the option list, or an error) can never leave the sheet stuck.
+    props.onClose();
+    setTimeout(() => props.onSelect(v), 0);
+  };
 
   onMount(() => {
     returnTo = document.activeElement as HTMLElement | null;
@@ -42,7 +54,19 @@ export function Sheet<V>(props: SheetProps<V>): JSX.Element {
 
   return (
     <Portal>
-      <div class="sheet" data-nav-trap data-nav-fixed>
+      <div
+        class="sheet"
+        data-nav-trap
+        data-nav-fixed
+        onKeyDown={(e) => {
+          // Escape closes the sheet only — never falls through to page "Back".
+          if (e.key === "Escape" || e.key === "Esc") {
+            e.preventDefault();
+            e.stopPropagation();
+            props.onClose();
+          }
+        }}
+      >
         <div class="sheet__scrim" onClick={() => props.onClose()} />
         <div class="sheet__panel" ref={panel} role="dialog" aria-modal="true" aria-label={props.title}>
           <header class="sheet__head">
@@ -55,14 +79,11 @@ export function Sheet<V>(props: SheetProps<V>): JSX.Element {
                   type="button"
                   role="radio"
                   class="sheet__opt"
-                  aria-checked={o.value === props.selected ? "true" : "false"}
-                  onClick={() => {
-                    props.onSelect(o.value);
-                    props.onClose();
-                  }}
+                  aria-checked={o.value === chosen() ? "true" : "false"}
+                  onClick={() => pick(o.value)}
                 >
                   <span class="sheet__mark">
-                    <Show when={o.value === props.selected}>
+                    <Show when={o.value === chosen()}>
                       <Icon name="check" />
                     </Show>
                   </span>

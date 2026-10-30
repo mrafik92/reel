@@ -737,34 +737,44 @@ button.player__mode[aria-pressed="true"] {
   border-color: var(--warn);
   color: var(--warn);
 }
-/* Subtitles: large, readable, clear of the bottom edge and of the controls.
-   Custom-rendered cues (Tizen AVPlay `cue` events) use the same metrics. */
-.player__cue {
+/* Subtitles: drawn by us on every platform (text tracks run `hidden`).
+   ~10% off the bottom; lifted above the measured control bar while it shows. */
+.subs {
   position: absolute;
-  left: 50%;
-  bottom: 9%;
-  z-index: 1;
-  max-width: 82%;
-  padding: 0.15em 0.45em;
-  transform: translateX(-50%);
-  border-radius: 0.25em;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  font: 700 3.6vh/1.32 var(--font-body);
-  text-align: center;
-  text-shadow: 0 0 0.25em #000, 0 0.06em 0.12em #000;
-  white-space: pre-line;
+  left: 0;
+  right: 0;
+  bottom: 10%;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  padding: 0 8%;
   pointer-events: none;
-  transition: bottom 260ms var(--ease);
+  transition: bottom 240ms var(--ease);
 }
-.player__stage.is-chrome .player__cue {
-  bottom: 25%;
+.subs.is-lifted {
+  bottom: var(--sub-lift, 26%);
 }
-.player__video::cue {
-  font: 700 3.6vh/1.32 "Atkinson Hyperlegible", sans-serif;
+.subs__text {
+  display: inline;
+  padding: 0.08em 0.45em;
+  border-radius: 0.22em;
+  background: rgba(0, 0, 0, 0.42);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
   color: #fff;
+  font: 700 3.2vh/1.42 var(--font-body);
+  text-align: center;
+  text-shadow: 0 0 0.2em #000, 0 0.05em 0.1em #000, 0 0 0.5em rgba(0, 0, 0, 0.6);
+  white-space: normal;
+}
+.subs__text i { font-style: italic; }
+.subs__text b { font-weight: 800; }
+html.tv .subs__text {
+  font-size: 4.2vh;
+}
+/* AVPlay plane: the overlay sits on a transparent page, keep the backdrop */
+html.reel-avplay-active .subs__text {
   background: rgba(0, 0, 0, 0.5);
-  text-shadow: 0 0 0.25em #000, 0 0.06em 0.12em #000;
 }
 .stream-info {
   position: absolute;

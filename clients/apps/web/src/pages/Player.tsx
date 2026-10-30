@@ -1,12 +1,13 @@
 import { createEffect, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
-  Icon, Sheet, audioLabel, channelsLabel, createPlayerAdapter, episodeCode, focusElement, formatClock,
-  AvPlayAdapter, languageName, mediaUrl, onBack, onRemoteKey,
+  Icon, Sheet, audioLabel, createPlayerAdapter, episodeCode, focusElement, formatClock,
+  AvPlayAdapter, mediaUrl, onBack, onRemoteKey, subtitleLabel,
   type ItemDetail, type MediaFile, type PlayerAdapter, type PlayerTracks,
 } from "@reel/ui";
 import { api, ApiError, invalidate, type DecideResponse, type SubtitleOption } from "../api";
-import { creditItem, decide, getTrackPrefs, MODE_LABEL, setTrackPrefs } from "../lib/playback";
+import { creditItem, decide, MODE_LABEL, setTrackPrefs } from "../lib/playback";
+import { initialAudio, initialSubtitle, rememberSubtitle } from "../lib/tracks";
 import { ErrorState } from "../components/States";
 import { getServerUrl } from "@reel/ui";
 
@@ -35,9 +36,13 @@ interface PlayError {
 
 function PlayerView(props: { item: ItemDetail }): JSX.Element {
   const navigate = useNavigate();
-  const [search] = useSearchParams<{ file?: string; start?: string; t?: string }>();
+  const [search] = useSearchParams<{ file?: string; start?: string; t?: string; audio?: string; sub?: string }>();
   const file: MediaFile | undefined =
     props.item.files.find((f) => String(f.id) === search.file) ?? props.item.files[0];
+
+  /** Human label for a subtitle (session options lack the codec, so merge it from the file). */
+  const subLabel = (s: { index: number; language?: string | null; title?: string | null; forced: boolean; external: boolean }) =>
+    subtitleLabel({ ...s, codec: file?.subtitles.find((x) => x.index === s.index)?.codec });
 
   const [playing, setPlaying] = createSignal(false);
   const [buffering, setBuffering] = createSignal(true);
@@ -51,15 +56,18 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
   const [series, setSeries] = createSignal<string>();
   const [session, setSession] = createSignal<DecideResponse>();
   const [info, setInfo] = createSignal(false);
-  const [cue, setCue] = createSignal<string | null>(null);
+  /** Sanitised HTML of the active subtitle cue(s); we render all subtitles ourselves. */
+  const [cueHtml, setCueHtml] = createSignal("");
+  /** Px from the bottom that clears the control bar while it's visible. */
+  const [subLift, setSubLift] = createSignal(0);
   /** Track list reported by native adapters (webOS <video>, Tizen AVPlay). */
   const [nativeTracks, setNativeTracks] = createSignal<PlayerTracks>();
   /** AVPlay draws on a plane *behind* the page: keep everything above it transparent. */
   const [nativePlane, setNativePlane] = createSignal(false);
 
-  const prefs = getTrackPrefs(props.item.id);
-  const [audio, setAudio] = createSignal<number | null>(prefs.audio ?? null);
-  const [sub, setSub] = createSignal(prefs.sub ?? -1);
+  // URL (picked on the detail page) → this item's last choice → user's subtitle language → off.
+  const [audio, setAudio] = createSignal<number | null>(initialAudio(props.item.id, file?.audio ?? [], search.audio));
+  const [sub, setSub] = createSignal(initialSubtitle(props.item.id, file?.subtitles ?? [], search.sub));
 
   let video!: HTMLVideoElement;
   let root!: HTMLDivElement;
@@ -138,7 +146,7 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
     wire(a, at);
     const textTracks = d.subtitles
       .filter((s) => s.url)
-      .map((s) => ({ id: String(s.index), url: mediaUrl(s.url)!, label: subName(s), language: s.language ?? undefined }));
+      .map((s) => ({ id: String(s.index), url: mediaUrl(s.url)!, label: subLabel(s).short, language: s.language ?? undefined }));
     try {
       await a.load(mediaUrl(d.url)!, { startPositionSec: at || undefined, autoplay: true, textTracks });
     } catch {
@@ -185,7 +193,7 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
         report(true);
       }),
       // Tizen AVPlay can't show <track>s: the adapter emits cues and we draw them.
-      a.on("cue", (c) => setCue(c.text)),
+      a.on("cue", (c) => setCueHtml(c.text ? cueToHtml(c.text) : "")),
       a.on("tracks", (t) => setNativeTracks(t)),
       a.on("error", (e) => {
         if (e.fatal) {
@@ -201,6 +209,11 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
   }
 
   // ---- subtitles -----------------------------------------------------------
+  // One renderer for every platform: text tracks run in `hidden` mode (cues
+  // still fire, nothing is drawn natively) and the active cues are drawn in our
+  // own overlay — same size/position everywhere, clear of the controls, and
+  // unified with the Tizen AVPlay `cue` event path.
+
   /** Web (hls.js / direct): sidecar VTT as <track> children. Native adapters take `textTracks`. */
   function attachTracks(a: PlayerAdapter, subs: SubtitleOption[]): void {
     if (a.selectTextTrack) return;
@@ -208,75 +221,100 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
       if (!s.url) continue;
       const t = document.createElement("track");
       t.kind = "subtitles";
-      t.label = subName(s);
+      t.label = subLabel(s).short;
       t.srclang = s.language ?? "";
       t.src = mediaUrl(s.url)!;
       t.setAttribute("data-index", String(s.index));
-      // Cues arrive when the VTT loads: lift them off the bottom edge.
-      t.addEventListener("load", () => {
-        enforceModes();
-        placeCues();
-      });
+      t.addEventListener("load", () => syncTracks());
       video.appendChild(t);
     }
   }
   function clearTracks(): void {
     Array.prototype.slice.call(video.querySelectorAll("track")).forEach((t: Element) => t.remove());
-    setCue(null);
+    bindCueTrack(undefined);
+    setCueHtml("");
   }
+
+  let cueTrack: TextTrack | undefined;
+  let offCue: (() => void) | undefined;
+  function bindCueTrack(t: TextTrack | undefined): void {
+    if (t === cueTrack) return;
+    offCue?.();
+    offCue = undefined;
+    cueTrack = t;
+    setCueHtml("");
+    if (!t) return;
+    const h = () => renderCues(t);
+    t.addEventListener("cuechange", h);
+    offCue = () => t.removeEventListener("cuechange", h);
+    renderCues(t);
+  }
+  function renderCues(t: TextTrack): void {
+    const active = t.activeCues;
+    const parts: string[] = [];
+    if (active) for (let i = 0; i < active.length; i++) parts.push(cueToHtml((active[i] as VTTCue).text ?? ""));
+    setCueHtml(parts.filter(Boolean).join("<br>"));
+  }
+
   /**
-   * Subtitle placement for <track> rendering (web + webOS): snap-to-lines with a
-   * negative line counts up from the bottom, so multi-line cues grow upwards.
-   * ≈2 lines (~9% of the height) above the edge normally, ~7 lines when the
-   * control bar is up so the two never collide.
+   * Exactly the chosen track is active, in `hidden` mode (we draw it). Re-runs on
+   * `change`/`addtrack`/`load`: Chrome auto-enables same-language tracks, and
+   * native adapters may switch a track to `showing` themselves.
    */
-  function placeCues(): void {
+  function syncTracks(): void {
     if (!video) return;
-    const line = visible() || !playing() ? -7 : -3;
+    const want = session()?.decision.subtitle.type === "burn_in" ? -1 : sub();
     const tracks = video.textTracks;
-    for (let i = 0; i < tracks.length; i++) {
-      const cues = tracks[i]!.cues;
-      if (!cues) continue;
-      for (let j = 0; j < cues.length; j++) {
-        const c = cues[j] as VTTCue;
-        if (typeof c.line === "undefined") continue;
-        if (c.snapToLines !== true) c.snapToLines = true;
-        if (c.line !== line) c.line = line;
+    let chosen: TextTrack | undefined;
+    if (!adapter?.selectTextTrack) {
+      const els = video.querySelectorAll("track");
+      for (let i = 0; i < els.length; i++) {
+        const el = els[i] as HTMLTrackElement;
+        const on = Number(el.getAttribute("data-index")) === want;
+        const mode: TextTrackMode = on ? "hidden" : "disabled";
+        if (el.track.mode !== mode) el.track.mode = mode;
+        if (on) chosen = el.track;
+      }
+    } else {
+      // webOS <video>: whatever the adapter enabled, draw it ourselves instead.
+      for (let i = 0; i < tracks.length; i++) {
+        const t = tracks[i]!;
+        if (t.mode === "showing") t.mode = "hidden";
+        if (t.mode === "hidden" && want >= 0) chosen = t;
       }
     }
+    bindCueTrack(chosen);
   }
-  createEffect(() => {
-    visible();
-    playing();
-    placeCues();
-  });
 
   function applySubtitle(d: DecideResponse | undefined = session()): void {
     const want = sub();
     // Burned-in subs are part of the picture; nothing to toggle client-side.
-    if (d?.decision.subtitle.type === "burn_in") return;
-    if (adapter?.selectTextTrack) {
-      adapter.selectTextTrack(want >= 0 ? String(want) : null);
+    if (d?.decision.subtitle.type === "burn_in") {
+      bindCueTrack(undefined);
       return;
     }
-    enforceModes();
-    placeCues();
+    if (adapter?.selectTextTrack) adapter.selectTextTrack(want >= 0 ? String(want) : null);
+    if (want < 0) setCueHtml("");
+    syncTracks();
   }
-  /** Exactly the chosen sidecar track shows. Chrome may auto-enable another
-   *  track of the same language once its VTT loads, so this re-runs on `change`. */
-  function enforceModes(): void {
-    if (!video || adapter?.selectTextTrack) return;
-    const want = session()?.decision.subtitle.type === "burn_in" ? -1 : sub();
-    const els = video.querySelectorAll("track");
-    for (let i = 0; i < els.length; i++) {
-      const el = els[i] as HTMLTrackElement;
-      const mode = Number(el.getAttribute("data-index")) === want ? "showing" : "disabled";
-      if (el.track.mode !== mode) el.track.mode = mode;
-    }
-  }
+
+  /** Keep subtitles above the control bar while it's up (measured, not guessed). */
+  const measureLift = () => {
+    if (!root || !bar) return;
+    const top = bar.getBoundingClientRect().top - root.getBoundingClientRect().top;
+    setSubLift(Math.max(0, root.clientHeight - top + root.clientHeight * 0.025));
+  };
+  createEffect(() => {
+    visible();
+    playing();
+    requestAnimationFrame(measureLift);
+  });
+
   const chooseSub = (v: number) => {
+    if (v === sub()) return;
     setSub(v);
     setTrackPrefs(props.item.id, { sub: v });
+    rememberSubtitle(subList().find((x) => x.index === v) ?? null);
     const s = session();
     const opt = s?.subtitles.find((x) => x.index === v);
     const burned = s?.decision.subtitle.type === "burn_in";
@@ -346,12 +384,15 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
     }
     void start(resumeAt());
     // Tracks added by native adapters (webOS) get the same placement once their cues load.
-    const onAddTrack = (e: TrackEvent) => e.track && e.track.addEventListener("cuechange", placeCues);
+    const onAddTrack = () => syncTracks();
     video.textTracks.addEventListener("addtrack", onAddTrack as EventListener);
-    video.textTracks.addEventListener("change", enforceModes);
+    video.textTracks.addEventListener("change", syncTracks);
+    window.addEventListener("resize", measureLift);
     onCleanup(() => {
       video.textTracks.removeEventListener("addtrack", onAddTrack as EventListener);
-      video.textTracks.removeEventListener("change", enforceModes);
+      video.textTracks.removeEventListener("change", syncTracks);
+      window.removeEventListener("resize", measureLift);
+      offCue?.();
     });
     focusElement(playBtn, { smooth: false });
     poke();
@@ -471,14 +512,16 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
   const pct = () => (dur() ? (shown() / dur()) * 100 : 0);
   const bufPct = () => (dur() ? Math.min(100, (buffered() / dur()) * 100) : 0);
   const audioList = () => session()?.audio ?? file?.audio ?? [];
-  const subList = () => session()?.subtitles ?? [];
+  /** Session list (has VTT urls); falls back to the file's streams while (re)deciding. */
+  const subList = (): { index: number; language?: string | null; title?: string | null; forced: boolean; external: boolean; url?: string | null }[] =>
+    session()?.subtitles ?? file?.subtitles ?? [];
   const audioText = () => {
     const a = audioList().find((x) => x.index === audio());
-    return a ? `${audioLabel(a).title} ${channelsLabel(a.channels)}` : "Default";
+    return a ? audioLabel(a).short : "Default";
   };
   const subText = () => {
     const s = subList().find((x) => x.index === sub());
-    return s ? subName(s) : "Off";
+    return s ? subLabel(s).short : "Off";
   };
   const mode = () => session()?.mode;
 
@@ -499,8 +542,15 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
         onDblClick={fullscreen}
       />
 
-      <Show when={cue()}>
-        <div class="player__cue" aria-live="polite">{cue()}</div>
+      <Show when={cueHtml()}>
+        <div
+          class="subs"
+          classList={{ "is-lifted": visible() || !playing() }}
+          style={{ "--sub-lift": `${subLift()}px` }}
+          aria-live="off"
+        >
+          <span class="subs__text" innerHTML={cueHtml()} />
+        </div>
       </Show>
 
       <Show when={buffering() && !error()}>
@@ -639,13 +689,12 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
           title="Subtitles"
           selected={sub()}
           options={[{ value: -1, title: "Off" } as { value: number; title: string; detail?: string }].concat(
-            subList().map((s) => ({
-              value: s.index,
-              title: subName(s),
-              detail: [s.forced ? "Forced" : "", s.external ? "External" : "", s.url ? "" : "Burned in (transcodes)"]
-                .filter(Boolean)
-                .join(" · ") || undefined,
-            })),
+            subList().map((s) => {
+              const l = subLabel(s);
+              // No VTT url in the session = image subs: they're burned in (forces a transcode).
+              const burn = session() && !s.url ? " · burned in (transcodes)" : "";
+              return { value: s.index, title: l.title, detail: l.detail + burn };
+            }),
           )}
           onSelect={chooseSub}
           onClose={() => {
@@ -658,8 +707,18 @@ function PlayerView(props: { item: ItemDetail }): JSX.Element {
   );
 }
 
-function subName(s: { title?: string | null; language?: string | null }): string {
-  return s.title || languageName(s.language);
+/** Sanitise a cue for innerHTML: escape everything, then re-allow <i>/<b>/<u>; drop VTT/ASS markup. */
+function cueToHtml(text: string): string {
+  const esc = text
+    .replace(/\{\\[^}]*\}/g, "") // ASS override tags left in SRT ({\an8})
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return esc
+    .replace(/&lt;(\/?)(i|b|u)&gt;/gi, "<$1$2>")
+    .replace(/&lt;\/?[^&]{0,40}?&gt;/g, "") // <c.yellow>, <v Speaker>, <00:01.000>, <font …>
+    .replace(/\r?\n/g, "<br>")
+    .trim();
 }
 
 function decideError(e: unknown): PlayError {

@@ -73,7 +73,8 @@ export default defineConfig({
   // webOS/Tizen packages load from file:// and need relative ones (package.sh sets VITE_TARGET=tv).
   base: process.env.VITE_TARGET === "tv" ? "./" : "/",
   server: {
-    proxy: { "/api": { target: "http://localhost:8420", changeOrigin: true, ws: true } },
+    // REEL_PROXY_TARGET=https://reel.example.com bun run dev → develop against a remote server.
+    proxy: { "/api": { target: process.env.REEL_PROXY_TARGET || "http://localhost:8420", changeOrigin: true, ws: true, secure: true } },
   },
   // hls.js is lazy-loaded only for HLS sources, so its size doesn't hit first paint.
   build: { target: "es2019", cssTarget: "chrome68", chunkSizeWarningLimit: 700 },

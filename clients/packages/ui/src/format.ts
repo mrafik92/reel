@@ -103,28 +103,131 @@ const LANGS: Record<string, string> = {
   en: "English", eng: "English", fr: "French", fre: "French", fra: "French", de: "German", ger: "German",
   deu: "German", es: "Spanish", spa: "Spanish", it: "Italian", ita: "Italian", ja: "Japanese", jpn: "Japanese",
   ko: "Korean", kor: "Korean", pt: "Portuguese", por: "Portuguese", nl: "Dutch", dut: "Dutch", nld: "Dutch",
-  sv: "Swedish", swe: "Swedish", da: "Danish", dan: "Danish", no: "Norwegian", nor: "Norwegian",
+  sv: "Swedish", swe: "Swedish", da: "Danish", dan: "Danish", no: "Norwegian", nor: "Norwegian", nb: "Norwegian",
   pl: "Polish", pol: "Polish", ru: "Russian", rus: "Russian", zh: "Chinese", chi: "Chinese", zho: "Chinese",
-  ar: "Arabic", ara: "Arabic", hi: "Hindi", hin: "Hindi", tr: "Turkish", tur: "Turkish", und: "Unknown",
+  ar: "Arabic", ara: "Arabic", hi: "Hindi", hin: "Hindi", tr: "Turkish", tur: "Turkish", fi: "Finnish", fin: "Finnish",
+  el: "Greek", gre: "Greek", ell: "Greek", he: "Hebrew", heb: "Hebrew", cs: "Czech", cze: "Czech", ces: "Czech",
+  hu: "Hungarian", hun: "Hungarian", ro: "Romanian", rum: "Romanian", ron: "Romanian", th: "Thai", tha: "Thai",
+  vi: "Vietnamese", vie: "Vietnamese", id: "Indonesian", ind: "Indonesian", uk: "Ukrainian", ukr: "Ukrainian",
+  fa: "Persian", per: "Persian", fas: "Persian", bg: "Bulgarian", bul: "Bulgarian", hr: "Croatian", hrv: "Croatian",
+  sr: "Serbian", srp: "Serbian", sk: "Slovak", slo: "Slovak", slk: "Slovak", sl: "Slovenian", slv: "Slovenian",
+  ms: "Malay", may: "Malay", msa: "Malay", is: "Icelandic", ice: "Icelandic", isl: "Icelandic",
 };
+/** ISO 639-2/B → 639-2/T (Intl only knows the T forms). */
+const B2T: Record<string, string> = {
+  fre: "fra", ger: "deu", dut: "nld", chi: "zho", cze: "ces", gre: "ell", per: "fas", rum: "ron", slo: "slk",
+  wel: "cym", arm: "hye", baq: "eus", bur: "mya", geo: "kat", ice: "isl", mac: "mkd", mao: "mri", may: "msa",
+  alb: "sqi", tib: "bod",
+};
+let displayNames: { of(code: string): string | undefined } | null | undefined;
+function intlName(code: string): string | undefined {
+  if (displayNames === undefined) {
+    try {
+      // Chrome 81+; older TV browsers fall back to the table above.
+      const DN = (Intl as unknown as { DisplayNames?: new (l: string[], o: { type: string }) => { of(c: string): string | undefined } }).DisplayNames;
+      displayNames = DN ? new DN(["en"], { type: "language" }) : null;
+    } catch {
+      displayNames = null;
+    }
+  }
+  if (!displayNames) return undefined;
+  try {
+    const n = displayNames.of(code);
+    return n && n.toLowerCase() !== code.toLowerCase() ? n.charAt(0).toUpperCase() + n.slice(1) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when a language code is missing or explicitly undetermined. */
+export function isUnknownLanguage(code: string | null | undefined): boolean {
+  return !code || /^(und|unk|unknown|mis|zxx|mul)$/i.test(code);
+}
+
+/** "eng" / "en" / "fre" / "pt-BR" → "English" / "French" / "Portuguese (Brazil)". */
 export function languageName(code: string | null | undefined): string {
-  if (!code) return "Unknown";
-  return LANGS[code.toLowerCase()] ?? code.toUpperCase();
+  if (isUnknownLanguage(code)) return "Unknown";
+  const raw = code!.trim();
+  const lower = raw.toLowerCase().replace("_", "-");
+  const base = lower.split("-")[0]!;
+  return intlName(B2T[base] ? B2T[base]! + lower.slice(base.length) : lower) ?? LANGS[lower] ?? LANGS[base] ?? raw.toUpperCase();
 }
 
-export function audioLabel(a: AudioStreamInfo): { title: string; detail: string } {
+/** Stable key for "same language" comparisons across 2- and 3-letter codes. */
+export function languageKey(code: string | null | undefined): string {
+  return isUnknownLanguage(code) ? "" : languageName(code).toLowerCase();
+}
+
+const SHORT_CODEC: Record<string, string> = {
+  aac: "AAC", ac3: "AC3", eac3: "E-AC3", truehd: "TrueHD", dts: "DTS", "dts-hd": "DTS-HD", dtshd: "DTS-HD",
+  flac: "FLAC", opus: "Opus", mp3: "MP3", mp2: "MP2", vorbis: "Vorbis", pcm_s16le: "PCM", pcm_s24le: "PCM", alac: "ALAC",
+  subrip: "SRT", srt: "SRT", ass: "ASS", ssa: "SSA", webvtt: "WebVTT", vtt: "WebVTT", mov_text: "Text",
+  hdmv_pgs_subtitle: "PGS", pgs: "PGS", dvd_subtitle: "VobSub", dvb_subtitle: "DVB",
+};
+export function codecShort(c: string | null | undefined): string {
+  if (!c) return "";
+  return SHORT_CODEC[c.toLowerCase()] ?? c.toUpperCase();
+}
+
+/** Looks like a file name (stream titles copied from the file): don't show it. */
+function isFileName(t: string): boolean {
+  return /\.(srt|ass|ssa|vtt|sub|idx|sup|smi|txt|mkv|mp4)$/i.test(t) || /[\[\]{}]/.test(t);
+}
+/** Whatever a title adds beyond language/codec/flags, or "" if it's redundant. */
+function extraTitle(title: string | null | undefined, lang: string): string {
+  if (!title || isFileName(title.trim())) return "";
+  const rest = title
+    .replace(new RegExp(lang.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), "")
+    .replace(/\b(srt|subrip|ass|ssa|pgs|vobsub|webvtt|vtt|text|sdh|cc|hi|forced|full|default|subtitles?|subs?|aac|ac3|e-?ac3|dts(-hd)?|truehd|flac|stereo|mono|[257]\.1|2\.0)\b/gi, "")
+    .replace(/[()\-–—_:·,.|/]+/g, " ")
+    .trim();
+  return rest ? title.trim() : "";
+}
+
+export interface TrackLabel {
+  /** Main line, e.g. "English" or "English — Commentary". */
+  title: string;
+  /** Small print, e.g. "SDH · External · SRT". */
+  detail: string;
+  /** Compact form for buttons, e.g. "English SDH". */
+  short: string;
+}
+
+/** "English · AAC 5.1", or "AAC 5.1" when the language is unknown. */
+export function audioLabel(a: Pick<AudioStreamInfo, "codec" | "channels" | "language" | "title"> & { default?: boolean }): TrackLabel {
+  const tech = `${codecShort(a.codec)} ${channelsLabel(a.channels)}`.trim();
+  const known = !isUnknownLanguage(a.language);
+  const lang = known ? languageName(a.language) : "";
+  const extra = extraTitle(a.title, lang);
+  const main = known ? `${lang} · ${tech}` : tech;
   return {
-    title: a.title || languageName(a.language),
-    detail: `${a.title ? languageName(a.language) + " · " : ""}${codecName(a.codec)} ${channelsLabel(a.channels)}`,
+    title: extra ? `${main} — ${extra}` : main,
+    detail: a.default ? "Default" : "",
+    short: main,
   };
 }
 
-export function subtitleLabel(s: SubtitleStreamInfo): { title: string; detail: string } {
-  const flags = [s.forced ? "Forced" : "", s.external ? "External" : ""].filter(Boolean).join(" · ");
-  return {
-    title: s.title || languageName(s.language),
-    detail: `${s.title ? languageName(s.language) + " · " : ""}${codecName(s.codec)}${flags ? " · " + flags : ""}`,
-  };
+/** Flags SDH/HI from stream flags or filename/title tokens (`.hi.`, `.sdh.`, `cc`). */
+export function isSdh(s: { title?: string | null }): boolean {
+  const t = s.title ?? "";
+  return /(^|[.\s_\-[(])(hi|sdh|cc)([.\s_\-\])]|$)/i.test(t) || /hearing[\s-]?impaired|\bsdh\b/i.test(t);
+}
+
+/** Language name + SDH/Forced, external/embedded and codec as small print. */
+export function subtitleLabel(s: Pick<SubtitleStreamInfo, "language" | "title" | "forced" | "external"> & { codec?: string | null }): TrackLabel {
+  let code = s.language;
+  if (isUnknownLanguage(code) && s.title) {
+    // External files often only carry the language in the name: "Movie.en.hi.srt".
+    const m = /[._-]([a-z]{2,3})(?:[._-](?:hi|sdh|cc|forced))*\.(?:srt|ass|ssa|vtt|sub|sup)$/i.exec(s.title);
+    if (m && !isUnknownLanguage(m[1]) && languageName(m[1]) !== m[1]!.toUpperCase()) code = m[1];
+  }
+  const lang = languageName(code);
+  const sdh = isSdh(s);
+  const forced = s.forced || /\bforced\b/i.test(s.title ?? "");
+  const extra = extraTitle(s.title, lang);
+  const detail = [sdh ? "SDH" : "", forced ? "Forced" : "", s.external ? "External" : "Embedded", codecShort(s.codec)].filter(Boolean).join(" · ");
+  const short = `${lang}${sdh ? " SDH" : ""}${forced ? " (Forced)" : ""}`;
+  return { title: extra ? `${lang} — ${extra}` : lang, detail, short };
 }
 
 /** Short technical tags for a file, e.g. ["4K", "Dolby Vision", "HEVC", "5.1"]. */
@@ -138,7 +241,7 @@ export function fileTags(f: MediaFile | undefined): string[] {
     out.push(codecName(f.video.codec));
   }
   const a = f.audio.find((x) => x.default) ?? f.audio[0];
-  if (a) out.push(`${codecName(a.codec)} ${channelsLabel(a.channels)}`);
+  if (a) out.push(`${codecShort(a.codec)} ${channelsLabel(a.channels)}`);
   return out.filter(Boolean);
 }
 
