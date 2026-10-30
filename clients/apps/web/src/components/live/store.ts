@@ -8,11 +8,24 @@
  */
 import { createMemo, createRoot, createSignal } from "solid-js";
 import { iptv, type IptvChannel, type IptvGroup, type NowNext, type Program } from "../../api/iptv";
+import { currentUser } from "../../lib/auth";
+import { foldText } from "./groups";
 
 export type Filter = { kind: "all" } | { kind: "favorites" } | { kind: "group"; name: string };
 
 const FILTER_KEY = "reel.live.filter";
-const RECENT_KEY = "reel.live.recentGroups";
+/** Per user: pinned / hidden / recently watched groups (localStorage for now). */
+const PREFS_KEY = "reel.live.groups";
+export interface GroupPrefs {
+  pinned: string[];
+  hidden: string[];
+  watched: string[];
+}
+const prefsKey = () => `${PREFS_KEY}:${currentUser()?.id ?? 0}`;
+function readPrefs(): GroupPrefs {
+  const p = readJson<Partial<GroupPrefs>>(prefsKey()) ?? {};
+  return { pinned: p.pinned ?? [], hidden: p.hidden ?? [], watched: p.watched ?? [] };
+}
 const LAST_KEY = "reel.live.last";
 
 function readJson<T>(k: string): T | undefined {
@@ -49,13 +62,14 @@ const store = createRoot(() => {
   const [filter, setFilterSig] = createSignal<Filter>({ kind: "favorites" });
   const [query, setQuery] = createSignal("");
   const [remote, setRemote] = createSignal<{ q: string; list: IptvChannel[] } | undefined>();
-  const [recent, setRecent] = createSignal<string[]>(readJson<string[]>(RECENT_KEY) ?? []);
+  const [prefs, setPrefs] = createSignal<GroupPrefs>({ pinned: [], hidden: [], watched: [] });
   const [clock, setClock] = createSignal(nowSec());
   const [nowRev, setNowRev] = createSignal(0);
   const [knownRev, setKnownRev] = createSignal(0);
   setInterval(() => setClock(nowSec()), 15_000);
 
   /** Group lists derived from the full list once it's there (instant switching). */
+  const hiddenSet = createMemo(() => new Set(prefs().hidden));
   const groupIndex = createMemo(() => {
     const a = all();
     if (!a) return undefined;
@@ -69,23 +83,27 @@ const store = createRoot(() => {
 
   return {
     state, setState, error, setError, groups, setGroups, favs, setFavs, all, setAll, byGroup, setByGroup, filter, setFilterSig, query, setQuery,
-    remote, setRemote, recent, setRecent, clock, setClock, nowRev, setNowRev, knownRev, setKnownRev, groupIndex,
+    remote, setRemote, prefs, setPrefs, hiddenSet, clock, setClock, nowRev, setNowRev, knownRev, setKnownRev, groupIndex,
   };
 });
 
 export const loadState = store.state;
 export const channelsError = store.error;
-export const groups = store.groups;
+/** Every group from the provider (incl. hidden ones — the group browser shows those separately). */
+export const allGroups = store.groups;
+/** Groups the user hasn't hidden. */
+export const groups = createRoot(() => createMemo(() => store.groups().filter((g) => !store.hiddenSet().has(g.name))));
+export const groupPrefs = store.prefs;
+export const isHidden = (name: string) => store.hiddenSet().has(name);
 export const filter = store.filter;
 export const query = store.query;
-export const recentGroups = store.recent;
 /** Ticks every 15 s — drives progress bars and the guide's now line. */
 export const clock = store.clock;
 /** The full channel list (undefined until the background load finishes). */
 export const allChannels = store.all;
 export const favourites = store.favs;
 
-export const totalChannels = () => store.groups().reduce((n, g) => n + g.count, 0);
+export const totalChannels = () => groups().reduce((n, g) => n + g.count, 0);
 export const favouriteCount = () => (store.favs() ?? []).length;
 
 // ---- known channels (anything we've seen, for lookups by id) -----------------------
@@ -131,6 +149,7 @@ export function loadChannels(force = false): Promise<void> {
     .then(([g, f]) => {
       loadedAt = Date.now();
       g = g.slice().sort((a, b) => a.name.localeCompare(b.name));
+      store.setPrefs(readPrefs());
       store.setGroups(g);
       store.setFavs(f);
       remember(f);
@@ -143,11 +162,11 @@ export function loadChannels(force = false): Promise<void> {
       // Starting view: the saved one if it still exists, else favourites, else the first group.
       const saved = readJson<Filter>(FILTER_KEY);
       let start: Filter =
-        validFilter(saved) && (saved.kind !== "group" || g.some((x) => x.name === saved.name)) && (saved.kind !== "favorites" || f.length > 0)
+        validFilter(saved) && (saved.kind !== "group" || g.some((x) => x.name === saved.name && !isHidden(x.name))) && (saved.kind !== "favorites" || f.length > 0)
           ? saved
           : f.length
             ? { kind: "favorites" }
-            : { kind: "group", name: g[0]!.name };
+            : { kind: "group", name: (groups()[0] ?? g[0]!).name };
       if (force && store.state() === "ready") start = store.filter();
       store.setFilterSig(start);
       void ensureList(start);
@@ -212,11 +231,6 @@ function ensureList(f: Filter): Promise<void> {
 export function setFilter(f: Filter): void {
   store.setFilterSig(f);
   writeJson(FILTER_KEY, f);
-  if (f.kind === "group") {
-    const r = [f.name].concat(store.recent().filter((x) => x !== f.name)).slice(0, 8);
-    store.setRecent(r);
-    writeJson(RECENT_KEY, r);
-  }
   void ensureList(f);
 }
 
@@ -226,7 +240,7 @@ export function filterLabel(f: Filter = store.filter()): string {
 
 // ---- search -----------------------------------------------------------------------------
 
-const fold = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const fold = foldText;
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Instant over the full list once loaded; until then the server's `q=` (debounced). */
@@ -258,7 +272,8 @@ const searchMemo = createRoot(() =>
         // Number first, then names containing the digits.
         for (const c of a) if (c.number === num) out.push(c);
       }
-      for (const c of a) if (fold(c.name).indexOf(t) >= 0 && c.number !== num) out.push(c);
+      const hid = store.hiddenSet();
+      for (const c of a) if (fold(c.name).indexOf(t) >= 0 && c.number !== num && !hid.has(c.group ?? "")) out.push(c);
       return out;
     }
     if (num != null) {
@@ -288,9 +303,17 @@ export function filtered(): IptvChannel[] {
   return listFor(store.filter()) ?? [];
 }
 
+const visibleAll = createRoot(() =>
+  createMemo(() => {
+    const a = store.all();
+    const hid = store.hiddenSet();
+    return a && hid.size ? a.filter((c) => !hid.has(c.group ?? "")) : a;
+  }),
+);
+
 function listFor(f: Filter): IptvChannel[] | undefined {
   if (f.kind === "favorites") return store.favs();
-  if (f.kind === "all") return store.all();
+  if (f.kind === "all") return visibleAll();
   const gi = store.groupIndex();
   if (gi) return gi[f.name] ?? [];
   return store.byGroup()[f.name];
@@ -431,4 +454,51 @@ export function fmtDay(unix: number): string {
   } catch {
     return d.toDateString();
   }
+}
+
+// ---- group preferences ------------------------------------------------------------------
+
+function savePrefs(p: GroupPrefs): void {
+  store.setPrefs(p);
+  writeJson(prefsKey(), p);
+}
+
+export function pinGroup(name: string, on: boolean): void {
+  const p = store.prefs();
+  savePrefs({ ...p, pinned: on ? [name].concat(p.pinned.filter((x) => x !== name)) : p.pinned.filter((x) => x !== name) });
+}
+
+export function hideGroup(name: string, on: boolean): void {
+  const p = store.prefs();
+  savePrefs({
+    ...p,
+    hidden: on ? p.hidden.concat(name).filter((x, i, l) => l.indexOf(x) === i) : p.hidden.filter((x) => x !== name),
+    pinned: on ? p.pinned.filter((x) => x !== name) : p.pinned,
+  });
+  // Hiding the group you're on moves you somewhere visible.
+  const f = store.filter();
+  if (on && f.kind === "group" && f.name === name) {
+    const next = groups()[0];
+    setFilter(favouriteCount() ? { kind: "favorites" } : next ? { kind: "group", name: next.name } : { kind: "all" });
+  }
+}
+
+/** A channel from this group was watched: it goes to the front of "recently watched". */
+export function noteWatched(group: string | null | undefined): void {
+  if (!group) return;
+  const p = store.prefs();
+  if (p.watched[0] === group) return;
+  savePrefs({ ...p, watched: [group].concat(p.watched.filter((x) => x !== group)).slice(0, 12) });
+}
+
+/** Up to `n` channels with logos for a group's tile (needs the full list or the group loaded). */
+export function groupLogos(name: string, n = 4): IptvChannel[] {
+  const list = store.groupIndex()?.[name] ?? store.byGroup()[name];
+  if (!list) return [];
+  const out: IptvChannel[] = [];
+  for (const c of list) {
+    if (c.logo_url) out.push(c);
+    if (out.length >= n) break;
+  }
+  return out;
 }

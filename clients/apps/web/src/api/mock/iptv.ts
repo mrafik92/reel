@@ -26,26 +26,46 @@ function mode(): "empty" | "big" | "normal" {
   }
 }
 
-const BIG_WORDS = ["Africa", "Arabic", "Sports", "Kids", "Movies", "News", "Music", "Docs", "Series", "Premium", "Local", "Religious", "Comedy", "Classic", "World"];
-const BIG_LANDS = ["UK", "France", "Germany", "Egypt", "Saudi", "Morocco", "Turkey", "India", "USA", "Canada", "Spain", "Italy"];
+/** 175 group names in the style of a real Arabic/international Xtream provider. */
+const BIG_GROUPS: string[] = (() => {
+  const fixed = [
+    "Action English - اكشن اجنبي", "Actors Movies - افلام الممثلين", "Africa - أفريقيا", "AFRICA DSTV", "AFRICA DSTV Sports", "Aghani Live - اغاني مطربين",
+    "Al Majd - باقه المجد الاسلامية", "AL Rabiaa | الرابعة", "Algeria - الجزائر", "Alkass | الكاس", "Alwan Entartainment | اللوان الترفيهيه",
+    "Alwan Sports | اللوان الرياضية", "Amazon Prime - امازون برايم", "Amazon Prime France", "Amos", "Shahid Sports | شاهد سبورت", "Shahid VIP | شاهد",
+    "beIN Sports - بي ان سبورت", "beIN Sports 4K", "beIN Movies - بي ان افلام", "beIN Entertainment", "SSC Sports | السعودية الرياضية", "AD Sports | ابوظبي الرياضية",
+    "MBC - ام بي سي", "MBC Drama | ام بي سي دراما", "Rotana | روتانا", "OSN Movies", "OSN Series", "OSN Kids", "Egypt - مصر", "Egypt Sports - مصر رياضة",
+    "Saudi - السعودية", "Emirates - الامارات", "Qatar - قطر", "Kuwait - الكويت", "Bahrain - البحرين", "Oman - عمان", "Iraq - العراق", "Syria - سوريا",
+    "Lebanon - لبنان", "Jordan - الاردن", "Palestine - فلسطين", "Yemen - اليمن", "Sudan - السودان", "Libya - ليبيا", "Morocco - المغرب", "Tunisia - تونس",
+    "Mauritania - موريتانيا", "Kids - اطفال", "Cartoon - كرتون", "Spacetoon | سبيستون", "Quran - قرآن كريم", "Islamic - اسلامية", "Christian - مسيحية",
+    "News - أخبار", "Arabic News | الاخبار العربية", "Documentary - وثائقي", "Nat Geo Abu Dhabi | ناشيونال جيوغرافيك", "Music - اغاني", "Classic Music - طرب",
+    "Ramadan 2026 - رمضان", "Netflix Series - مسلسلات نتفليكس", "Turkish Series - مسلسلات تركية", "Arabic Series 24/7 - مسلسلات عربية", "Arabic Movies - افلام عربي",
+    "Egyptian Movies - افلام مصرية", "Hindi Movies - افلام هندي", "Asian Movies - افلام اسيوية", "Comedy - كوميدي", "Horror - رعب", "Kurdistan - كردستان",
+    "PPV Events", "Live Events - مباريات مباشرة", "WWE | مصارعة", "UFC & Boxing",
+  ];
+  const tagged: string[] = [];
+  const lands: [string, string][] = [["UK", "|"], ["US", "|"], ["CA", "|"], ["FR", " -"], ["DE", ":"], ["IT", ":"], ["ES", ":"], ["PT", ":"], ["NL", ":"], ["PL", ":"], ["TR", ":"], ["IN", " |"], ["PK", " |"], ["PH", " |"], ["EX-YU", ":"], ["AL", ":"], ["GR", ":"], ["RU", ":"], ["LAT", " |"], ["BR", ":"]];
+  const topics = ["Sports", "Movies", "News", "Kids", "Entertainment", "Documentary", "Music", "Series"];
+  lands.forEach(([code, sep], i) => topics.slice(0, 3 + (i % 5)).forEach((t) => tagged.push(`${code}${sep} ${t}`)));
+  return fixed.concat(tagged).slice(0, 175);
+})();
 
 /** Shape of a real Xtream provider: thousands of channels, many groups, no favourites, no EPG. */
 function buildBig(): Chan[] {
   const r = rng(42);
   const out: Chan[] = [];
   let id = 1;
-  for (let g = 0; g < 175; g++) {
-    const name = `${BIG_WORDS[g % BIG_WORDS.length]} ${BIG_LANDS[Math.floor(g / BIG_WORDS.length) % BIG_LANDS.length]}${g >= 180 ? " " + g : ""} - مجموعة ${g + 1}`;
-    const n = g === 174 ? 11950 - (id - 1) : 20 + Math.floor(r() * 90);
+  BIG_GROUPS.forEach((name, g) => {
+    const n = g === BIG_GROUPS.length - 1 ? Math.max(5, 11950 - (id - 1)) : 15 + Math.floor(r() * 110);
+    const base = name.split(/ [-|] /)[0]!.replace(/^[A-Z-]+[:|]\s*/, "").trim();
     for (let i = 0; i < n && id <= 11950; i++) {
-      const cname = `${name.split(" - ")[0]} ${i + 1}${r() > 0.7 ? " FHD" : r() > 0.5 ? " HD" : ""}`;
+      const cname = `${base} ${i + 1}${r() > 0.7 ? " FHD" : r() > 0.5 ? " HD" : ""}`;
       out.push({
         ch: { id, name: cname, number: id, group: name, logo_url: id % 3 ? logo(cname, id) : null, favorite: false, has_epg: false, catchup: false },
         admin: { id, source_id: 1, name: cname, number: id, group: name, enabled: true, missing: false, catchup: false, aliases: [], epg_channel_id: null, epg_manual: false, tvg_id: null },
       });
       id++;
     }
-  }
+  });
   return out;
 }
 

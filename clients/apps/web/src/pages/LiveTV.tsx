@@ -9,13 +9,14 @@ import { toast } from "../lib/toast";
 import { ErrorState } from "../components/States";
 import { ChannelList, type ChannelListApi } from "../components/live/ChannelList";
 import { ChannelRail } from "../components/live/ChannelRail";
+import { ChannelLogo } from "../components/live/ChannelLogo";
 import { NowPlaying, NumberEntry, ZapStats } from "../components/live/Overlays";
 import { ChannelSearch, Filters } from "../components/live/Filters";
 import { createTuner, forgetSession, ownSession, type TuneError } from "../components/live/tuner";
 import {
   allChannels, channelById, channelByNumber, channelsError, current, favourites, filter, filtered, filterLabel, fmtRange, fmtTime,
   lastChannel, loadAll, loadChannels, loadState, query, rememberChannel, setQuery, toggleFavorite, nowSec, clock, ensureNow, filterKey,
-  totalChannels,
+  totalChannels, noteWatched, nowNext, progressOf,
 } from "../components/live/store";
 import { currentUser } from "../lib/auth";
 
@@ -68,6 +69,12 @@ function Watch(): JSX.Element {
   const [numWait, setNumWait] = createSignal(false);
 
   const tuned = () => channelById(tuner.channelId()) ?? tunedCh();
+  /**
+   * What the hero shows before anything is tuned. Opening Live TV never tunes by itself — on a
+   * one-connection plan that would grab the slot — so it offers the last channel instead.
+   */
+  const heroCh = () => tuned() ?? lastChannel() ?? list()[0];
+  const idle = () => tuner.phase() === "idle" && !pending();
   /** What the overlays describe: the zap target while it's pending, else the tuned channel. */
   const shown = () => pending() ?? tuned();
   // Tizen's AVPlay draws on a full-screen plane behind the page: no windowed preview there.
@@ -92,7 +99,7 @@ function Watch(): JSX.Element {
 
   // Overlays need now/next even for channels that aren't on screen in the list.
   createEffect(() => {
-    const c = shown();
+    const c = shown() ?? heroCh();
     if (c) ensureNow([c.id]);
   });
 
@@ -105,6 +112,7 @@ function Watch(): JSX.Element {
   };
   const tuneNow = (c: IptvChannel) => {
     rememberChannel(c);
+    noteWatched(c.group);
     setTunedCh(c);
     setPending(undefined);
     showOsd();
@@ -115,7 +123,7 @@ function Watch(): JSX.Element {
   const zap = (dir: 1 | -1) => {
     const l = list();
     if (!l.length) return;
-    const base = pending() ?? tuned();
+    const base = pending() ?? tuned() ?? heroCh();
     const i = base ? l.findIndex((c) => c.id === base.id) : -1;
     const next = l[(i + dir + l.length) % l.length]!;
     setPending(next);
@@ -223,14 +231,13 @@ function Watch(): JSX.Element {
   createEffect(() => {
     if (started) return;
     const want = Number(params.ch) || undefined;
-    const c = channelById(want) ?? lastChannel() ?? list()[0];
-    if (!c) return; // wait for a list
     started = true;
+    // Only an explicit request (Watch in the guide) tunes on arrival.
+    const c = want ? channelById(want) : undefined;
+    if (!c) return;
     tuneNow(c);
-    if (want) {
-      setParams({ ch: undefined }, { replace: true });
-      enterFull();
-    }
+    setParams({ ch: undefined }, { replace: true });
+    enterFull();
   });
   // Land the remote on the tuned channel's card (or the first one) once the row has rendered.
   let landed = false;
@@ -242,6 +249,10 @@ function Watch(): JSX.Element {
       requestAnimationFrame(() => {
         const a = document.activeElement;
         if (isFull() || (a && a !== document.body && a.tagName !== "MAIN")) return;
+        if (idle()) {
+          const w = document.querySelector<HTMLElement>(".live__watch");
+          if (w) return w.focus({ preventScroll: true });
+        }
         const id = tuner.channelId() ?? tunedCh()?.id;
         listApi?.reveal(id != null && l.some((c) => c.id === id) ? id : l[0]!.id, true);
       }),
@@ -394,11 +405,19 @@ function Watch(): JSX.Element {
           tabindex={isFull() ? -1 : 0}
           data-focusable={isFull() ? undefined : ""}
           aria-label={isFull() ? `Watching ${tuned()?.name ?? ""}` : "Watch full screen"}
-          onClick={() => (isFull() ? (osd() ? setOsd(false) : showOsd()) : enterFull())}
+          onClick={() => {
+            if (isFull()) return osd() ? setOsd(false) : showOsd();
+            const h = heroCh();
+            if (idle() && h) tuneNow(h);
+            else enterFull();
+          }}
           onDblClick={() => (isFull() ? exitFull() : enterFull())}
           onMouseMove={onPointer}
         >
           <video ref={video} class="live__video" playsinline autoplay />
+          <Show when={!isFull() && idle() && heroCh()}>
+            {(c) => <IdleHero channel={c()} onWatch={() => tuneNow(c())} />}
+          </Show>
           <div class="live__vignette" aria-hidden="true" />
 
           <Show when={tuner.phase() === "tuning" && !tuner.error()}>
@@ -476,11 +495,16 @@ function Watch(): JSX.Element {
             <p class="eyebrow eyebrow--accent">Live TV</p>
             <a class="btn btn--sm" href={href("/live/guide")}><Icon name="grid" /> <span>Guide</span></a>
           </div>
-          <Show when={!isFull() && shown()} fallback={<p class="nowp__none">Pick a channel below to start watching.</p>}>
+          <Show when={!isFull() && (shown() ?? heroCh())} fallback={<p class="nowp__none">Pick a channel below to start watching.</p>}>
             {(c) => (
-              <NowPlaying channel={c()} variant="panel" tuning={!!pending()}>
+              <NowPlaying channel={c()} variant="panel" tuning={!!pending()} idle={idle()}>
                 <div class="nowp__actions">
-                  <button type="button" class="btn btn--primary btn--sm" onClick={enterFull}><Icon name="fullscreen" /> <span>Full screen</span></button>
+                  <Show
+                    when={!idle()}
+                    fallback={<button type="button" class="btn btn--primary btn--sm" onClick={() => tuneNow(c())}><Icon name="play" /> <span>Watch</span></button>}
+                  >
+                    <button type="button" class="btn btn--primary btn--sm" onClick={enterFull}><Icon name="fullscreen" /> <span>Full screen</span></button>
+                  </Show>
                   <button type="button" class="btn btn--sm" aria-pressed={c().favorite} onClick={() => void fav(c())}>
                     <Icon name="star" /> <span>{c().favorite ? "Favourite" : "Favourite it"}</span>
                   </button>
@@ -727,5 +751,33 @@ function StopOther(props: { error: TuneError; onStopped: () => void; onTakeover:
         </button>
       )}
     </Show>
+  );
+}
+
+/** Before anything plays: the last channel as a still "poster" with an explicit Watch button. */
+function IdleHero(props: { channel: IptvChannel; onWatch: () => void }): JSX.Element {
+  const nn = () => nowNext(props.channel.id);
+  return (
+    <div class="live__idle" onClick={(e) => e.stopPropagation()}>
+      <div class="live__idle-glow" aria-hidden="true" />
+      <ChannelLogo channel={props.channel} class="chlogo--hero" />
+      <p class="eyebrow">{lastChannel()?.id === props.channel.id ? "Last watched" : "Ready to watch"}</p>
+      <h2 class="live__idle-name" dir="auto">
+        <Show when={props.channel.number != null}><span class="live__idle-num">{props.channel.number}</span> </Show>
+        {props.channel.name}
+      </h2>
+      <Show when={nn()?.now}>
+        {(p) => (
+          <p class="live__idle-now">
+            <span>{p().title}</span>
+            <span class="live__idle-bar" aria-hidden="true"><i style={{ width: `${progressOf(p(), clock()) * 100}%` }} /></span>
+          </p>
+        )}
+      </Show>
+      <button type="button" class="btn btn--primary btn--lg live__watch" onClick={props.onWatch}>
+        <Icon name="play" /> <span>Watch {props.channel.name}</span>
+      </button>
+      <p class="live__idle-hint">Nothing plays until you choose — your TV plan has a limited number of connections.</p>
+    </div>
   );
 }

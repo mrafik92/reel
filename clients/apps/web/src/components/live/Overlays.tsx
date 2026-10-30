@@ -6,7 +6,7 @@ import { ChannelLogo } from "./ChannelLogo";
 import { clock, fmtRange, fmtTime, minutesLeft, nowNext, progressOf } from "./store";
 
 /** Channel identity + current/next programme. `overlay` sits on the picture; `panel` under it. */
-export function NowPlaying(props: { channel: IptvChannel; variant: "overlay" | "panel"; tuning?: boolean; children?: JSX.Element }): JSX.Element {
+export function NowPlaying(props: { channel: IptvChannel; variant: "overlay" | "panel"; tuning?: boolean; idle?: boolean; children?: JSX.Element }): JSX.Element {
   const nn = () => nowNext(props.channel.id);
   const now = () => nn()?.now ?? null;
   const next = () => nn()?.next ?? null;
@@ -22,7 +22,9 @@ export function NowPlaying(props: { channel: IptvChannel; variant: "overlay" | "
           </span>
           <Show when={props.channel.group}><span class="nowp__group">{props.channel.group}</span></Show>
         </div>
-        <span class="nowp__live"><i /> Live</span>
+        <Show when={!props.idle} fallback={<span class="nowp__live nowp__live--idle">Not playing</span>}>
+          <span class="nowp__live"><i /> Live</span>
+        </Show>
       </div>
       <Show when={now()} fallback={<p class="nowp__none">{nn() ? "No guide information for this channel." : "\u00a0"}</p>}>
         {(p) => <Current program={p()} detail={props.variant === "panel"} />}

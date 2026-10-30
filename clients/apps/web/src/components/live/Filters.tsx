@@ -1,32 +1,60 @@
 import { createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
-import { Icon, isTvMode, onBack } from "@reel/ui";
-import { favouriteCount, filter, filterKey, groups, query, setFilter, setQuery, totalChannels, type Filter } from "./store";
+import { Icon, onRemoteKey } from "@reel/ui";
+import { favouriteCount, filter, filterKey, groupPrefs, groups, query, setFilter, setQuery, totalChannels, type Filter } from "./store";
+import { classify, prefixOf, shortName, type GroupInfo } from "./groups";
+import { GroupBrowser, GroupMenu } from "./GroupBrowser";
+import { pressHandlers } from "./press";
 
-const fold = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
 /**
- * The groups row: search, Favourites, All channels, then every group — one horizontal row that
- * scrolls on the remote. Big providers have 150+ groups; the search narrows them as you type.
+ * The groups row on the Live page — short and personal: "All groups" (opens the full browser),
+ * Favourites, the group you're on, pinned groups, recently watched ones, All channels.
+ * OK selects; long-press OK / Info / right-click opens pin & hide. Green (or B) opens the browser.
  */
 export function Filters(props: { class?: string; label?: boolean }): JSX.Element {
   let row!: HTMLDivElement;
-  const [q, setQ] = createSignal("");
+  let browseBtn: HTMLButtonElement | undefined;
+  const [browsing, setBrowsing] = createSignal(false);
+  const [menu, setMenu] = createSignal<GroupInfo>();
   const active = (f: Filter) => filterKey(filter()) === filterKey(f);
   const pick = (f: Filter) => {
     setQuery("");
     setFilter(f);
   };
-  const list = createMemo(() => {
-    const t = fold(q().trim());
-    return t ? groups().filter((g) => fold(g.name).indexOf(t) >= 0) : groups();
+  const personal = createMemo(() => {
+    const visible = new Map(groups().map((g) => [g.name, g.count]));
+    const f = filter();
+    const names: string[] = [];
+    const add = (n: string) => visible.has(n) && names.indexOf(n) < 0 && names.push(n);
+    if (f.kind === "group") add(f.name);
+    groupPrefs().pinned.forEach(add);
+    groupPrefs().watched.forEach((n) => names.length < 10 && add(n));
+    return names.map((n) => classify(n, visible.get(n)!));
   });
-  // Bring the selected group into view when the row first renders.
-  onMount(() =>
+  const pinned = (n: string) => groupPrefs().pinned.indexOf(n) >= 0;
+
+  onMount(() => {
     requestAnimationFrame(() => {
       const el = row?.querySelector<HTMLElement>('.livechip[aria-pressed="true"]');
       if (el && row && el.offsetLeft + el.offsetWidth > row.clientWidth) row.scrollLeft = Math.max(0, el.offsetLeft - row.clientWidth / 3);
-    }),
-  );
+    });
+    const offKeys = onRemoteKey((e) => {
+      if (browsing() || menu() || document.querySelector("[data-nav-trap]")) return false;
+      if (e.key === "green" || (e.original.key === "b" && !/^(INPUT|TEXTAREA)$/.test((e.original.target as HTMLElement)?.tagName ?? ""))) {
+        setBrowsing(true);
+        return true;
+      }
+      if (e.key === "info" || e.key === "red") {
+        const name = (document.activeElement as HTMLElement | null)?.getAttribute("data-group");
+        if (!name) return false;
+        setMenu(classify(name, groups().find((g) => g.name === name)?.count ?? 0));
+        return true;
+      }
+      return false;
+    });
+    onCleanup(offKeys);
+  });
+
   const chip = (f: Filter, label: JSX.Element, count?: number) => (
     <button
       type="button"
@@ -39,125 +67,73 @@ export function Filters(props: { class?: string; label?: boolean }): JSX.Element
       <Show when={count != null}><small class="livechip__n">{count!.toLocaleString()}</small></Show>
     </button>
   );
+
   return (
     <div class={"grouprow" + (props.class ? " " + props.class : "")}>
       <Show when={props.label !== false}>
         <p class="rowlabel">
-          <span>Groups</span> <small>{groups().length}</small>
+          <span>Your groups</span>
+          <span class="rowlabel__hint">Hold OK on a group to pin or hide it</span>
         </p>
       </Show>
       <div ref={row} class="livefilters" data-nav-scroll="x" data-nav-group role="toolbar" aria-label="Channel groups">
         <div class="livefilters__track">
-          <Show when={groups().length > 6}>
-            <label class="livesearch livesearch--chip" classList={{ "has-text": !!q() }}>
-              <Icon name="search" />
-              <input
-                type="search"
-                placeholder="Find a group"
-                value={q()}
-                onInput={(e) => setQ(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && list().length) pick({ kind: "group", name: list()[0]!.name });
-                }}
-                aria-label="Find a group"
-                autocomplete="off"
-                spellcheck={false}
-              />
-              <Show when={q()}>
-                <button type="button" class="livesearch__clear" aria-label="Clear" onClick={() => setQ("")}><Icon name="x" /></button>
-              </Show>
-            </label>
-          </Show>
-          <Show when={!q()}>
-            {chip({ kind: "favorites" }, <><Icon name="star" /> <span>Favourites</span></>, favouriteCount())}
-            {chip({ kind: "all" }, <span>All channels</span>, totalChannels())}
-          </Show>
-          <For each={list()} fallback={<span class="livefilters__none">No group matches “{q()}”</span>}>
-            {(g) => chip({ kind: "group", name: g.name }, <span class="livechip__name" dir="auto">{g.name}</span>, g.count)}
-          </For>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Searchable list of every group. */
-export function GroupPicker(props: { onPick: (f: Filter) => void; onClose: () => void }): JSX.Element {
-  let box!: HTMLDivElement;
-  let input!: HTMLInputElement;
-  const [q, setQ] = createSignal("");
-  const list = createMemo(() => {
-    const t = fold(q().trim());
-    return t ? groups().filter((g) => fold(g.name).indexOf(t) >= 0) : groups();
-  });
-  const cur = () => filterKey(filter());
-  onMount(() => {
-    const off = onBack(() => {
-      props.onClose();
-      return true;
-    });
-    onCleanup(off);
-    requestAnimationFrame(() => {
-      // TVs: land on the current group (focusing the field would pop the on-screen keyboard).
-      if (!isTvMode()) return input.focus();
-      const el = box.querySelector<HTMLElement>('[aria-current="true"]') ?? box.querySelector<HTMLElement>(".gpick__item");
-      el?.focus({ preventScroll: true });
-      el?.scrollIntoView({ block: "center" });
-    });
-  });
-  return (
-    <>
-      <div class="gpick__scrim" onClick={props.onClose} aria-hidden="true" />
-      <div ref={box} class="gpick" role="dialog" aria-modal="true" aria-label="Channel groups" data-nav-trap>
-        <header class="gpick__head">
-          <div>
-            <h2 class="gpick__title">Channel groups</h2>
-            <p class="gpick__sub">{groups().length} groups · {totalChannels().toLocaleString()} channels</p>
-          </div>
-          <button type="button" class="iconbtn" aria-label="Close" onClick={props.onClose}><Icon name="x" /></button>
-        </header>
-        <label class="livesearch gpick__search">
-          <Icon name="search" />
-          <input
-            ref={input}
-            type="search"
-            placeholder="Find a group"
-            value={q()}
-            onInput={(e) => setQ(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                const first = list()[0];
-                if (first) props.onPick({ kind: "group", name: first.name });
-              }
+          <button ref={browseBtn} type="button" class="chip livechip livechip--browse" aria-haspopup="dialog" onClick={() => setBrowsing(true)}>
+            <Icon name="grid" /> <span>All groups</span> <small class="livechip__n">{groups().length}</small>
+          </button>
+          {chip({ kind: "favorites" }, <><Icon name="star" /> <span>Favourites</span></>, favouriteCount())}
+          <For each={personal()}>
+            {(g) => {
+              const f: Filter = { kind: "group", name: g.name };
+              const h = pressHandlers(() => pick(f), () => setMenu(g));
+              return (
+                <button
+                  type="button"
+                  class="chip chip--toggle livechip"
+                  aria-pressed={active(f)}
+                  data-nav-default={active(f) ? "" : undefined}
+                  data-group={g.name}
+                  title={g.name}
+                  {...h}
+                >
+                  <Show when={pinned(g.name)}><Icon name="star" class="livechip__pin" /></Show>
+                  <Show when={prefixOf(g.name)}>{(p) => <span class="livechip__code">{p()}</span>}</Show>
+                  <span class="livechip__name" dir="auto">{shortName(g.name)}</span>
+                  <small class="livechip__n">{g.count.toLocaleString()}</small>
+                </button>
+              );
             }}
-            autocomplete="off"
-            spellcheck={false}
-          />
-        </label>
-        <div class="gpick__list" data-nav-scroll="y" data-nav-group>
-          <Show when={!q().trim()}>
-            <button type="button" class="gpick__item gpick__item--special" aria-current={cur() === "favorites" ? "true" : undefined} onClick={() => props.onPick({ kind: "favorites" })}>
-              <Icon name="star" /> <span class="gpick__name">Favourites</span> <small>{favouriteCount()}</small>
-            </button>
-            <button type="button" class="gpick__item gpick__item--special" aria-current={cur() === "all" ? "true" : undefined} onClick={() => props.onPick({ kind: "all" })}>
-              <Icon name="layers" /> <span class="gpick__name">All channels</span> <small>{totalChannels().toLocaleString()}</small>
-            </button>
-          </Show>
-          <For each={list()} fallback={<p class="gpick__empty">No group matches “{q()}”.</p>}>
-            {(g) => (
-              <button
-                type="button"
-                class="gpick__item"
-                aria-current={cur() === `g:${g.name}` ? "true" : undefined}
-                onClick={() => props.onPick({ kind: "group", name: g.name })}
-              >
-                <span class="gpick__name" dir="auto">{g.name}</span> <small>{g.count.toLocaleString()}</small>
-              </button>
-            )}
           </For>
+          {chip({ kind: "all" }, <span>All channels</span>, totalChannels())}
         </div>
       </div>
-    </>
+      <Show when={browsing()}>
+        <GroupBrowser
+          onPick={(f) => {
+            pick(f);
+            setBrowsing(false);
+            // Land on the chosen group's chip in the row.
+            requestAnimationFrame(() => row?.querySelector<HTMLElement>('.livechip[aria-pressed="true"]')?.focus({ preventScroll: false }));
+          }}
+          onClose={() => {
+            setBrowsing(false);
+            requestAnimationFrame(() => browseBtn?.focus({ preventScroll: true }));
+          }}
+        />
+      </Show>
+      <Show when={menu()}>
+        {(g) => (
+          <GroupMenu
+            g={g()}
+            onOpen={() => {
+              setMenu(undefined);
+              pick({ kind: "group", name: g().name });
+            }}
+            onClose={() => setMenu(undefined)}
+          />
+        )}
+      </Show>
+    </div>
   );
 }
 
