@@ -10,3 +10,23 @@ workspace = true
 
 [dependencies]
 reel-core.workspace = true
+async-trait = "0.1"
+bytes = "1"
+flate2 = "1"
+futures-util = "0.3"
+quick-xml = "0.37"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+sqlx.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "process", "io-util", "fs", "macros"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tracing.workspace = true
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+axum.workspace = true
+tempfile = "3"

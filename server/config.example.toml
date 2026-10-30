@@ -12,3 +12,33 @@ data_dir = "./data"
 # name = "Movies"
 # kind = "movies"   # or "shows"
 # paths = ["/media/movies"]
+
+# Transcoding limits (0 = unlimited) and ffmpeg binary
+# max_transcodes = 2
+# max_user_transcodes = 1
+# ffmpeg_path = "ffmpeg"
+
+# Shared secret for Radarr/Sonarr webhooks. In Radarr/Sonarr add a Webhook connection
+# (On Grab / On Import / On Failure / On Delete) pointing at:
+#   http://reel:8420/api/v1/webhooks/arr?server=<arr server id>&token=<webhook_secret>
+# Webhooks are rejected while unset. Env: REEL_WEBHOOK_SECRET
+# webhook_secret = "change-me"
+
+# ── Auth & security ──────────────────────────────────────────────────────────
+# First run: open the web UI (or POST /api/v1/setup) to create the admin account.
+# HMAC key for signed stream URLs; default: generated and stored in <data_dir>/signing.key
+# signing_secret = "long random string"
+# session_ttl_days = 30           # sliding session lifetime
+# signed_url_ttl_secs = 21600     # lifetime of signed stream/direct/subtitle URLs
+# public_url = "https://reel.example.com"   # base for invite links
+# trust_proxy_headers = true      # behind Caddy/nginx: use X-Forwarded-For for rate limiting
+# cors_origins = ["https://app.example.com"] # empty = same-origin only
+# max_body_bytes = 4194304
+
+# ── IPTV ─────────────────────────────────────────────────────────────────────
+# Add M3U / Xtream sources in the admin UI (POST /api/v1/admin/iptv/sources).
+# iptv_grace_secs = 15        # keep a channel's upstream open after the last viewer leaves
+# iptv_stall_secs = 8         # no upstream data for this long ⇒ reconnect / fail over to an alias
+# iptv_warm_favorites = 0     # keep the N most-favorited channels pre-connected (if the
+#                             # provider connection limit allows; evicted first when a slot is needed)
+# iptv_epg_days = 7           # days of EPG kept ahead (1 day behind)

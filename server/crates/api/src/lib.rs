@@ -1,28 +1,40 @@
 //! API: axum routes, OpenAPI, WebSocket; backs the `reel-server` binary.
 
+pub mod auth;
 pub mod dto;
 pub mod enrich;
 pub mod error;
+mod iptv;
+mod playback;
+mod requests;
 mod routes;
+mod stream;
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
     extract::{
-        State, WebSocketUpgrade,
+        Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
-    response::IntoResponse,
+    http::{HeaderMap, HeaderValue, Method, header},
+    response::Response,
 };
+use reel_auth::{AuthOptions, AuthService, User};
 use reel_core::ServerEvent;
 use reel_metadata::ImageCache;
+use reel_playback::{HwAccelStatus, SessionConfig, SessionManager};
+use reel_requests::RequestsService;
 use reel_scanner::{LibraryWatcher, MetadataProvider, Scanner};
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 use tower_http::{
+    cors::{AllowOrigin, CorsLayer},
+    limit::RequestBodyLimitLayer,
     services::{ServeDir, ServeFile},
+    set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
 };
 use utoipa::{OpenApi, ToSchema};
@@ -36,6 +48,11 @@ pub struct AppState {
     pub events: broadcast::Sender<ServerEvent>,
     pub scanner: Scanner,
     pub images: ImageCache,
+    pub playback: Arc<SessionManager>,
+    pub hwaccel: Arc<HwAccelStatus>,
+    pub requests: RequestsService,
+    pub auth: AuthService,
+    pub iptv: Arc<reel_iptv::IptvService>,
     watcher: Arc<tokio::sync::Mutex<Option<LibraryWatcher>>>,
 }
 
@@ -43,7 +60,47 @@ impl AppState {
     pub fn new(db: SqlitePool, config: reel_core::Config) -> Self {
         let (events, _) = broadcast::channel(256);
         let images = ImageCache::new(&config.data_dir);
+        let hw = HwAccelStatus::software();
+        let playback = SessionManager::new(session_config(&config), hw.selected.clone());
+        let requests = RequestsService::new(db.clone(), None, events.clone());
+        let key = match config.signing_secret.as_deref().filter(|s| s.len() >= 16) {
+            Some(s) => s.as_bytes().to_vec(),
+            None => reel_auth::load_or_create_signing_key(&config.data_dir.join("signing.key")),
+        };
+        let auth = AuthService::new(
+            db.clone(),
+            AuthOptions {
+                session_ttl: Duration::from_secs(
+                    u64::from(config.session_ttl_days.max(1)) * 86_400,
+                ),
+                ..Default::default()
+            },
+            key,
+        );
+        let iptv = reel_iptv::IptvService::new(
+            db.clone(),
+            config.data_dir.clone(),
+            reel_iptv::IptvConfig {
+                hub: reel_iptv::HubConfig {
+                    grace: Duration::from_secs(config.iptv_grace_secs),
+                    stall_after: Duration::from_secs(config.iptv_stall_secs.max(1)),
+                    ffmpeg_path: config
+                        .ffmpeg_path
+                        .clone()
+                        .unwrap_or_else(|| "ffmpeg".into()),
+                    ..Default::default()
+                },
+                epg_days_forward: config.iptv_epg_days.max(1),
+                warm_favorites: config.iptv_warm_favorites,
+                ..Default::default()
+            },
+        );
         Self {
+            iptv,
+            auth,
+            requests,
+            playback,
+            hwaccel: Arc::new(hw),
             db,
             scanner: Scanner::new().with_events(events.clone()),
             images,
@@ -51,6 +108,42 @@ impl AppState {
             events,
             watcher: Arc::default(),
         }
+    }
+
+    /// Replace the auth options (session lifetime, rate-limit thresholds), keeping the signing key.
+    pub fn with_auth_options(mut self, opts: AuthOptions) -> Self {
+        self.auth = AuthService::new(self.db.clone(), opts, self.auth.signing_key().to_vec());
+        self
+    }
+
+    /// Enable TMDB discovery/requests metadata (rebuilds the requests service; call before
+    /// `spawn_tracker`).
+    pub fn with_tmdb(self, tmdb: reel_metadata::TmdbClient) -> Self {
+        let requests = RequestsService::new(self.db.clone(), Some(tmdb), self.events.clone());
+        self.with_requests(requests)
+    }
+
+    /// Use a pre-built requests service (custom tracker options, tests).
+    pub fn with_requests(mut self, requests: RequestsService) -> Self {
+        self.requests = requests;
+        self
+    }
+
+    /// Use detected hardware acceleration (rebuilds the session manager).
+    pub fn with_hwaccel(mut self, hw: HwAccelStatus) -> Self {
+        self.playback = SessionManager::new(session_config(&self.config), hw.selected.clone());
+        self.hwaccel = Arc::new(hw);
+        self
+    }
+
+    /// Stop a playback session and drop its DB row. False if unknown.
+    pub async fn end_session(&self, id: &str) -> bool {
+        let removed = self.playback.remove(id).await;
+        let _ = sqlx::query("DELETE FROM playback_sessions WHERE session_key = ?")
+            .bind(id)
+            .execute(&self.db)
+            .await;
+        removed
     }
 
     /// Use `m` as the scanner's metadata hook.
@@ -125,6 +218,16 @@ impl AppState {
     }
 }
 
+fn session_config(config: &reel_core::Config) -> SessionConfig {
+    let mut c = SessionConfig::new(config.data_dir.clone());
+    if let Some(p) = &config.ffmpeg_path {
+        c.ffmpeg_path = p.clone();
+    }
+    c.max_global_transcodes = config.max_transcodes;
+    c.max_user_transcodes = config.max_user_transcodes;
+    c
+}
+
 /// Create `[[libraries]]` from config that don't exist yet (by name).
 pub async fn bootstrap_libraries(state: &AppState) {
     for l in &state.config.libraries {
@@ -149,9 +252,34 @@ pub async fn bootstrap_libraries(state: &AppState) {
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Reel API", version = env!("CARGO_PKG_VERSION")),
+    modifiers(&SecurityAddon),
+    security(("bearer" = [])),
+    paths(playback::doc_stream_master, playback::doc_stream_file),
     components(schemas(ServerEvent, reel_core::RequestState, error::ErrorBody))
 )]
 struct ApiDoc;
+
+/// Registers the `bearer` security scheme.
+struct SecurityAddon;
+
+impl utoipa::Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+        let c = openapi.components.get_or_insert_with(Default::default);
+        c.add_security_scheme(
+            "bearer",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .description(Some(
+                        "Opaque session token from /auth/login. Media endpoints (direct, stream, \
+                         subs, images) also accept a signed URL (`exp`, `u`, `sig` query).",
+                    ))
+                    .build(),
+            ),
+        );
+    }
+}
 
 /// Health response.
 #[derive(Serialize, ToSchema)]
@@ -161,7 +289,7 @@ pub struct Health {
 }
 
 /// Liveness check.
-#[utoipa::path(get, path = "/health", responses((status = 200, body = Health)))]
+#[utoipa::path(get, path = "/health", security(()), responses((status = 200, body = Health)))]
 pub async fn health() -> Json<Health> {
     Json(Health {
         status: "ok".into(),
@@ -169,23 +297,85 @@ pub async fn health() -> Json<Health> {
     })
 }
 
-/// WebSocket stream of [`ServerEvent`]s as JSON text frames.
+#[derive(serde::Deserialize, utoipa::IntoParams)]
+pub struct EventsQuery {
+    /// Session token (browsers cannot set headers on WebSocket upgrades).
+    pub token: Option<String>,
+}
+
+/// WebSocket stream of [`ServerEvent`]s as JSON text frames. Authenticate with
+/// `Authorization: Bearer` or `?token=`. `request_progress` is delivered to the requester (and
+/// admins); `scan_progress` to admins only.
 #[utoipa::path(
     get,
     path = "/events",
-    responses((status = 101, description = "WebSocket upgrade; frames are JSON ServerEvent"))
+    params(EventsQuery),
+    responses(
+        (status = 101, description = "WebSocket upgrade; frames are JSON ServerEvent"),
+        (status = 401, body = error::ErrorBody)
+    )
 )]
-pub async fn events(ws: WebSocketUpgrade, State(st): State<AppState>) -> impl IntoResponse {
-    // TODO(auth): authenticate via `?token=` query param before upgrading.
+pub async fn events(
+    ws: WebSocketUpgrade,
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<EventsQuery>,
+) -> Result<Response, error::ApiError> {
+    let token = auth::bearer(&headers)
+        .map(str::to_string)
+        .or(q.token)
+        .ok_or_else(|| error::ApiError::Unauthorized("authentication required".into()))?;
+    let (user, _) = st.auth.authenticate(&token).await?;
     let rx = st.events.subscribe();
-    ws.on_upgrade(move |socket| forward_events(socket, rx))
+    Ok(ws.on_upgrade(move |socket| forward_events(socket, rx, st, user)))
 }
 
-async fn forward_events(mut socket: WebSocket, mut rx: broadcast::Receiver<ServerEvent>) {
+/// May `user` see `ev`?
+async fn event_visible(
+    st: &AppState,
+    user: &User,
+    owners: &mut std::collections::HashMap<i64, Option<i64>>,
+    ev: &ServerEvent,
+) -> bool {
+    if user.is_admin() {
+        return true;
+    }
+    match ev {
+        ServerEvent::ScanProgress { .. } => false,
+        ServerEvent::RequestProgress { request_id, .. } => {
+            let owner = match owners.get(request_id) {
+                Some(o) => *o,
+                None => {
+                    let o: Option<i64> =
+                        sqlx::query_scalar("SELECT user_id FROM requests WHERE id = ?")
+                            .bind(request_id)
+                            .fetch_optional(&st.db)
+                            .await
+                            .ok()
+                            .flatten();
+                    owners.insert(*request_id, o);
+                    o
+                }
+            };
+            owner == Some(user.id)
+        }
+    }
+}
+
+async fn forward_events(
+    mut socket: WebSocket,
+    mut rx: broadcast::Receiver<ServerEvent>,
+    st: AppState,
+    user: User,
+) {
+    let mut owners = std::collections::HashMap::new();
     loop {
         tokio::select! {
             ev = rx.recv() => match ev {
                 Ok(ev) => {
+                    if !event_visible(&st, &user, &mut owners, &ev).await {
+                        continue;
+                    }
                     let Ok(text) = serde_json::to_string(&ev) else { continue };
                     if socket.send(Message::text(text)).await.is_err() {
                         break;
@@ -206,6 +396,44 @@ fn api_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(health))
         .routes(routes!(events))
+        .routes(routes!(auth::setup_status, auth::setup))
+        .routes(routes!(auth::login))
+        .routes(routes!(auth::logout))
+        .routes(routes!(auth::me))
+        .routes(routes!(auth::my_sessions))
+        .routes(routes!(auth::revoke_my_session))
+        .routes(routes!(auth::change_password))
+        .routes(routes!(auth::invite_info))
+        .routes(routes!(auth::accept_invite))
+        .routes(routes!(auth::list_users, auth::create_user))
+        .routes(routes!(auth::get_user, auth::patch_user, auth::delete_user))
+        .routes(routes!(auth::revoke_user_sessions))
+        .routes(routes!(auth::list_invites, auth::create_invite))
+        .routes(routes!(auth::delete_invite))
+        .routes(routes!(auth::audit_log))
+        .routes(routes!(iptv::list_channels))
+        .routes(routes!(iptv::list_groups))
+        .routes(routes!(iptv::epg_grid))
+        .routes(routes!(iptv::now_next))
+        .routes(routes!(iptv::tune))
+        .routes(routes!(iptv::add_favorite, iptv::remove_favorite))
+        .routes(routes!(iptv::stop_session))
+        .routes(routes!(iptv::live_file))
+        .routes(routes!(iptv::channel_logo))
+        .routes(routes!(iptv::list_sources, iptv::create_source))
+        .routes(routes!(iptv::test_new_source))
+        .routes(routes!(
+            iptv::get_source,
+            iptv::update_source,
+            iptv::delete_source
+        ))
+        .routes(routes!(iptv::refresh_source))
+        .routes(routes!(iptv::test_source))
+        .routes(routes!(iptv::admin_channels))
+        .routes(routes!(iptv::patch_channel))
+        .routes(routes!(iptv::set_aliases))
+        .routes(routes!(iptv::hub_status))
+        .routes(routes!(iptv::admin_live_sessions))
         .routes(routes!(routes::list_libraries, routes::create_library))
         .routes(routes!(routes::scan_library))
         .routes(routes!(routes::library_items))
@@ -215,6 +443,46 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(routes::search))
         .routes(routes!(routes::image))
         .routes(routes!(routes::direct))
+        .routes(routes!(playback::decide_playback))
+        .routes(routes!(
+            playback::playback_progress,
+            playback::stop_playback
+        ))
+        .routes(routes!(playback::subtitle_vtt))
+        .routes(routes!(playback::admin_sessions))
+        .routes(routes!(playback::admin_kill_session))
+        .routes(routes!(playback::admin_hwaccel))
+        .routes(routes!(playback::mark_played, playback::mark_unplayed))
+        .routes(routes!(routes::image_tmdb))
+        .routes(routes!(requests::discover_search))
+        .routes(routes!(requests::discover_list))
+        .routes(routes!(requests::discover_detail))
+        .routes(routes!(requests::list_requests, requests::create_request))
+        .routes(routes!(requests::active_requests))
+        .routes(routes!(requests::approve_request))
+        .routes(routes!(requests::decline_request))
+        .routes(routes!(requests::retry_request))
+        .routes(routes!(requests::arr_webhook))
+        .routes(routes!(
+            requests::list_arr_servers,
+            requests::create_arr_server
+        ))
+        .routes(routes!(
+            requests::update_arr_server,
+            requests::delete_arr_server
+        ))
+        .routes(routes!(requests::arr_profiles))
+        .routes(routes!(
+            requests::list_download_clients,
+            requests::create_download_client
+        ))
+        .routes(routes!(requests::delete_download_client))
+        .routes(routes!(
+            requests::list_notifications,
+            requests::create_notification
+        ))
+        .routes(routes!(requests::delete_notification))
+        .routes(routes!(requests::test_notification))
 }
 
 /// The OpenAPI document (paths prefixed with `/api/v1`).
@@ -231,6 +499,12 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", api_router())
         .split_for_parts();
     let spec = Arc::new(api);
+    // TODO(auth): signed URLs for stream/direct/subs.
+    let stream = reel_playback::router::stream_router(state.playback.clone()).layer(
+        axum::middleware::from_fn_with_state(state.clone(), stream::stream_guard),
+    );
+    let cors = cors_layer(&state.config.cors_origins);
+    let body_limit = state.config.max_body_bytes.max(1024);
     let router = match state.config.web_dir.clone() {
         Some(dir) => {
             let index: PathBuf = dir.join("index.html");
@@ -246,8 +520,49 @@ pub fn app(state: AppState) -> Router {
                 async move { Json(spec) }
             }),
         )
-        .layer(TraceLayer::new_for_http())
         .with_state(state)
+        .nest("/api/v1", stream)
+        .layer(TraceLayer::new_for_http())
+        .layer(RequestBodyLimitLayer::new(body_limit))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        ))
+        .layer(tower::util::option_layer(cors))
+}
+
+/// Same-origin by default; with `cors_origins` set, those origins may call the API.
+fn cors_layer(origins: &[String]) -> Option<CorsLayer> {
+    let list: Vec<HeaderValue> = origins
+        .iter()
+        .filter_map(|o| HeaderValue::from_str(o.trim_end_matches('/')).ok())
+        .collect();
+    (!list.is_empty()).then(|| {
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(list))
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+            ])
+            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::RANGE])
+            .expose_headers([
+                header::CONTENT_RANGE,
+                header::ACCEPT_RANGES,
+                header::RETRY_AFTER,
+            ])
+            .max_age(Duration::from_secs(600))
+    })
 }
 
 #[cfg(test)]
@@ -260,7 +575,12 @@ mod tests {
     #[tokio::test]
     async fn health_ok() {
         let db = reel_core::db::connect_url("sqlite::memory:").await.unwrap();
-        let app = app(AppState::new(db, reel_core::Config::default()));
+        let dir = std::env::temp_dir().join(format!("reel-health-{}", std::process::id()));
+        let cfg = reel_core::Config {
+            data_dir: dir.clone(),
+            ..Default::default()
+        };
+        let app = app(AppState::new(db, cfg));
         let res = app
             .oneshot(Request::get("/api/v1/health").body(Body::empty()).unwrap())
             .await
@@ -270,5 +590,6 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["status"], "ok");
         assert!(v["version"].is_string());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

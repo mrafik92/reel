@@ -10,6 +10,1566 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/admin/arr-servers": {
+      "get": {
+        "summary": "List Radarr/Sonarr servers (API keys masked).",
+        "operationId": "list_arr_servers",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ArrServerDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add a server; URL and key are validated against `system/status` first.",
+        "operationId": "create_arr_server",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateArrServer"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArrServerDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/arr-servers/{id}": {
+      "delete": {
+        "summary": "Remove a server (requests that used it keep their history).",
+        "operationId": "delete_arr_server",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Arr server id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update a server (only the provided fields); re-validated when URL or key change.",
+        "operationId": "update_arr_server",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Arr server id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateArrServer"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArrServerDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/arr-servers/{id}/profiles": {
+      "get": {
+        "summary": "Quality profiles and root folders of a server, for the settings UI.",
+        "operationId": "arr_profiles",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Arr server id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArrProfiles"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/audit": {
+      "get": {
+        "summary": "Audit log (newest first): admin actions and login failures/lockouts.",
+        "operationId": "audit_log",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 100, max 500).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Return entries older than this audit id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AuditDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/download-clients": {
+      "get": {
+        "summary": "List torrent clients (passwords never returned).",
+        "operationId": "list_download_clients",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DownloadClientDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add a torrent client (used for finer progress data: speed, ETA, seeds/peers).",
+        "operationId": "create_download_client",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDownloadClient"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadClientDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/download-clients/{id}": {
+      "delete": {
+        "summary": "Remove a torrent client.",
+        "operationId": "delete_download_client",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Download client id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/hwaccel": {
+      "get": {
+        "summary": "Hardware acceleration detected at startup.",
+        "operationId": "admin_hwaccel",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HwAccelStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/invites": {
+      "get": {
+        "summary": "All invites (newest first).",
+        "operationId": "list_invites",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InviteDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a single-use invite link.",
+        "operationId": "create_invite",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateInviteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/invites/{id}": {
+      "delete": {
+        "summary": "Revoke an invite.",
+        "operationId": "delete_invite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Invite id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/iptv/channels": {
+      "get": {
+        "summary": "Channels as the admin sees them (including disabled / missing).",
+        "operationId": "admin_channels",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "hidden",
+            "in": "query",
+            "description": "Include disabled and vanished channels (default true in the admin view).",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminChannel"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/iptv/channels/{id}": {
+      "patch": {
+        "summary": "Enable/disable, rename, renumber, regroup or remap the EPG of a channel.",
+        "operationId": "patch_channel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Channel id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelPatchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Updated"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/iptv/channels/{id}/aliases": {
+      "put": {
+        "summary": "Replace the failover aliases of a channel (tried in priority order when it stalls).",
+        "operationId": "set_aliases",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Channel id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AliasDto"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Saved"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/iptv/hub": {
+      "get": {
+        "summary": "Live pipeline health: open upstream connections per source (vs. the provider limit), per\nchannel bitrate / TTFB / reconnects / failovers / TS errors, and active viewer sessions.",
+        "operationId": "hub_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/iptv/sessions": {
+      "get": {
+        "summary": "All live sessions (admins can stop any with `DELETE /iptv/sessions/{id}`).",
+        "operationId": "admin_live_sessions",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LiveSessionDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/iptv/sources": {
+      "get": {
+        "summary": "All IPTV sources.",
+        "operationId": "list_sources",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SourceDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add a source and start the first refresh in the background.",
+        "operationId": "create_source",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/iptv/sources/test": {
+      "post": {
+        "summary": "Try a source configuration without saving it.",
+        "operationId": "test_new_source",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceTest"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/iptv/sources/{id}": {
+      "get": {
+        "summary": "One source.",
+        "operationId": "get_source",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Source id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a source and all its channels.",
+        "operationId": "delete_source",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Source id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update a source (only the provided fields).",
+        "operationId": "update_source",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Source id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourcePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/iptv/sources/{id}/refresh": {
+      "post": {
+        "summary": "Refresh channels and EPG now (runs in the background; poll the source for `refreshing`,\n`last_refresh_at` and `last_error`).",
+        "operationId": "refresh_source",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Source id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Started"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/iptv/sources/{id}/test": {
+      "post": {
+        "summary": "Re-test a saved source: reachability, credentials, channel count, Xtream account info\n(expiry, allowed and active connections).",
+        "operationId": "test_source",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Source id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceTest"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/notifications": {
+      "get": {
+        "summary": "List notification targets (secrets masked).",
+        "operationId": "list_notifications",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add a notification target.",
+        "operationId": "create_notification",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNotification"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/notifications/{id}": {
+      "delete": {
+        "summary": "Remove a notification target.",
+        "operationId": "delete_notification",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Notification target id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/notifications/{id}/test": {
+      "post": {
+        "summary": "Send a test message to one target (single attempt).",
+        "operationId": "test_notification",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Notification target id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Delivered"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Delivery failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/sessions": {
+      "get": {
+        "summary": "Live playback sessions.",
+        "operationId": "admin_sessions",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminSession"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/sessions/{id}": {
+      "delete": {
+        "summary": "Kill a playback session.",
+        "operationId": "admin_kill_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Killed"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users": {
+      "get": {
+        "summary": "All accounts.",
+        "operationId": "list_users",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create an account directly (without an invite).",
+        "operationId": "create_user",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}": {
+      "get": {
+        "summary": "One account.",
+        "operationId": "get_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete an account (and its sessions, watch state and requests).",
+        "operationId": "delete_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update an account: rename, reset password, set role, disable, set limits, set library access.",
+        "operationId": "patch_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchUserBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/sessions": {
+      "delete": {
+        "summary": "Sign a user out of every device.",
+        "operationId": "revoke_user_sessions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/invite/{code}": {
+      "get": {
+        "summary": "Check an invite code (for the landing page).",
+        "operationId": "invite_info",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "description": "Invite code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteInfoDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/invite/{code}/accept": {
+      "post": {
+        "summary": "Redeem a single-use invite: creates the account (with the invite's library access and\nlimits) and signs it in.",
+        "operationId": "accept_invite",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "description": "Invite code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptInviteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown, used or expired invite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Username taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "summary": "Sign in. Repeated failures lock the username and the client IP with exponential backoff\n(429 + `Retry-After`).",
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Locked out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "summary": "Revoke the current token.",
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "Signed out"
+          }
+        }
+      }
+    },
     "/api/v1/direct/{file_id}": {
       "get": {
         "summary": "Serve the original file with HTTP Range support.",
@@ -23,6 +1583,44 @@
             "schema": {
               "type": "integer",
               "format": "int64"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "path",
+            "description": "Expiry (unix seconds).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "path",
+            "description": "User the URL was signed for.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "path",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -52,13 +1650,238 @@
         }
       }
     },
+    "/api/v1/discover/search": {
+      "get": {
+        "summary": "Search TMDB; every card carries an availability badge and live download progress.",
+        "operationId": "discover_search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search text.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "media",
+            "in": "query",
+            "description": "`movie`, `tv` or `all` (default).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DiscoverCardDto"
+                  }
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "TMDB not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/discover/{list}": {
+      "get": {
+        "summary": "Browse TMDB lists: `trending`, `popular` or `upcoming` (movies only).",
+        "operationId": "discover_list",
+        "parameters": [
+          {
+            "name": "list",
+            "in": "path",
+            "description": "trending | popular | upcoming",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "media",
+            "in": "query",
+            "description": "`movie`, `tv` or `all` (default).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "1-based page (default 1).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverPageDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "TMDB not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/discover/{media}/{tmdb_id}": {
+      "get": {
+        "summary": "TMDB detail card (genres, runtime, seasons) with availability + progress.",
+        "operationId": "discover_detail",
+        "parameters": [
+          {
+            "name": "media",
+            "in": "path",
+            "description": "movie | tv",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tmdb_id",
+            "in": "path",
+            "description": "TMDB id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverDetailDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "TMDB not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/events": {
       "get": {
-        "summary": "WebSocket stream of [`ServerEvent`]s as JSON text frames.",
+        "summary": "WebSocket stream of [`ServerEvent`]s as JSON text frames. Authenticate with\n`Authorization: Bearer` or `?token=`. `request_progress` is delivered to the requester (and\nadmins); `scan_progress` to admins only.",
         "operationId": "events",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "description": "Session token (browsers cannot set headers on WebSocket upgrades).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
         "responses": {
           "101": {
             "description": "WebSocket upgrade; frames are JSON ServerEvent"
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         }
       }
@@ -78,12 +1901,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v1/home": {
       "get": {
-        "summary": "Home screen: continue watching, recently added, and one row per library.",
+        "summary": "Home screen: continue watching, recently added, and one row per visible library.",
         "operationId": "home",
         "responses": {
           "200": {
@@ -92,6 +1918,115 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Home"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/images/tmdb/{kind}": {
+      "get": {
+        "summary": "Resized, cached TMDB image by TMDB path (for discovery cards that aren't library items).",
+        "operationId": "image_tmdb",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "poster | backdrop | profile",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "description": "TMDB image path, e.g. `/abc123.jpg`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "w",
+            "in": "query",
+            "description": "Target width in px; omitted = original.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "exp",
+            "in": "query",
+            "description": "Expiry (unix seconds).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "query",
+            "description": "User the URL was signed for.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "query",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image bytes",
+            "content": {
+              "image/jpeg": {}
+            }
+          },
+          "304": {
+            "description": "Not modified"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -136,6 +2071,44 @@
               "format": "int32",
               "minimum": 0
             }
+          },
+          {
+            "name": "exp",
+            "in": "query",
+            "description": "Expiry (unix seconds).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "query",
+            "description": "User the URL was signed for.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "query",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
@@ -147,6 +2120,540 @@
           },
           "304": {
             "description": "Not modified"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/iptv/channels": {
+      "get": {
+        "summary": "Enabled live channels ordered by channel number, then name.",
+        "operationId": "list_channels",
+        "parameters": [
+          {
+            "name": "group",
+            "in": "query",
+            "description": "Only this group.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "favorites",
+            "in": "query",
+            "description": "Only the user's favorites.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive name search.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IptvChannel"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/iptv/channels/{id}/favorite": {
+      "post": {
+        "summary": "Add a channel to the user's favorites.",
+        "operationId": "add_favorite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Channel id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Added"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove a channel from the user's favorites.",
+        "operationId": "remove_favorite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Channel id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/iptv/channels/{id}/tune": {
+      "post": {
+        "summary": "Start watching a channel: reserves a provider slot (429 if every slot is watched), returns a\nsigned player URL. Zapping is near-instant when the channel is already open or warm.",
+        "operationId": "tune",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Channel id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TuneBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TuneResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Provider connection limit or user stream limit reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Channel did not deliver a stream",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/iptv/epg": {
+      "get": {
+        "summary": "Programme grid for a time window — compact by default (no descriptions).",
+        "operationId": "epg_grid",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Window start, unix seconds (default: 1 hour ago).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Window end, unix seconds (default: from + 6 h; max span 48 h).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "channels",
+            "in": "query",
+            "description": "Comma-separated channel ids (default: the first 200 channels).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "detail",
+            "in": "query",
+            "description": "Include descriptions, icons and episode numbers (default: compact).",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpgGrid"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/iptv/groups": {
+      "get": {
+        "summary": "Channel groups with counts.",
+        "operationId": "list_groups",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IptvGroup"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/iptv/live/{session_id}/{file}": {
+      "get": {
+        "summary": "Live output of a session: `stream.ts` (MPEG-TS passthrough) or the HLS playlist / init /\nsegments. Bearer token (session owner or admin) or a signature for scope `live:{session}`.",
+        "operationId": "live_file",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session id from tune",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "path",
+            "description": "`stream.ts`, `index.m3u8`, `init.mp4` or `seg_NNNNN.m4s`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "query",
+            "description": "Expiry (unix seconds).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "query",
+            "description": "User the URL was signed for.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "query",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Media bytes or playlist"
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "HLS output not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/iptv/logo/{id}": {
+      "get": {
+        "summary": "Channel logo, fetched once from the provider and cached on disk.",
+        "operationId": "channel_logo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Channel id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "query",
+            "description": "Expiry (unix seconds).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "query",
+            "description": "User the URL was signed for.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "query",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image",
+            "content": {
+              "image/png": {}
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/iptv/now": {
+      "get": {
+        "summary": "What is on now and next, per channel.",
+        "operationId": "now_next",
+        "parameters": [
+          {
+            "name": "channels",
+            "in": "query",
+            "description": "Comma-separated channel ids (default: the first 500 channels).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NowNext"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/iptv/sessions/{id}": {
+      "delete": {
+        "summary": "Stop watching. Passthrough viewers may also just disconnect; HLS sessions expire when the\nplayer stops requesting segments.",
+        "operationId": "stop_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Live session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Stopped"
           },
           "404": {
             "description": "",
@@ -230,6 +2737,70 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/items/{id}/played": {
+      "post": {
+        "summary": "Mark an item played (cascades to episodes for seasons/shows).",
+        "operationId": "mark_played",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Item id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Marked played"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Mark an item unplayed and reset its progress (cascades like `POST`).",
+        "operationId": "mark_unplayed",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Item id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Marked unplayed"
           },
           "404": {
             "description": "",
@@ -421,6 +2992,574 @@
         }
       }
     },
+    "/api/v1/me": {
+      "get": {
+        "summary": "The current user.",
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/password": {
+      "post": {
+        "summary": "Change the password; all other sessions are signed out.",
+        "operationId": "change_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Changed"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/sessions": {
+      "get": {
+        "summary": "Devices signed in as the current user.",
+        "operationId": "my_sessions",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SessionDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/sessions/{id}": {
+      "delete": {
+        "summary": "Sign a device out.",
+        "operationId": "revoke_my_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Auth session id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/playback/{file_id}/decide": {
+      "post": {
+        "summary": "Decide how to play a file and start a playback session.",
+        "operationId": "decide_playback",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "description": "Media file id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Transcode limit reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/playback/{session_id}": {
+      "delete": {
+        "summary": "Stop a playback session (kills ffmpeg, removes temp files).",
+        "operationId": "stop_playback",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session id from decide",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Stopped"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/playback/{session_id}/progress": {
+      "post": {
+        "summary": "Report playback position; keeps the session alive and updates watch state.",
+        "operationId": "playback_progress",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session id from decide",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Recorded"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/requests": {
+      "get": {
+        "summary": "List requests (newest first).",
+        "operationId": "list_requests",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/RequestState"
+                }
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 100, max 1000).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RequestDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a request. Admins / auto-approve users are approved and pushed to Radarr/Sonarr at once.",
+        "operationId": "create_request",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already available or requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "No Radarr/Sonarr configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/requests/active": {
+      "get": {
+        "summary": "Snapshot of every unfinished request with its latest progress (call on app load / reconnect,\nthen follow `request_progress` events on `/events`).",
+        "operationId": "active_requests",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProgressDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/requests/{id}/approve": {
+      "post": {
+        "summary": "Approve a pending request and push it to Radarr/Sonarr.",
+        "operationId": "approve_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Request id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/requests/{id}/decline": {
+      "post": {
+        "summary": "Decline a pending request.",
+        "operationId": "decline_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Request id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional note",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeclineBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/requests/{id}/retry": {
+      "post": {
+        "summary": "Search again for a `not_found` / `failed` / `stalled` request.",
+        "operationId": "retry_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Request id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/search": {
       "get": {
         "summary": "Library search over movie and show titles.",
@@ -468,10 +3607,969 @@
           }
         }
       }
+    },
+    "/api/v1/setup": {
+      "get": {
+        "summary": "Whether first-run setup is still open.",
+        "operationId": "setup_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatus"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      },
+      "post": {
+        "summary": "Create the first admin account (only while `needs_setup`); returns a signed-in session.",
+        "operationId": "setup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Setup already completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/stream/{session_id}/master.m3u8": {
+      "get": {
+        "tags": [
+          "playback"
+        ],
+        "summary": "HLS master playlist of a transcode/remux session.",
+        "operationId": "doc_stream_master",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session id from decide",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "path",
+            "description": "Expiry (unix seconds).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "path",
+            "description": "User the URL was signed for.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "path",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HLS master playlist",
+            "content": {
+              "application/vnd.apple.mpegurl": {}
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/stream/{session_id}/{variant}/{file}": {
+      "get": {
+        "tags": [
+          "playback"
+        ],
+        "summary": "HLS media playlist (`index.m3u8`) or fMP4 segment/init file of a session.",
+        "operationId": "doc_stream_file",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "variant",
+            "in": "path",
+            "description": "Always `main`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "path",
+            "description": "`index.m3u8`, `init.mp4` or `seg_NNNNN.m4s`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "path",
+            "description": "Expiry (unix seconds).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "path",
+            "description": "User the URL was signed for.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "path",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Playlist or segment"
+          },
+          "404": {
+            "description": ""
+          },
+          "503": {
+            "description": "Segment not ready"
+          }
+        }
+      }
+    },
+    "/api/v1/subs/{file}": {
+      "get": {
+        "summary": "Subtitle track converted to WebVTT (cached).",
+        "operationId": "subtitle_vtt",
+        "parameters": [
+          {
+            "name": "file",
+            "in": "path",
+            "description": "`{stream_id}.vtt`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "query",
+            "description": "Expiry (unix seconds).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "query",
+            "description": "User the URL was signed for.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "query",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "WebVTT",
+            "content": {
+              "text/vtt": {}
+            }
+          },
+          "400": {
+            "description": "Image subtitle cannot be converted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks/arr": {
+      "post": {
+        "summary": "Radarr/Sonarr webhook receiver. Imported/removed files trigger a targeted library rescan.",
+        "operationId": "arr_webhook",
+        "parameters": [
+          {
+            "name": "server",
+            "in": "query",
+            "description": "Arr server id (`arr_servers.id`), to disambiguate multiple instances.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "description": "Shared secret (`webhook_secret` in the config).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Radarr/Sonarr webhook payload",
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Bad or missing token / webhooks disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/stream/{session_id}/master.m3u8": {
+      "get": {
+        "tags": [
+          "playback"
+        ],
+        "summary": "HLS master playlist of a transcode/remux session.",
+        "operationId": "doc_stream_master",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session id from decide",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "path",
+            "description": "Expiry (unix seconds).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "path",
+            "description": "User the URL was signed for.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "path",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HLS master playlist",
+            "content": {
+              "application/vnd.apple.mpegurl": {}
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/stream/{session_id}/{variant}/{file}": {
+      "get": {
+        "tags": [
+          "playback"
+        ],
+        "summary": "HLS media playlist (`index.m3u8`) or fMP4 segment/init file of a session.",
+        "operationId": "doc_stream_file",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "variant",
+            "in": "path",
+            "description": "Always `main`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "path",
+            "description": "`index.m3u8`, `init.mp4` or `seg_NNNNN.m4s`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "path",
+            "description": "Expiry (unix seconds).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "path",
+            "description": "User the URL was signed for.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "path",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Playlist or segment"
+          },
+          "404": {
+            "description": ""
+          },
+          "503": {
+            "description": "Segment not ready"
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AcceptInviteBody": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "type": "string",
+            "description": "At least 8 characters."
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountDto": {
+        "type": "object",
+        "required": [
+          "active",
+          "is_trial"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "active_connections": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "exp_date": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "is_trial": {
+            "type": "boolean"
+          },
+          "max_connections": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AdminChannel": {
+        "type": "object",
+        "required": [
+          "id",
+          "source_id",
+          "name",
+          "epg_manual",
+          "enabled",
+          "missing",
+          "catchup",
+          "aliases"
+        ],
+        "properties": {
+          "aliases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AliasDto"
+            },
+            "description": "Failover aliases `(channel id, priority)`."
+          },
+          "catchup": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "epg_channel_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "XMLTV channel id the guide is read from."
+          },
+          "epg_manual": {
+            "type": "boolean",
+            "description": "The mapping was set manually and is not recomputed."
+          },
+          "group": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "missing": {
+            "type": "boolean",
+            "description": "No longer in the provider's list (hidden)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "source_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tvg_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AdminSession": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "file_id",
+          "mode",
+          "reasons",
+          "decision",
+          "position_s",
+          "hwaccel",
+          "active",
+          "started_at",
+          "last_ping"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "ffmpeg is currently running."
+          },
+          "bitrate_kbps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "decision": {
+            "$ref": "#/components/schemas/PlaybackDecision"
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "file_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "hwaccel": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "item_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "item_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_ping": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PlaybackMode"
+          },
+          "position_s": {
+            "type": "number",
+            "format": "double"
+          },
+          "progress": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "0..1, when the file duration is known."
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "started_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AliasDto": {
+        "type": "object",
+        "required": [
+          "channel_id",
+          "priority"
+        ],
+        "properties": {
+          "channel_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Lower is tried first."
+          }
+        }
+      },
+      "ArrProfiles": {
+        "type": "object",
+        "required": [
+          "quality_profiles",
+          "root_folders"
+        ],
+        "properties": {
+          "quality_profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QualityProfileDto"
+            }
+          },
+          "root_folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RootFolderDto"
+            }
+          }
+        }
+      },
+      "ArrServerDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "url",
+          "api_key_hint",
+          "is_4k"
+        ],
+        "properties": {
+          "api_key_hint": {
+            "type": "string",
+            "description": "Masked key (`••••` + last 4 characters); the key itself is never returned."
+          },
+          "default_profile": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "default_root": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "is_4k": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`sonarr` | `radarr`"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "AudioAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "none"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "copy"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "codec",
+              "channels",
+              "bitrate_kbps",
+              "type"
+            ],
+            "properties": {
+              "bitrate_kbps": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "channels": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "codec": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "encode"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "AudioCodecSupport": {
+        "type": "object",
+        "required": [
+          "codec",
+          "max_channels"
+        ],
+        "properties": {
+          "codec": {
+            "type": "string"
+          },
+          "max_channels": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "AudioStream": {
         "type": "object",
         "required": [
@@ -509,6 +4607,68 @@
           }
         }
       },
+      "AuditDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "ts",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "e.g. `login_failure`, `user_create`, `invite_create`, `arr_server_create`."
+          },
+          "actor_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "actor_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detail": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ip": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ts": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "Availability": {
+        "type": "string",
+        "enum": [
+          "available",
+          "partially",
+          "requested",
+          "none"
+        ]
+      },
       "CastMember": {
         "type": "object",
         "required": [
@@ -532,6 +4692,310 @@
           }
         }
       },
+      "ChannelMetricsDto": {
+        "type": "object",
+        "required": [
+          "channel_id",
+          "name",
+          "source_id",
+          "state",
+          "viewers",
+          "warm",
+          "pinned",
+          "uptime_s",
+          "bitrate_kbps",
+          "bytes_total",
+          "reconnects",
+          "failovers",
+          "active_candidate",
+          "cc_errors",
+          "pts_discontinuities",
+          "sync_losses",
+          "keyframes",
+          "viewer_resyncs",
+          "gop_bytes"
+        ],
+        "properties": {
+          "active_candidate": {
+            "type": "integer",
+            "description": "0 = primary, n = nth alias.",
+            "minimum": 0
+          },
+          "audio_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bitrate_kbps": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "cc_errors": {
+            "type": "integer",
+            "format": "int64",
+            "description": "MPEG-TS continuity counter errors (packet loss indicator).",
+            "minimum": 0
+          },
+          "channel_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "connected_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "failovers": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "gop_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "keyframes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "pts_discontinuities": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reconnects": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "source_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "state": {
+            "type": "string",
+            "description": "`connecting` | `live` | `reconnecting`"
+          },
+          "sync_losses": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "time_to_keyframe_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Pipe start → first keyframe (ms).",
+            "minimum": 0
+          },
+          "ttfb_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Pipe start → first upstream byte (ms).",
+            "minimum": 0
+          },
+          "upstream_host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uptime_s": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "video_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "viewer_resyncs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Slow viewers skipped ahead to the latest keyframe.",
+            "minimum": 0
+          },
+          "viewers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "warm": {
+            "type": "boolean",
+            "description": "Open without viewers (kept for instant zapping)."
+          }
+        }
+      },
+      "ChannelPatchBody": {
+        "type": "object",
+        "description": "Partial update; absent fields are unchanged, `null` clears where noted.",
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "epg_channel_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Manual XMLTV channel id; `null` returns to automatic matching."
+          },
+          "group": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Rename; survives provider refreshes."
+          },
+          "number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Channel number; `null` removes the custom number."
+          }
+        }
+      },
+      "CreateArrServer": {
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "url",
+          "api_key"
+        ],
+        "properties": {
+          "api_key": {
+            "type": "string"
+          },
+          "default_profile": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "default_root": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_4k": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`sonarr` | `radarr`"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateDownloadClient": {
+        "type": "object",
+        "required": [
+          "kind",
+          "url"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`qbittorrent` | `transmission`"
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": "string"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CreateInviteBody": {
+        "type": "object",
+        "properties": {
+          "expires_in_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Validity in days (default 7; 0 = never expires).",
+            "minimum": 0
+          },
+          "library_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Libraries the new user may access."
+          },
+          "limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LimitsDto",
+                "description": "Limits preset for the new user."
+              }
+            ]
+          }
+        }
+      },
       "CreateLibrary": {
         "type": "object",
         "required": [
@@ -551,6 +5015,502 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "CreateNotification": {
+        "type": "object",
+        "required": [
+          "kind",
+          "config"
+        ],
+        "properties": {
+          "config": {
+            "type": "object"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Subset of requested, approved, declined, available, failed, issue; empty = all."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`discord` (`webhook_url`), `telegram` (`bot_token`, `chat_id`) or `webhook` (`url`, `headers?`)."
+          }
+        }
+      },
+      "CreateRequestBody": {
+        "type": "object",
+        "required": [
+          "media_type",
+          "tmdb_id"
+        ],
+        "properties": {
+          "arr_server_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "media_type": {
+            "$ref": "#/components/schemas/MediaTypeDto"
+          },
+          "quality_profile_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "root_folder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seasons": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "TV only; omit for all seasons."
+          },
+          "tmdb_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "CreateUserBody": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "library_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LimitsDto"
+              }
+            ]
+          },
+          "password": {
+            "type": "string"
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RoleDto"
+              }
+            ]
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "DecideRequest": {
+        "type": "object",
+        "properties": {
+          "audio_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "ffprobe stream index of the audio track to use."
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "preset": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Built-in preset: web_chrome (default), web_safari, webos, tizen, android_exoplayer."
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DeviceProfile",
+                "description": "Full device profile. Takes precedence over `preset`."
+              }
+            ]
+          },
+          "start_s": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Start position in seconds (transcode sessions start there)."
+          },
+          "subtitle_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "ffprobe stream index of the subtitle track to use."
+          }
+        }
+      },
+      "DecideResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "mode",
+          "url",
+          "decision",
+          "subtitles",
+          "audio"
+        ],
+        "properties": {
+          "audio": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AudioStream"
+            }
+          },
+          "decision": {
+            "$ref": "#/components/schemas/PlaybackDecision"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PlaybackMode"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "subtitles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubtitleOption"
+            }
+          },
+          "url": {
+            "type": "string",
+            "description": "`/api/v1/direct/{id}` for direct play, else `/api/v1/stream/{session}/master.m3u8`."
+          }
+        }
+      },
+      "DeclineBody": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "DeviceProfile": {
+        "type": "object",
+        "required": [
+          "name",
+          "player",
+          "containers",
+          "video",
+          "audio",
+          "max_width",
+          "max_height"
+        ],
+        "properties": {
+          "audio": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AudioCodecSupport"
+            }
+          },
+          "containers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Containers playable directly: mp4, mkv, webm, ts, mov, avi."
+          },
+          "max_bitrate_kbps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Client-side bitrate cap in kbit/s.",
+            "minimum": 0
+          },
+          "max_height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "max_width": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "player": {
+            "$ref": "#/components/schemas/PlayerKind"
+          },
+          "subtitles": {
+            "$ref": "#/components/schemas/SubtitleSupport"
+          },
+          "video": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VideoCodecSupport"
+            }
+          }
+        }
+      },
+      "DiscoverCardDto": {
+        "type": "object",
+        "required": [
+          "tmdb_id",
+          "media_type",
+          "title",
+          "status"
+        ],
+        "properties": {
+          "backdrop_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "media_type": {
+            "$ref": "#/components/schemas/MediaTypeDto"
+          },
+          "overview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "progress": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProgressDto",
+                "description": "Live download progress when a request is in flight."
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/Availability",
+            "description": "Library availability badge."
+          },
+          "title": {
+            "type": "string"
+          },
+          "tmdb_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "vote_average": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "DiscoverDetailDto": {
+        "type": "object",
+        "required": [
+          "card",
+          "genres",
+          "seasons"
+        ],
+        "properties": {
+          "card": {
+            "$ref": "#/components/schemas/DiscoverCardDto"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "imdb_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime_minutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "seasons": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Season numbers (TV; specials excluded)."
+          },
+          "tvdb_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "DiscoverPageDto": {
+        "type": "object",
+        "required": [
+          "page",
+          "total_pages",
+          "total_results",
+          "results"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscoverCardDto"
+            }
+          },
+          "total_pages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total_results": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "DownloadClientDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "url",
+          "password_set"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`qbittorrent` | `transmission`"
+          },
+          "password_set": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "EpgChannel": {
+        "type": "object",
+        "required": [
+          "channel_id",
+          "programs"
+        ],
+        "properties": {
+          "channel_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "programs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Program"
+            }
+          }
+        }
+      },
+      "EpgGrid": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "channels"
+        ],
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EpgChannel"
+            }
+          },
+          "from": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "to": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -587,6 +5547,23 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "HlsDetailDto": {
+        "type": "object",
+        "required": [
+          "video",
+          "audio"
+        ],
+        "properties": {
+          "audio": {
+            "type": "string",
+            "description": "`copy` | `aac` | `none`"
+          },
+          "video": {
+            "type": "string",
+            "description": "`copy` | `transcode` | `none`"
           }
         }
       },
@@ -637,6 +5614,310 @@
             "format": "int64"
           },
           "title": {
+            "type": "string"
+          }
+        }
+      },
+      "HubStatus": {
+        "type": "object",
+        "required": [
+          "sources",
+          "channels",
+          "sessions"
+        ],
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelMetricsDto"
+            }
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LiveSessionDto"
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceUsage"
+            }
+          }
+        }
+      },
+      "HwAccel": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "device",
+              "type"
+            ],
+            "properties": {
+              "device": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "vaapi"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "device",
+              "type"
+            ],
+            "properties": {
+              "device": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "qsv"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "nvenc"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "video_toolbox"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "software"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "HwAccelStatus": {
+        "type": "object",
+        "description": "Result of startup probing, exposed in the admin \"hw accel status\" endpoint.",
+        "required": [
+          "selected",
+          "available",
+          "ffmpeg_hwaccels",
+          "notes"
+        ],
+        "properties": {
+          "available": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HwAccel"
+            },
+            "description": "Backends that passed a 1-frame test encode, in preference order."
+          },
+          "degraded": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Backends that failed at runtime (ffmpeg exited early) and are no longer used."
+          },
+          "ffmpeg_hwaccels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "ffmpeg `-hwaccels` output entries."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Failures/diagnostics per tested backend."
+          },
+          "selected": {
+            "$ref": "#/components/schemas/HwAccel"
+          }
+        }
+      },
+      "InviteDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "url",
+          "library_ids",
+          "limits",
+          "status"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "library_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "limits": {
+            "$ref": "#/components/schemas/LimitsDto"
+          },
+          "status": {
+            "type": "string",
+            "description": "`pending` | `used` | `expired`"
+          },
+          "url": {
+            "type": "string",
+            "description": "Shareable link: `{public_url}/invite/{code}`."
+          },
+          "used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "used_by": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "InviteInfoDto": {
+        "type": "object",
+        "required": [
+          "valid",
+          "library_names"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "library_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names of the libraries the invite grants."
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        }
+      },
+      "IptvChannel": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "favorite",
+          "has_epg",
+          "catchup"
+        ],
+        "properties": {
+          "catchup": {
+            "type": "boolean",
+            "description": "The provider offers catch-up/archive for this channel."
+          },
+          "favorite": {
+            "type": "boolean"
+          },
+          "group": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_epg": {
+            "type": "boolean",
+            "description": "An EPG mapping exists for this channel."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "logo_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Signed, cached logo URL (`/api/v1/iptv/logo/{id}?…`)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "IptvGroup": {
+        "type": "object",
+        "required": [
+          "name",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
             "type": "string"
           }
         }
@@ -741,6 +6022,55 @@
               "null"
             ],
             "description": "Opaque cursor for the next page; absent on the last page."
+          }
+        }
+      },
+      "ItemProgressDto": {
+        "type": "object",
+        "description": "Per-item progress inside a request (e.g. one episode / one release).",
+        "required": [
+          "state",
+          "progress",
+          "size_bytes"
+        ],
+        "properties": {
+          "download_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "episode": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "progress": {
+            "type": "number",
+            "format": "float"
+          },
+          "season": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/RequestState"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -862,6 +6192,227 @@
           "shows"
         ]
       },
+      "LimitsDto": {
+        "type": "object",
+        "description": "Per-user limits; `null` = unlimited.",
+        "properties": {
+          "auto_approve": {
+            "type": "boolean",
+            "description": "Requests are approved and sent to Radarr/Sonarr immediately.",
+            "default": false
+          },
+          "max_bitrate_kbps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Bitrate cap in kbit/s (forces transcoding to a lower bitrate).",
+            "default": null
+          },
+          "max_streams": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Concurrent playback sessions.",
+            "default": null
+          },
+          "max_transcodes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Concurrent transcoding sessions.",
+            "default": null
+          },
+          "quota_window_days": {
+            "type": "integer",
+            "format": "int64",
+            "default": 7
+          },
+          "request_quota_movies": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "default": null
+          },
+          "request_quota_tv": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "default": null
+          }
+        }
+      },
+      "LiveModeDto": {
+        "type": "string",
+        "enum": [
+          "passthrough",
+          "hls"
+        ]
+      },
+      "LiveSessionDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "channel_id",
+          "channel_name",
+          "mode",
+          "started_at",
+          "idle_s",
+          "connections"
+        ],
+        "properties": {
+          "channel_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "channel_name": {
+            "type": "string"
+          },
+          "connections": {
+            "type": "integer",
+            "description": "Open `stream.ts` connections.",
+            "minimum": 0
+          },
+          "hls": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HlsDetailDto"
+              }
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "idle_s": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "mode": {
+            "$ref": "#/components/schemas/LiveModeDto"
+          },
+          "started_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "LoginBody": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "e.g. `web`, `webos`, `tizen`, `android`."
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable per-install id; logging in again from the same device replaces its session."
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "required": [
+          "token",
+          "expires_at",
+          "user"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Session expiry (unix seconds); extended on use."
+          },
+          "token": {
+            "type": "string",
+            "description": "Opaque bearer token: send as `Authorization: Bearer <token>`\n(or `?token=` on the `/events` WebSocket)."
+          },
+          "user": {
+            "$ref": "#/components/schemas/Me"
+          }
+        }
+      },
+      "Me": {
+        "type": "object",
+        "description": "The signed-in user.",
+        "required": [
+          "id",
+          "username",
+          "role",
+          "limits"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "library_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Visible library ids; absent = all libraries (admin)."
+          },
+          "limits": {
+            "$ref": "#/components/schemas/LimitsDto"
+          },
+          "role": {
+            "$ref": "#/components/schemas/RoleDto"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
       "MediaFile": {
         "type": "object",
         "required": [
@@ -917,6 +6468,494 @@
           }
         }
       },
+      "MediaTypeDto": {
+        "type": "string",
+        "enum": [
+          "movie",
+          "tv"
+        ]
+      },
+      "NotificationDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "config",
+          "events"
+        ],
+        "properties": {
+          "config": {
+            "type": "object",
+            "description": "Target configuration with secrets masked."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Events delivered to this target; empty = all."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`discord` | `telegram` | `webhook`"
+          }
+        }
+      },
+      "NowNext": {
+        "type": "object",
+        "required": [
+          "channel_id"
+        ],
+        "properties": {
+          "channel_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "next": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Program"
+              }
+            ]
+          },
+          "now": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Program"
+              }
+            ]
+          }
+        }
+      },
+      "PasswordBody": {
+        "type": "object",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "properties": {
+          "current_password": {
+            "type": "string"
+          },
+          "new_password": {
+            "type": "string",
+            "description": "At least 8 characters."
+          }
+        }
+      },
+      "PatchUserBody": {
+        "type": "object",
+        "properties": {
+          "disabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Disabling signs the user out everywhere."
+          },
+          "library_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Replaces the set of accessible libraries."
+          },
+          "limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LimitsDto",
+                "description": "Replaces all limits (omitted fields become unlimited)."
+              }
+            ]
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Admin password reset; signs the user out everywhere."
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RoleDto"
+              }
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PlaybackDecision": {
+        "type": "object",
+        "required": [
+          "mode",
+          "video",
+          "audio",
+          "subtitle",
+          "reasons"
+        ],
+        "properties": {
+          "audio": {
+            "$ref": "#/components/schemas/AudioAction"
+          },
+          "audio_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PlaybackMode"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subtitle": {
+            "$ref": "#/components/schemas/SubtitleAction"
+          },
+          "subtitle_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "video": {
+            "$ref": "#/components/schemas/VideoAction"
+          },
+          "video_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "ffprobe indexes of the streams that are used (None if absent)."
+          }
+        }
+      },
+      "PlaybackMode": {
+        "type": "string",
+        "enum": [
+          "direct_play",
+          "remux",
+          "audio_transcode",
+          "transcode"
+        ]
+      },
+      "PlayerKind": {
+        "type": "string",
+        "enum": [
+          "mse",
+          "native"
+        ]
+      },
+      "Program": {
+        "type": "object",
+        "required": [
+          "start",
+          "stop",
+          "title"
+        ],
+        "properties": {
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only with `detail=true` (and for `/iptv/now`)."
+          },
+          "episode_num": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix seconds."
+          },
+          "stop": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sub_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "ProgressDto": {
+        "type": "object",
+        "description": "Live progress of a request (same data as the `request_progress` WebSocket event, plus detail).",
+        "required": [
+          "request_id",
+          "tmdb_id",
+          "media_type",
+          "state",
+          "progress",
+          "items"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "eta_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemProgressDto"
+            }
+          },
+          "media_type": {
+            "$ref": "#/components/schemas/MediaTypeDto"
+          },
+          "peers": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "progress": {
+            "type": "number",
+            "format": "float",
+            "description": "0..1"
+          },
+          "release_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "seeds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "speed_bps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/RequestState"
+          },
+          "tmdb_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ProgressRequest": {
+        "type": "object",
+        "required": [
+          "position_s"
+        ],
+        "properties": {
+          "paused": {
+            "type": "boolean"
+          },
+          "position_s": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "QualityProfileDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RequestDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "media_type",
+          "tmdb_id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "approved_by": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "arr_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`sonarr` | `radarr`"
+          },
+          "arr_server_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "media_type": {
+            "$ref": "#/components/schemas/MediaTypeDto"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "quality_profile_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "root_folder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seasons": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "TV only; absent = all seasons."
+          },
+          "status": {
+            "$ref": "#/components/schemas/RequestState"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tmdb_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "RequestState": {
         "type": "string",
         "description": "Request lifecycle state (SPEC §7.1).",
@@ -933,6 +6972,36 @@
           "failed",
           "declined"
         ]
+      },
+      "RoleDto": {
+        "type": "string",
+        "enum": [
+          "admin",
+          "user"
+        ]
+      },
+      "RootFolderDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "path"
+        ],
+        "properties": {
+          "free_space": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
       },
       "ServerEvent": {
         "oneOf": [
@@ -1021,6 +7090,520 @@
         ],
         "description": "Server-to-client event."
       },
+      "SessionDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "last_seen",
+          "current"
+        ],
+        "properties": {
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current": {
+            "type": "boolean",
+            "description": "This is the session making the request."
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ip": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_seen": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SetupBody": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "type": "string",
+            "description": "At least 8 characters."
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "SetupStatus": {
+        "type": "object",
+        "required": [
+          "needs_setup"
+        ],
+        "properties": {
+          "needs_setup": {
+            "type": "boolean",
+            "description": "True until the first admin account has been created."
+          }
+        }
+      },
+      "SourceBody": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "url"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "epg_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`m3u` | `xtream`"
+          },
+          "max_connections": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refresh_interval": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "url": {
+            "type": "string",
+            "description": "Playlist URL (m3u) or Xtream server base URL."
+          },
+          "user_agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SourceDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "url",
+          "password_set",
+          "enabled",
+          "channel_count",
+          "refreshing",
+          "open_connections"
+        ],
+        "properties": {
+          "channel_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "detected_epg_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "epg_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`m3u` | `xtream`"
+          },
+          "last_epg_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_refresh_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "max_connections": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Provider connection limit (`null` = unlimited / unknown).",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "open_connections": {
+            "type": "integer",
+            "description": "Upstream connections open right now (live + warm).",
+            "minimum": 0
+          },
+          "password_set": {
+            "type": "boolean"
+          },
+          "refresh_interval": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Minutes between refreshes; `null` = default (12 h); 0 = manual only."
+          },
+          "refreshing": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          },
+          "user_agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SourcePatch": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "epg_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Empty string clears."
+          },
+          "max_connections": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Use `0` for \"unlimited\".",
+            "minimum": 0
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Omit to keep the current password."
+          },
+          "refresh_interval": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SourceTest": {
+        "type": "object",
+        "required": [
+          "ok",
+          "message"
+        ],
+        "properties": {
+          "account": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AccountDto",
+                "description": "Xtream account details."
+              }
+            ]
+          },
+          "channels": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Channels found (M3U: all; Xtream: live streams).",
+            "minimum": 0
+          },
+          "epg_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "EPG URL advertised by the playlist."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable outcome (or the failure reason)."
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SourceUsage": {
+        "type": "object",
+        "required": [
+          "source_id",
+          "open_connections"
+        ],
+        "properties": {
+          "max_connections": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "open_connections": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SubtitleAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "none"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Converted to WebVTT and served separately (`/subs/{streamId}.vtt`).",
+            "required": [
+              "format",
+              "type"
+            ],
+            "properties": {
+              "format": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "sidecar"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Rendered into the video (forces a video transcode).",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "burn_in"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Client renders the embedded track itself (direct play only).",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "native"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "SubtitleOption": {
+        "type": "object",
+        "required": [
+          "index",
+          "stream_id",
+          "forced",
+          "external"
+        ],
+        "properties": {
+          "external": {
+            "type": "boolean"
+          },
+          "forced": {
+            "type": "boolean"
+          },
+          "index": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stream_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "WebVTT URL; absent for image subtitles (PGS/VobSub) which can only be burned in."
+          }
+        }
+      },
       "SubtitleStream": {
         "type": "object",
         "required": [
@@ -1057,6 +7640,295 @@
           }
         }
       },
+      "SubtitleSupport": {
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Image formats the client can render natively: pgs, vobsub. Empty ⇒ burn-in needed."
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Text formats the client can render natively: vtt, srt, ass."
+          }
+        }
+      },
+      "TuneBody": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LiveModeDto",
+                "description": "`hls` (default) or `passthrough`."
+              }
+            ]
+          },
+          "preset": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Built-in device preset (decides which codecs HLS may copy)."
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DeviceProfile"
+              }
+            ]
+          }
+        }
+      },
+      "TuneResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "mode",
+          "url",
+          "channel_id",
+          "channel_name"
+        ],
+        "properties": {
+          "channel_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "channel_name": {
+            "type": "string"
+          },
+          "hls": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HlsDetailDto"
+              }
+            ]
+          },
+          "mode": {
+            "$ref": "#/components/schemas/LiveModeDto"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "Signed URL: `stream.ts` (passthrough) or `index.m3u8` (HLS). Valid for the configured\nsigned-URL lifetime; the session itself ends shortly after the player disconnects."
+          }
+        }
+      },
+      "UpdateArrServer": {
+        "type": "object",
+        "properties": {
+          "api_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Omit to keep the current key."
+          },
+          "default_profile": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "default_root": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_4k": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UserDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "role",
+          "disabled",
+          "created_at",
+          "limits",
+          "library_ids"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "library_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Libraries the user may access (ignored for admins, who see everything)."
+          },
+          "limits": {
+            "$ref": "#/components/schemas/LimitsDto"
+          },
+          "role": {
+            "$ref": "#/components/schemas/RoleDto"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "VideoAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "File has no usable video stream (audio-only).",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "none"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "copy"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "codec",
+              "width",
+              "height",
+              "bitrate_kbps",
+              "tonemap",
+              "type"
+            ],
+            "properties": {
+              "bitrate_kbps": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "codec": {
+                "type": "string"
+              },
+              "height": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "tonemap": {
+                "type": "boolean"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "encode"
+                ]
+              },
+              "width": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          }
+        ]
+      },
+      "VideoCodecSupport": {
+        "type": "object",
+        "required": [
+          "codec"
+        ],
+        "properties": {
+          "codec": {
+            "type": "string",
+            "description": "Normalised codec name: h264, hevc, vp9, av1, mpeg2video …"
+          },
+          "hdr": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Hdr"
+            },
+            "description": "HDR formats decodable *and displayed* as HDR."
+          },
+          "max_bit_depth": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "max_level": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Highest level in ffprobe notation (H.264 4.1 = 41, HEVC 5.1 = 153). `None` = any.",
+            "minimum": 0
+          },
+          "max_profile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Highest profile (e.g. \"high\", \"main 10\"). `None` = any."
+          }
+        }
+      },
       "VideoStream": {
         "type": "object",
         "required": [
@@ -1086,7 +7958,48 @@
             "format": "int64"
           }
         }
+      },
+      "WebhookResult": {
+        "type": "object",
+        "required": [
+          "event",
+          "request_ids",
+          "scanned_paths"
+        ],
+        "properties": {
+          "event": {
+            "type": "string",
+            "description": "Webhook event type as understood by the server (`Grab`, `Download`, …)."
+          },
+          "request_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Requests whose state changed."
+          },
+          "scanned_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Paths that were re-scanned into the library."
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Opaque session token from /auth/login. Media endpoints (direct, stream, subs, images) also accept a signed URL (`exp`, `u`, `sig` query)."
       }
     }
-  }
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ]
 }

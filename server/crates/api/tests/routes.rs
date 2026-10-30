@@ -1,3 +1,5 @@
+mod common;
+
 use std::{path::Path, process::Command, time::Duration};
 
 use axum::{
@@ -111,7 +113,8 @@ async fn fixture() -> Option<Fx> {
         data_dir: dir.path().join("data"),
         ..Default::default()
     };
-    let app = app(AppState::new(db, cfg));
+    let state = AppState::new(db, cfg);
+    let app = common::authed(&state, app(state.clone())).await;
 
     let res = post_library(&app, "Movies", "movies", &mv).await;
     assert_eq!(res.status(), StatusCode::CREATED);
@@ -227,7 +230,12 @@ async fn item_detail_children_and_search() {
     assert_eq!(d["cast"], json!([]));
     let f = &d["files"][0];
     assert_eq!(f["container"], "mp4");
-    assert_eq!(f["url"], format!("/api/v1/direct/{}", f["id"]));
+    assert!(
+        f["url"]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("/api/v1/direct/{}?exp=", f["id"]))
+    );
     assert_eq!(f["video"]["codec"], "mpeg4");
     assert_eq!(f["video"]["width"], 64);
     assert_eq!(f["video"]["hdr"], "none");
@@ -377,9 +385,16 @@ async fn image_served_with_cache_headers() {
         ..Default::default()
     };
     let pool = db.clone();
-    let app = app(AppState::new(db, cfg));
+    let state = AppState::new(db, cfg);
+    let app = common::authed(&state, app(state.clone())).await;
     let (_, d) = get(&app, "/api/v1/items/1").await;
-    assert_eq!(d["poster_url"], "/api/v1/images/poster/1?w=342");
+    assert!(
+        d["poster_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("/api/v1/images/poster/1?w=342&exp="),
+        "{d}"
+    );
 
     let res = call(
         &app,

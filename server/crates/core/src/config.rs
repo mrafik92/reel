@@ -23,6 +23,39 @@ pub struct Config {
     pub tmdb_api_key: Option<String>,
     /// Directory with the built web client; served with SPA fallback when set.
     pub web_dir: Option<PathBuf>,
+    /// Max concurrent transcode sessions overall (0 = unlimited).
+    pub max_transcodes: usize,
+    /// Max concurrent transcode sessions per user (0 = unlimited).
+    pub max_user_transcodes: usize,
+    /// ffmpeg binary used for transcoding/subtitles (default `ffmpeg`).
+    pub ffmpeg_path: Option<String>,
+    /// Shared secret for `POST /api/v1/webhooks/arr?token=…` (Radarr/Sonarr webhooks).
+    /// Webhooks are rejected while this is unset.
+    pub webhook_secret: Option<String>,
+    /// HMAC key for signed media URLs. Default: generated once and kept in `<data_dir>/signing.key`.
+    pub signing_secret: Option<String>,
+    /// Sliding session lifetime in days (default 30).
+    pub session_ttl_days: u32,
+    /// Lifetime of signed stream/direct/subtitle URLs in seconds (default 6 h; must outlast a movie).
+    pub signed_url_ttl_secs: u64,
+    /// Origins allowed to call the API cross-origin (e.g. a separately hosted web client).
+    /// Empty (default) = same-origin only.
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
+    /// Public base URL used in invite links, e.g. `https://reel.example.com`.
+    pub public_url: Option<String>,
+    /// Trust `X-Forwarded-For` / `X-Real-IP` for the client IP (set when behind Caddy/nginx).
+    pub trust_proxy_headers: bool,
+    /// Maximum request body size in bytes (default 4 MiB).
+    pub max_body_bytes: usize,
+    /// Keep a live channel's upstream open this many seconds after the last viewer leaves.
+    pub iptv_grace_secs: u64,
+    /// Seconds without upstream data before a live channel reconnects / fails over.
+    pub iptv_stall_secs: u64,
+    /// Keep the N most-favorited channels warm if the provider connection budget allows (0 = off).
+    pub iptv_warm_favorites: usize,
+    /// Days of EPG kept ahead of now (1 day is kept behind).
+    pub iptv_epg_days: u32,
     /// Libraries created on boot if no library with the same name exists.
     #[serde(default)]
     pub libraries: Vec<LibraryConfig>,
@@ -45,6 +78,21 @@ impl Default for Config {
             database_path: None,
             tmdb_api_key: None,
             web_dir: None,
+            max_transcodes: 0,
+            max_user_transcodes: 0,
+            ffmpeg_path: None,
+            webhook_secret: None,
+            signing_secret: None,
+            session_ttl_days: 30,
+            signed_url_ttl_secs: 6 * 3600,
+            cors_origins: Vec::new(),
+            public_url: None,
+            trust_proxy_headers: false,
+            max_body_bytes: 4 * 1024 * 1024,
+            iptv_grace_secs: 15,
+            iptv_stall_secs: 8,
+            iptv_warm_favorites: 0,
+            iptv_epg_days: 7,
             libraries: Vec::new(),
         }
     }

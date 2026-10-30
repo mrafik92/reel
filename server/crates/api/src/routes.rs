@@ -17,32 +17,53 @@ use utoipa::IntoParams;
 
 use crate::{
     AppState,
+    auth::{AdminUser, AuthUser, SignedQuery, vis_clause, vis_json},
     dto::*,
     error::{ApiError, ApiResult, ErrorBody},
 };
-
-/// Implicit user until auth lands.
-// TODO(auth): derive from the authenticated session.
-const USER_ID: i64 = 1;
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
 const ROW_LIMIT: i64 = 20;
 
-/// Columns + joins producing an [`ItemSummary`] (see [`summary_from_row`]).
-const SUMMARY_SELECT: &str = "SELECT i.id, i.kind, i.title, i.year, i.poster, i.backdrop, \
-    i.season_no, i.episode_no, i.parent_id, i.added_at, w.position_s, \
-    COALESCE(w.played, 0) AS played, \
-    CAST(COALESCE(i.runtime_s, (SELECT f.duration_s FROM media_files f WHERE f.item_id = i.id \
-        ORDER BY f.part_no, f.id LIMIT 1)) AS REAL) AS dur";
-const SUMMARY_FROM: &str = " FROM media_items i LEFT JOIN watch_state w \
-    ON w.item_id = i.id AND w.user_id = 1";
+/// Image URL lifetime; signatures are quantized to a day so URLs stay cacheable.
+const IMG_TTL: i64 = 2 * 86_400;
+const IMG_QUANTUM: i64 = 86_400;
 
-fn image_url(kind: &str, id: i64, w: u32) -> String {
-    format!("/api/v1/images/{kind}/{id}?w={w}")
+/// Columns + joins producing an [`ItemSummary`] (see [`summary_from_row`]) for user `uid`.
+fn summary_select(uid: i64) -> String {
+    format!(
+        "SELECT i.id, i.kind, i.title, i.year, i.poster, i.backdrop, \
+    i.season_no, i.episode_no, i.parent_id, i.added_at, w.position_s, \
+    CASE WHEN i.kind IN ('show','season') THEN COALESCE((SELECT count(*) > 0 AND \
+        sum(CASE WHEN COALESCE(cw.played, 0) = 1 THEN 0 ELSE 1 END) = 0 \
+        FROM media_items c LEFT JOIN watch_state cw ON cw.item_id = c.id AND cw.user_id = {uid} \
+        WHERE c.kind = 'episode' AND (c.parent_id = i.id OR c.parent_id IN \
+            (SELECT id FROM media_items WHERE parent_id = i.id))), 0) \
+        ELSE COALESCE(w.played, 0) END AS played, \
+    CAST(COALESCE(i.runtime_s, (SELECT f.duration_s FROM media_files f WHERE f.item_id = i.id \
+        ORDER BY f.part_no, f.id LIMIT 1)) AS REAL) AS dur"
+    )
 }
 
-fn summary_from_row(r: &SqliteRow) -> ItemSummary {
+fn summary_from(uid: i64) -> String {
+    format!(
+        " FROM media_items i LEFT JOIN watch_state w \
+    ON w.item_id = i.id AND w.user_id = {uid}"
+    )
+}
+
+/// Signed `/api/v1/images/{kind}/{id}?w=…` URL.
+fn image_url(sg: &reel_auth::UrlSigner, kind: &str, id: i64, w: u32) -> String {
+    sg.url(
+        &format!("/api/v1/images/{kind}/{id}?w={w}"),
+        &format!("img:{kind}:{id}"),
+        IMG_TTL,
+        IMG_QUANTUM,
+    )
+}
+
+fn summary_from_row(r: &SqliteRow, sg: &reel_auth::UrlSigner) -> ItemSummary {
     let id: i64 = r.get("id");
     let poster: Option<String> = r.get("poster");
     let backdrop: Option<String> = r.get("backdrop");
@@ -57,8 +78,8 @@ fn summary_from_row(r: &SqliteRow) -> ItemSummary {
         kind: ItemKind::parse(&r.get::<String, _>("kind")),
         title: r.get("title"),
         year: r.get("year"),
-        poster_url: poster.map(|_| image_url("poster", id, 342)),
-        backdrop_url: backdrop.map(|_| image_url("backdrop", id, 780)),
+        poster_url: poster.map(|_| image_url(sg, "poster", id, 342)),
+        backdrop_url: backdrop.map(|_| image_url(sg, "backdrop", id, 780)),
         season_no: r.get("season_no"),
         episode_no: r.get("episode_no"),
         parent_id: r.get("parent_id"),
@@ -88,10 +109,19 @@ const LIBRARY_SELECT: &str = "SELECT l.id, l.name, l.kind, l.paths_json, \
 
 /// List libraries.
 #[utoipa::path(get, path = "/libraries", responses((status = 200, body = Vec<Library>)))]
-pub async fn list_libraries(State(st): State<AppState>) -> ApiResult<Json<Vec<Library>>> {
-    let rows = sqlx::query(&format!("{LIBRARY_SELECT} ORDER BY l.id"))
-        .fetch_all(&st.db)
-        .await?;
+pub async fn list_libraries(
+    State(st): State<AppState>,
+    u: AuthUser,
+) -> ApiResult<Json<Vec<Library>>> {
+    let vis = vis_json(&st.visible(&u.user).await?);
+    let rows = sqlx::query(&format!(
+        "{LIBRARY_SELECT} WHERE {} ORDER BY l.id",
+        vis_clause("l.id")
+    ))
+    .bind(&vis)
+    .bind(&vis)
+    .fetch_all(&st.db)
+    .await?;
     Ok(Json(rows.iter().map(library_from_row).collect()))
 }
 
@@ -104,12 +134,20 @@ pub async fn list_libraries(State(st): State<AppState>) -> ApiResult<Json<Vec<Li
 )]
 pub async fn create_library(
     State(st): State<AppState>,
+    AdminUser(a): AdminUser,
     Json(body): Json<CreateLibrary>,
 ) -> ApiResult<(StatusCode, Json<Library>)> {
     let id = st
         .create_library(&body.name, body.kind, &body.paths)
         .await
         .map_err(ApiError::BadRequest)?;
+    st.audit(
+        &a.user,
+        "library_create",
+        Some(id.to_string()),
+        serde_json::json!({"name": body.name}),
+    )
+    .await;
     let row = sqlx::query(&format!("{LIBRARY_SELECT} WHERE l.id = ?"))
         .bind(id)
         .fetch_one(&st.db)
@@ -126,6 +164,7 @@ pub async fn create_library(
 )]
 pub async fn scan_library(
     State(st): State<AppState>,
+    _a: AdminUser,
     Path(id): Path<i64>,
 ) -> ApiResult<StatusCode> {
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM libraries WHERE id = ?")
@@ -162,6 +201,7 @@ struct Cursor {
 )]
 pub async fn library_items(
     State(st): State<AppState>,
+    u: AuthUser,
     Path(id): Path<i64>,
     Query(q): Query<ItemsQuery>,
 ) -> ApiResult<Json<ItemPage>> {
@@ -170,6 +210,12 @@ pub async fn library_items(
         .fetch_optional(&st.db)
         .await?;
     exists.ok_or(ApiError::NotFound)?;
+    st.require_library(&u.user, id).await?;
+    let (sel, frm, sg) = (
+        summary_select(u.id()),
+        summary_from(u.id()),
+        st.signer(u.id()),
+    );
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     // (key expression, descending?, text key?)
     let (key, desc, text) = match q.sort.as_deref().unwrap_or("title") {
@@ -192,7 +238,7 @@ pub async fn library_items(
     let cmp = if desc { "<" } else { ">" };
     let dir = if desc { "DESC" } else { "ASC" };
     let mut sql = format!(
-        "{SUMMARY_SELECT}, {key} AS sort_key{SUMMARY_FROM} \
+        "{sel}, {key} AS sort_key{frm} \
          WHERE i.library_id = ? AND i.kind IN ('movie','show')"
     );
     if cursor.is_some() {
@@ -226,7 +272,7 @@ pub async fn library_items(
         None
     };
     Ok(Json(ItemPage {
-        items: rows.iter().map(summary_from_row).collect(),
+        items: rows.iter().map(|r| summary_from_row(r, &sg)).collect(),
         next_cursor,
     }))
 }
@@ -242,12 +288,19 @@ pub async fn library_items(
 )]
 pub async fn get_item(
     State(st): State<AppState>,
+    u: AuthUser,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<ItemDetail>> {
+    st.require_item(&u.user, id).await?;
+    let (sel, frm, sg) = (
+        summary_select(u.id()),
+        summary_from(u.id()),
+        st.signer(u.id()),
+    );
     let row = sqlx::query(&format!(
-        "{SUMMARY_SELECT}, i.overview, i.runtime_s, i.rating, i.content_rating, i.tmdb_id, \
+        "{sel}, i.overview, i.runtime_s, i.rating, i.content_rating, i.tmdb_id, \
          (SELECT count(*) FROM media_items c WHERE c.parent_id = i.id) AS children_count \
-         {SUMMARY_FROM} WHERE i.id = ?"
+         {frm} WHERE i.id = ?"
     ))
     .bind(id)
     .fetch_optional(&st.db)
@@ -276,14 +329,14 @@ pub async fn get_item(
         CastMember {
             name: r.get("name"),
             character: r.get("character"),
-            photo_url: photo.map(|_| image_url("person", r.get("id"), 185)),
+            photo_url: photo.map(|_| image_url(&sg, "person", r.get("id"), 185)),
         }
     })
     .collect();
 
-    let files = load_files(&st, id).await?;
+    let files = load_files(&st, &sg, id).await?;
     Ok(Json(ItemDetail {
-        summary: summary_from_row(&row),
+        summary: summary_from_row(&row, &sg),
         overview: row.get("overview"),
         runtime_s: row.get("runtime_s"),
         rating: row.get("rating"),
@@ -296,7 +349,11 @@ pub async fn get_item(
     }))
 }
 
-async fn load_files(st: &AppState, item_id: i64) -> ApiResult<Vec<MediaFile>> {
+async fn load_files(
+    st: &AppState,
+    sg: &reel_auth::UrlSigner,
+    item_id: i64,
+) -> ApiResult<Vec<MediaFile>> {
     let file_rows = sqlx::query(
         "SELECT id, container, duration_s, size FROM media_files WHERE item_id = ? \
          ORDER BY part_no, id",
@@ -353,7 +410,12 @@ async fn load_files(st: &AppState, item_id: i64) -> ApiResult<Vec<MediaFile>> {
             container: fr.get::<Option<String>, _>("container").unwrap_or_default(),
             duration_s: fr.get::<Option<f64>, _>("duration_s").unwrap_or(0.0),
             size: fr.get("size"),
-            url: format!("/api/v1/direct/{fid}"),
+            url: sg.url(
+                &format!("/api/v1/direct/{fid}"),
+                &format!("direct:{fid}"),
+                st.media_ttl(),
+                3600,
+            ),
             video,
             audio,
             subtitles,
@@ -371,58 +433,86 @@ async fn load_files(st: &AppState, item_id: i64) -> ApiResult<Vec<MediaFile>> {
 )]
 pub async fn item_children(
     State(st): State<AppState>,
+    u: AuthUser,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<Vec<ItemSummary>>> {
-    let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM media_items WHERE id = ?")
-        .bind(id)
-        .fetch_optional(&st.db)
-        .await?;
-    exists.ok_or(ApiError::NotFound)?;
+    st.require_item(&u.user, id).await?;
+    let (sel, frm, sg) = (
+        summary_select(u.id()),
+        summary_from(u.id()),
+        st.signer(u.id()),
+    );
     let rows = sqlx::query(&format!(
-        "{SUMMARY_SELECT}{SUMMARY_FROM} WHERE i.parent_id = ? \
+        "{sel}{frm} WHERE i.parent_id = ? \
          ORDER BY COALESCE(i.season_no, 0), COALESCE(i.episode_no, 0), i.id"
     ))
     .bind(id)
     .fetch_all(&st.db)
     .await?;
-    Ok(Json(rows.iter().map(summary_from_row).collect()))
+    Ok(Json(
+        rows.iter().map(|r| summary_from_row(r, &sg)).collect(),
+    ))
 }
 
 // ───────────────────────── home / search ─────────────────────────
 
-async fn recent_in(st: &AppState, library: Option<i64>) -> ApiResult<Vec<ItemSummary>> {
-    let mut sql = format!("{SUMMARY_SELECT}{SUMMARY_FROM} WHERE i.kind IN ('movie','show')");
+async fn recent_in(
+    st: &AppState,
+    uid: i64,
+    vis: &Option<String>,
+    library: Option<i64>,
+) -> ApiResult<Vec<ItemSummary>> {
+    let (sel, frm, sg) = (summary_select(uid), summary_from(uid), st.signer(uid));
+    let mut sql = format!(
+        "{sel}{frm} WHERE i.kind IN ('movie','show') AND {}",
+        vis_clause("i.library_id")
+    );
     if library.is_some() {
         sql.push_str(" AND i.library_id = ?");
     }
     sql.push_str(" ORDER BY i.added_at DESC, i.id DESC LIMIT ?");
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(&sql).bind(vis).bind(vis);
     if let Some(l) = library {
         q = q.bind(l);
     }
     let rows = q.bind(ROW_LIMIT).fetch_all(&st.db).await?;
-    Ok(rows.iter().map(summary_from_row).collect())
+    Ok(rows.iter().map(|r| summary_from_row(r, &sg)).collect())
 }
 
-/// Home screen: continue watching, recently added, and one row per library.
+/// Home screen: continue watching, recently added, and one row per visible library.
 #[utoipa::path(get, path = "/home", responses((status = 200, body = Home)))]
-pub async fn home(State(st): State<AppState>) -> ApiResult<Json<Home>> {
+pub async fn home(State(st): State<AppState>, u: AuthUser) -> ApiResult<Json<Home>> {
+    let visible = st.visible(&u.user).await?;
+    let vis = vis_json(&visible);
+    let (sel, frm, sg) = (
+        summary_select(u.id()),
+        summary_from(u.id()),
+        st.signer(u.id()),
+    );
     let rows = sqlx::query(&format!(
-        "{SUMMARY_SELECT}{SUMMARY_FROM} WHERE w.user_id = ? AND w.position_s > 0 \
-         AND w.played = 0 AND i.kind IN ('movie','episode') \
-         ORDER BY COALESCE(w.last_played_at, 0) DESC, i.id DESC LIMIT ?"
+        "{sel}{frm} WHERE w.user_id = ? AND w.position_s > 0 \
+         AND w.played = 0 AND i.kind IN ('movie','episode') AND {} \
+         ORDER BY COALESCE(w.last_played_at, 0) DESC, i.id DESC LIMIT ?",
+        vis_clause("i.library_id")
     ))
-    .bind(USER_ID)
+    .bind(u.id())
+    .bind(&vis)
+    .bind(&vis)
     .bind(ROW_LIMIT)
     .fetch_all(&st.db)
     .await?;
-    let continue_watching = rows.iter().map(summary_from_row).collect();
-    let libs: Vec<(i64, String)> = sqlx::query_as("SELECT id, name FROM libraries ORDER BY id")
-        .fetch_all(&st.db)
-        .await?;
+    let continue_watching = rows.iter().map(|r| summary_from_row(r, &sg)).collect();
+    let libs: Vec<(i64, String)> = sqlx::query_as(&format!(
+        "SELECT id, name FROM libraries WHERE {} ORDER BY id",
+        vis_clause("id")
+    ))
+    .bind(&vis)
+    .bind(&vis)
+    .fetch_all(&st.db)
+    .await?;
     let mut out_rows = Vec::new();
     for (library_id, title) in libs {
-        let items = recent_in(&st, Some(library_id)).await?;
+        let items = recent_in(&st, u.id(), &vis, Some(library_id)).await?;
         out_rows.push(HomeRow {
             library_id,
             title,
@@ -431,7 +521,7 @@ pub async fn home(State(st): State<AppState>) -> ApiResult<Json<Home>> {
     }
     Ok(Json(Home {
         continue_watching,
-        recently_added: recent_in(&st, None).await?,
+        recently_added: recent_in(&st, u.id(), &vis, None).await?,
         rows: out_rows,
     }))
 }
@@ -459,6 +549,7 @@ fn like_escape(s: &str) -> String {
 )]
 pub async fn search(
     State(st): State<AppState>,
+    u: AuthUser,
     Query(q): Query<SearchQuery>,
 ) -> ApiResult<Json<Vec<ItemSummary>>> {
     let text = q.q.unwrap_or_default().trim().to_lowercase();
@@ -466,18 +557,29 @@ pub async fn search(
         return Ok(Json(Vec::new()));
     }
     let esc = like_escape(&text);
+    let vis = vis_json(&st.visible(&u.user).await?);
+    let (sel, frm, sg) = (
+        summary_select(u.id()),
+        summary_from(u.id()),
+        st.signer(u.id()),
+    );
     let rows = sqlx::query(&format!(
-        "{SUMMARY_SELECT}{SUMMARY_FROM} WHERE i.kind IN ('movie','show') \
-         AND lower(i.title) LIKE ? ESCAPE '\\' \
+        "{sel}{frm} WHERE i.kind IN ('movie','show') \
+         AND lower(i.title) LIKE ? ESCAPE '\\' AND {} \
          ORDER BY CASE WHEN lower(i.title) LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END, \
-         COALESCE(i.sort_title, lower(i.title)), i.id LIMIT ?"
+         COALESCE(i.sort_title, lower(i.title)), i.id LIMIT ?",
+        vis_clause("i.library_id")
     ))
     .bind(format!("%{esc}%"))
+    .bind(&vis)
+    .bind(&vis)
     .bind(format!("{esc}%"))
     .bind(q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT))
     .fetch_all(&st.db)
     .await?;
-    Ok(Json(rows.iter().map(summary_from_row).collect()))
+    Ok(Json(
+        rows.iter().map(|r| summary_from_row(r, &sg)).collect(),
+    ))
 }
 
 // ───────────────────────── images ─────────────────────────
@@ -495,7 +597,8 @@ pub struct ImageQuery {
     params(
         ("kind" = String, Path, description = "poster | backdrop | person"),
         ("id" = i64, Path, description = "Item id (poster/backdrop) or person id"),
-        ImageQuery
+        ImageQuery,
+        SignedQuery
     ),
     responses(
         (status = 200, description = "Image bytes", content_type = "image/jpeg"),
@@ -507,8 +610,15 @@ pub async fn image(
     State(st): State<AppState>,
     Path((kind, id)): Path<(String, i64)>,
     Query(q): Query<ImageQuery>,
+    Query(sq): Query<SignedQuery>,
     headers: HeaderMap,
 ) -> ApiResult<Response> {
+    let user = st
+        .media_user(&headers, &sq, &format!("img:{kind}:{id}"))
+        .await?;
+    if matches!(kind.as_str(), "poster" | "backdrop") {
+        st.require_item(&user, id).await?;
+    }
     let (source, ik): (Option<String>, ImageKind) = match kind.as_str() {
         "poster" => {
             let r: Option<(Option<String>, String)> =
@@ -556,6 +666,11 @@ pub async fn image(
                 ApiError::BadGateway("image unavailable".into())
             }
         })?;
+    respond_file(path, &headers).await
+}
+
+/// Serve a cached image file with ETag / long-lived cache headers.
+async fn respond_file(path: std::path::PathBuf, headers: &HeaderMap) -> ApiResult<Response> {
     let meta = tokio::fs::metadata(&path)
         .await
         .map_err(|_| ApiError::NotFound)?;
@@ -596,6 +711,67 @@ pub async fn image(
     Ok(res)
 }
 
+/// Resized, cached TMDB image by TMDB path (for discovery cards that aren't library items).
+#[utoipa::path(
+    get,
+    path = "/images/tmdb/{kind}",
+    params(
+        ("kind" = String, Path, description = "poster | backdrop | profile"),
+        TmdbImageQuery,
+        SignedQuery
+    ),
+    responses(
+        (status = 200, description = "Image bytes", content_type = "image/jpeg"),
+        (status = 304, description = "Not modified"),
+        (status = 400, body = ErrorBody),
+        (status = 404, body = ErrorBody)
+    )
+)]
+pub async fn image_tmdb(
+    State(st): State<AppState>,
+    Path(kind): Path<String>,
+    Query(q): Query<TmdbImageQuery>,
+    Query(sq): Query<SignedQuery>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
+    st.media_user(&headers, &sq, &format!("tmdb:{kind}:{}", q.path))
+        .await?;
+    let ik = match kind.as_str() {
+        "poster" => ImageKind::Poster,
+        "backdrop" => ImageKind::Backdrop,
+        "profile" => ImageKind::Profile,
+        _ => return Err(ApiError::NotFound),
+    };
+    let valid = q.path.len() < 100
+        && q.path.starts_with('/')
+        && q.path[1..]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if !valid || q.path.len() < 2 {
+        return Err(ApiError::BadRequest("invalid TMDB image path".into()));
+    }
+    let path = st
+        .images
+        .get(ik, &q.path, q.w.unwrap_or(0))
+        .await
+        .map_err(|e| match e {
+            reel_metadata::Error::Status(404) => ApiError::NotFound,
+            e => {
+                tracing::warn!(path = %q.path, "tmdb image fetch failed: {e}");
+                ApiError::BadGateway("image unavailable".into())
+            }
+        })?;
+    respond_file(path, &headers).await
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct TmdbImageQuery {
+    /// TMDB image path, e.g. `/abc123.jpg`.
+    pub path: String,
+    /// Target width in px; omitted = original.
+    pub w: Option<u32>,
+}
+
 // ───────────────────────── direct play ─────────────────────────
 
 fn container_mime(container: &str) -> &'static str {
@@ -615,7 +791,7 @@ fn container_mime(container: &str) -> &'static str {
 #[utoipa::path(
     get,
     path = "/direct/{file_id}",
-    params(("file_id" = i64, Path, description = "Media file id")),
+    params(("file_id" = i64, Path, description = "Media file id"), SignedQuery),
     responses(
         (status = 200, description = "Full file", content_type = "video/*"),
         (status = 206, description = "Partial content"),
@@ -628,6 +804,13 @@ pub async fn direct(
     Path(file_id): Path<i64>,
     req: Request,
 ) -> ApiResult<Response> {
+    let sq = Query::<SignedQuery>::try_from_uri(req.uri())
+        .map(|q| q.0)
+        .unwrap_or_default();
+    let user = st
+        .media_user(req.headers(), &sq, &format!("direct:{file_id}"))
+        .await?;
+    st.require_file(&user, file_id).await?;
     let (path, container): (String, Option<String>) =
         sqlx::query_as("SELECT path, container FROM media_files WHERE id = ?")
             .bind(file_id)
