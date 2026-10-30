@@ -253,6 +253,49 @@ pub fn parse_probe(json: &str, ext: Option<&str>) -> Result<ProbeResult, ProbeEr
     })
 }
 
+/// ffprobe a remote (provider) URL: player-like User-Agent, network protocols only.
+pub async fn probe_url(
+    ffprobe: &str,
+    url: &str,
+    user_agent: &str,
+    ext_hint: Option<&str>,
+    timeout: Duration,
+) -> Result<ProbeResult, ProbeError> {
+    let mut cmd = Command::new(ffprobe);
+    cmd.args([
+        "-v",
+        "error",
+        "-user_agent",
+        user_agent,
+        "-protocol_whitelist",
+        "http,https,tcp,tls,crypto",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        "-i",
+        url,
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
+    let out = tokio::time::timeout(timeout, cmd.output())
+        .await
+        .map_err(|_| ProbeError::Timeout(timeout))??;
+    if !out.status.success() {
+        return Err(ProbeError::Failed {
+            status: out.status.to_string(),
+            // the URL carries the provider credentials
+            stderr: String::from_utf8_lossy(&out.stderr)
+                .replace(url, "<url>")
+                .trim()
+                .to_string(),
+        });
+    }
+    parse_probe(&String::from_utf8_lossy(&out.stdout), ext_hint)
+}
+
 /// Run ffprobe on `path` with a timeout.
 pub async fn probe(
     ffprobe: &str,

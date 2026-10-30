@@ -36,9 +36,12 @@ pub struct XtreamClient {
     user: String,
     pass: String,
     ua: Option<String>,
+    gate: Option<std::sync::Arc<crate::gate::SourceGate>>,
+    /// Longest we are willing to wait for the politeness gate (0 = never wait; lazy callers).
+    max_wait: Duration,
 }
 
-fn flex_i64(v: &Value) -> Option<i64> {
+pub fn flex_i64(v: &Value) -> Option<i64> {
     match v {
         Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
         Value::String(s) => s.trim().parse().ok(),
@@ -46,7 +49,7 @@ fn flex_i64(v: &Value) -> Option<i64> {
     }
 }
 
-fn flex_str(v: &Value) -> Option<String> {
+pub fn flex_str(v: &Value) -> Option<String> {
     match v {
         Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
         Value::Number(n) => Some(n.to_string()),
@@ -65,7 +68,21 @@ impl XtreamClient {
             user: user.to_string(),
             pass: pass.to_string(),
             ua: None,
+            gate: None,
+            max_wait: Duration::from_secs(120),
         }
+    }
+
+    /// Share the source's politeness gate (rate limit + backoff on 46x/429/5xx).
+    pub fn with_gate(mut self, gate: std::sync::Arc<crate::gate::SourceGate>) -> Self {
+        self.gate = Some(gate);
+        self
+    }
+
+    /// How long a call may wait for the gate before failing (default 2 min).
+    pub fn with_max_wait(mut self, d: Duration) -> Self {
+        self.max_wait = d;
+        self
     }
 
     /// User-Agent for the API calls (default: a VLC-like player; providers often reject unknown ones).
@@ -89,6 +106,9 @@ impl XtreamClient {
     }
 
     async fn get_json(&self, url: &str) -> Result<Value> {
+        if let Some(g) = &self.gate {
+            g.acquire(self.max_wait, true).await?;
+        }
         let resp = self
             .http
             .get(url)
@@ -96,9 +116,12 @@ impl XtreamClient {
                 "User-Agent",
                 self.ua.as_deref().unwrap_or(crate::net::DEFAULT_UA),
             )
-            .timeout(Duration::from_secs(60))
+            .timeout(Duration::from_secs(120))
             .send()
             .await?;
+        if let Some(g) = &self.gate {
+            g.report(resp.status().as_u16(), crate::gate::retry_after(&resp));
+        }
         if !resp.status().is_success() {
             return Err(Error::Unavailable(format!(
                 "provider answered HTTP {}",
@@ -124,6 +147,56 @@ impl XtreamClient {
     pub async fn live_streams(&self) -> Result<Vec<LiveStream>> {
         let v = self.get_json(&self.api(Some("get_live_streams"))).await?;
         Ok(parse_streams(&v))
+    }
+
+    /// Raw `player_api.php?action=…` JSON (extra query pairs appended, values URL-encoded).
+    pub async fn action(&self, action: &str, extra: &[(&str, String)]) -> Result<Value> {
+        let mut u = self.api(Some(action));
+        for (k, v) in extra {
+            u.push('&');
+            u.push_str(k);
+            u.push('=');
+            u.push_str(&urlenc(v));
+        }
+        self.get_json(&u).await
+    }
+
+    /// Per-channel guide: `get_short_epg` (titles/descriptions are base64 in Xtream answers).
+    pub async fn short_epg(&self, stream_id: i64, limit: u32) -> Result<Vec<EpgListing>> {
+        let v = self
+            .action(
+                "get_short_epg",
+                &[
+                    ("stream_id", stream_id.to_string()),
+                    ("limit", limit.to_string()),
+                ],
+            )
+            .await?;
+        Ok(parse_short_epg(&v))
+    }
+
+    /// `/movie/{user}/{pass}/{id}.{ext}`
+    pub fn vod_url(&self, stream_id: i64, ext: &str) -> String {
+        format!(
+            "{}/movie/{}/{}/{}.{}",
+            self.base,
+            urlenc(&self.user),
+            urlenc(&self.pass),
+            stream_id,
+            ext.trim_start_matches('.')
+        )
+    }
+
+    /// `/series/{user}/{pass}/{episode_id}.{ext}`
+    pub fn series_url(&self, episode_id: i64, ext: &str) -> String {
+        format!(
+            "{}/series/{}/{}/{}.{}",
+            self.base,
+            urlenc(&self.user),
+            urlenc(&self.pass),
+            episode_id,
+            ext.trim_start_matches('.')
+        )
     }
 
     /// Canonical live URL (`/live/{user}/{pass}/{id}.ts`).
@@ -154,6 +227,61 @@ fn urlenc(s: &str) -> String {
                 (b as char).to_string()
             }
             _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// One programme of `get_short_epg`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EpgListing {
+    pub start: i64,
+    pub stop: i64,
+    pub title: String,
+    pub description: Option<String>,
+}
+
+/// Xtream encodes titles/descriptions as base64; some panels send plain text. Try base64 first
+/// and keep the raw string when it does not decode to UTF-8.
+pub fn decode_maybe_b64(s: &str) -> String {
+    use base64::Engine;
+    let t = s.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    let looks_b64 = t.len() % 4 == 0
+        && t.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='));
+    if looks_b64 {
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(t) {
+            if let Ok(s) = String::from_utf8(bytes) {
+                if !s.contains('\u{fffd}') {
+                    return s.trim().to_string();
+                }
+            }
+        }
+    }
+    t.to_string()
+}
+
+pub fn parse_short_epg(v: &Value) -> Vec<EpgListing> {
+    v.get("epg_listings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| {
+            let start = e.get("start_timestamp").and_then(flex_i64)?;
+            let stop = e.get("stop_timestamp").and_then(flex_i64)?;
+            let title = decode_maybe_b64(e.get("title").and_then(Value::as_str).unwrap_or(""));
+            if title.is_empty() || stop <= start {
+                return None;
+            }
+            let desc = decode_maybe_b64(e.get("description").and_then(Value::as_str).unwrap_or(""));
+            Some(EpgListing {
+                start,
+                stop,
+                title,
+                description: (!desc.is_empty()).then_some(desc),
+            })
         })
         .collect()
 }

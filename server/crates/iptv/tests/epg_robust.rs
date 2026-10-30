@@ -161,6 +161,7 @@ async fn setup(url: &str, ua: Option<&str>) -> (SqlitePool, i64, Ingest, tempfil
         epg_back_secs: 86_400,
         epg_fwd_secs: 7 * 86_400,
         allow_private: true,
+        gates: reel_iptv::gate::Gates::new(Default::default()),
     };
     (pool, sid, ing, dir)
 }
@@ -303,8 +304,14 @@ async fn bad_guides_are_reported_never_as_success() {
             .to_string();
         assert!(err.contains(expect), "expected '{expect}' in: {err}");
         let s = store::get_source(&pool, sid).await.unwrap();
-        let le = s.last_error.unwrap_or_default();
-        assert!(le.starts_with("EPG: ") && le.contains(expect), "{le}");
+        // Xtream: an unusable guide is not an error, the lazy per-channel guide takes over
+        assert!(s.last_error.is_none(), "{:?}", s.last_error);
+        assert_eq!(s.epg_mode, "per_channel");
+        assert!(
+            s.epg_note.as_deref().unwrap_or_default().contains(expect),
+            "{:?}",
+            s.epg_note
+        );
         assert!(
             s.last_epg_at.is_none(),
             "no success timestamp for a useless guide"
@@ -318,6 +325,7 @@ async fn bad_guides_are_reported_never_as_success() {
     assert_eq!(r.programmes_inserted, 4);
     let s = store::get_source(&pool, sid).await.unwrap();
     assert!(s.last_error.is_none() && s.last_epg_at.is_some());
+    assert_eq!((s.epg_mode.as_str(), s.epg_note), ("xmltv", None));
 }
 
 #[tokio::test]

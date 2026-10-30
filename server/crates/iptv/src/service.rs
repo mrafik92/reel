@@ -33,6 +33,8 @@ pub struct IptvConfig {
     /// Allow channel logos to be fetched from private networks (logos come from third-party
     /// playlists, so this defaults to off).
     pub allow_private_logo_fetch: bool,
+    /// Politeness towards providers (rate limit, backoff on 46x/429/5xx).
+    pub gate: crate::gate::GateConfig,
 }
 
 impl Default for IptvConfig {
@@ -46,6 +48,7 @@ impl Default for IptvConfig {
             session_idle: Duration::from_secs(30),
             allow_private_fetch: true,
             allow_private_logo_fetch: false,
+            gate: crate::gate::GateConfig::default(),
         }
     }
 }
@@ -53,6 +56,10 @@ impl Default for IptvConfig {
 pub struct IptvService {
     pub pool: SqlitePool,
     pub ingest: Ingest,
+    /// Lazy per-channel guide for Xtream sources without XMLTV.
+    pub epg: Arc<crate::epg_fetch::EpgFetcher>,
+    /// Per-source politeness gates (shared by catalog, guide, VOD and stream connects).
+    pub gates: Arc<crate::gate::Gates>,
     pub live: Arc<LiveManager>,
     pub cfg: IptvConfig,
     /// HTTP client for channel logos (guarded unless `allow_private_logo_fetch`).
@@ -65,11 +72,16 @@ impl IptvService {
     pub fn new(pool: SqlitePool, data_dir: PathBuf, cfg: IptvConfig) -> Arc<Self> {
         let mut hub_cfg = cfg.hub.clone();
         hub_cfg.allow_private_upstream = cfg.allow_private_fetch;
+        let gates = crate::gate::Gates::new(cfg.gate.clone());
         let hub = ChannelHub::new(hub_cfg, Arc::new(DbResolver { pool: pool.clone() }));
+        hub.set_gates(gates.clone());
         let live = LiveManager::new(hub, data_dir.join("iptv").join("hls"), cfg.session_idle);
         let http = crate::net::client(cfg.allow_private_fetch);
         let logo_http = crate::net::client(cfg.allow_private_logo_fetch);
+        let epg = crate::epg_fetch::EpgFetcher::new(pool.clone(), http.clone(), gates.clone());
         Arc::new(Self {
+            epg,
+            gates: gates.clone(),
             ingest: Ingest {
                 pool: pool.clone(),
                 http,
@@ -77,6 +89,7 @@ impl IptvService {
                 epg_back_secs: i64::from(cfg.epg_days_back) * 86_400,
                 epg_fwd_secs: i64::from(cfg.epg_days_forward) * 86_400,
                 allow_private: cfg.allow_private_fetch,
+                gates,
             },
             logo_http,
             pool,

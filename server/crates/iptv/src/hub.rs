@@ -688,6 +688,24 @@ impl Subscription {
 struct HubState {
     pipes: HashMap<i64, Arc<Pipe>>,
     user_last: HashMap<i64, i64>,
+    /// Provider connections used by things that are not channel pipes (VOD playback).
+    external: HashMap<i64, usize>,
+}
+
+/// A provider connection held outside the hub (VOD): counts against the source's budget until
+/// dropped.
+pub struct ExternalSlot {
+    inner: Arc<Inner>,
+    source_id: i64,
+}
+
+impl Drop for ExternalSlot {
+    fn drop(&mut self) {
+        let mut st = self.inner.state.lock().unwrap();
+        if let Some(n) = st.external.get_mut(&self.source_id) {
+            *n = n.saturating_sub(1);
+        }
+    }
 }
 
 struct Inner {
@@ -696,6 +714,8 @@ struct Inner {
     resolver: Arc<dyn ChannelResolver>,
     state: Mutex<HubState>,
     shutdown: CancellationToken,
+    /// Per-source politeness shared with the catalog/guide calls (set by the service).
+    gates: Mutex<Option<Arc<crate::gate::Gates>>>,
 }
 
 #[derive(Clone)]
@@ -714,10 +734,18 @@ impl ChannelHub {
                 state: Mutex::new(HubState {
                     pipes: HashMap::new(),
                     user_last: HashMap::new(),
+                    external: HashMap::new(),
                 }),
                 shutdown: CancellationToken::new(),
+                gates: Mutex::new(None),
             }),
         }
+    }
+
+    /// Share the per-source politeness gates: stream connects are paced and a 46x/429 answer
+    /// pauses catalog/guide calls to the same provider.
+    pub fn set_gates(&self, gates: Arc<crate::gate::Gates>) {
+        *self.inner.gates.lock().unwrap() = Some(gates);
     }
 
     pub fn config(&self) -> &HubConfig {
@@ -783,6 +811,11 @@ impl ChannelHub {
         for p in st.pipes.values() {
             *m.entry(p.source()).or_insert(0) += 1;
         }
+        for (s, n) in &st.external {
+            if *n > 0 {
+                *m.entry(*s).or_insert(0) += *n;
+            }
+        }
         m
     }
 
@@ -812,28 +845,28 @@ impl ChannelHub {
             .filter(|p| p.source() == source_id && Some(p.id) != requester)
             .cloned()
             .collect();
-        if (at_source.len() as u32) < max {
+        let external = st.external.get(&source_id).copied().unwrap_or(0);
+        if ((at_source.len() + external) as u32) < max {
             return Ok(());
         }
-        let victim = at_source
-            .iter()
-            .filter(|p| p.viewers() == 0)
-            // unpinned first, then least recently viewed
-            .min_by_key(|p| (p.pinned.load(Relaxed), p.last_viewed()))
-            .cloned();
-        match victim {
-            Some(v) => {
-                info!(channel = v.id, name = %v.name, source_id, "evicting warm channel to free a provider slot");
-                v.cancel.cancel();
-                st.pipes.remove(&v.id);
-                Ok(())
-            }
-            None => Err(Error::BudgetExhausted {
+        // evict unwatched pipes (unpinned first, then least recently viewed) until one slot is free
+        let mut victims: Vec<&Arc<Pipe>> = at_source.iter().filter(|p| p.viewers() == 0).collect();
+        victims.sort_by_key(|p| (p.pinned.load(Relaxed), p.last_viewed()));
+        let used = at_source.len() + external;
+        let need = used + 1 - max as usize; // evictions needed for one more connection
+        if victims.len() < need {
+            return Err(Error::BudgetExhausted {
                 source_id,
                 max,
                 watching: at_source.iter().map(|p| p.name.clone()).collect(),
-            }),
+            });
         }
+        for v in victims.into_iter().take(need) {
+            info!(channel = v.id, name = %v.name, source_id, "evicting warm channel to free a provider slot");
+            v.cancel.cancel();
+            st.pipes.remove(&v.id);
+        }
+        Ok(())
     }
 
     /// `(source id, connection limit)` of a channel's primary source, if limited.
@@ -861,7 +894,23 @@ impl ChannelHub {
             .values()
             .filter(|p| p.source() == source_id && p.id != except)
             .collect();
-        (at.len() as u32) < max || at.iter().any(|p| p.viewers() == 0)
+        let external = st.external.get(&source_id).copied().unwrap_or(0);
+        // free after evicting every unwatched pipe
+        let held = at.iter().filter(|p| p.viewers() > 0).count() + external;
+        (held as u32) < max
+    }
+
+    /// Reserve one provider connection for a non-channel consumer (VOD playback). The caller
+    /// must have made room first (see `LiveManager::vod_claim`).
+    pub fn external_slot(&self, source_id: i64, max: Option<u32>) -> Result<ExternalSlot> {
+        let mut st = self.inner.state.lock().unwrap();
+        // unwatched (warm) channel pipes make way for the new holder
+        Self::ensure_slot(&mut st, source_id, max, None)?;
+        *st.external.entry(source_id).or_insert(0) += 1;
+        Ok(ExternalSlot {
+            inner: self.inner.clone(),
+            source_id,
+        })
     }
 
     /// Is a connection of this channel open right now?
@@ -932,11 +981,13 @@ impl ChannelHub {
         if may_evict {
             Self::ensure_slot(st, first.source_id, first.max_connections, None)?;
         } else if let Some(max) = first.max_connections.filter(|m| *m > 0) {
-            let used = st
+            let used = (st
                 .pipes
                 .values()
                 .filter(|p| p.source() == first.source_id)
-                .count() as u32;
+                .count()
+                + st.external.get(&first.source_id).copied().unwrap_or(0))
+                as u32;
             if used >= max {
                 return Err(Error::Unavailable("no free provider slot".into()));
             }
@@ -1044,10 +1095,27 @@ async fn open_upstream(inner: &Inner, c: &Candidate) -> std::result::Result<Upst
     if let Some(r) = &c.referrer {
         req = req.header("Referer", r);
     }
+    let gate = inner
+        .gates
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|g| g.get(c.source_id));
+    if let Some(g) = &gate {
+        // pace only: a viewer is waiting, so never refuse
+        let _ = g.acquire(Duration::from_secs(2), false).await;
+    }
     let resp = tokio::time::timeout(inner.cfg.connect_timeout, req.send())
         .await
         .map_err(|_| "connect timeout".to_string())?
         .map_err(|e| format!("connect failed: {}", e.without_url()))?;
+    if let Some(g) = &gate {
+        let code = resp.status().as_u16();
+        // 5xx on a stream is slot lag, not abuse protection
+        if code == 429 || (460..470).contains(&code) || resp.status().is_success() {
+            g.report(code, crate::gate::retry_after(&resp));
+        }
+    }
     if !resp.status().is_success() {
         return Err(format!("provider answered HTTP {}", resp.status().as_u16()));
     }

@@ -4394,6 +4394,623 @@
         }
       }
     },
+    "/api/v1/vod/categories": {
+      "get": {
+        "summary": "VOD categories with item counts.",
+        "operationId": "vod_categories",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "description": "`movie` (default) or `series`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VodCategory"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vod/direct/{session_id}": {
+      "get": {
+        "summary": "Direct play of a VOD stream: proxied through Reel with `Range` forwarded; the provider URL\nand credentials stay on the server. Signed URL (scope `vod:{session}`) or bearer token.",
+        "operationId": "vod_direct",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session id from /vod/play",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "path",
+            "description": "Expiry (unix seconds).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "path",
+            "description": "User the URL was signed for.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "path",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Media bytes"
+          },
+          "206": {
+            "description": "Partial content"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vod/images/{what}/{id}": {
+      "get": {
+        "summary": "Provider artwork (poster, backdrop, season poster, episode still), fetched once and cached.",
+        "operationId": "vod_image_route",
+        "parameters": [
+          {
+            "name": "what",
+            "in": "path",
+            "description": "movie_poster | movie_backdrop | series_poster | series_backdrop | season_poster | episode_still",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Item id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "query",
+            "description": "Expiry (unix seconds).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "u",
+            "in": "query",
+            "description": "User the URL was signed for.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sig",
+            "in": "query",
+            "description": "HMAC-SHA256 signature (base64url).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image bytes"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vod/lanes": {
+      "get": {
+        "summary": "Lanes for a VOD tab: recently added, top rated (unwatched first), then the biggest categories.",
+        "operationId": "vod_lanes",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "description": "`movie` (default) or `series`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VodLane"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vod/movies": {
+      "get": {
+        "summary": "Browse VOD movies.",
+        "operationId": "vod_movies",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Category id from `/vod/categories`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Title search (case/diacritics-insensitive substring).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "genre",
+            "in": "query",
+            "description": "Genre(s), comma separated; all must match (only known once details were loaded).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "`added` (default), `rating`, `title` or `year`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 40, max 100).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VodPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vod/movies/{id}": {
+      "get": {
+        "summary": "A VOD movie (provider details are loaded on first view; TMDB adds cast with person links).",
+        "operationId": "vod_movie",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "VOD movie id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VodMovieDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vod/play": {
+      "post": {
+        "summary": "Start playing a VOD movie or episode. Same answer as `POST /playback/{file}/decide`; progress\nand stop use `/playback/{session}/progress` and `DELETE /playback/{session}`. The stream counts\nagainst the provider's connection limit like live TV (your older streams are stopped first;\nother users' streams → 429, or 409 + `takeover` for admins).",
+        "operationId": "vod_play",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VodPlayRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Admins: provider connections held by other users (`takeover: true`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vod/series": {
+      "get": {
+        "summary": "Browse VOD series.",
+        "operationId": "vod_series",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Category id from `/vod/categories`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Title search (case/diacritics-insensitive substring).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "genre",
+            "in": "query",
+            "description": "Genre(s), comma separated; all must match (only known once details were loaded).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "`added` (default), `rating`, `title` or `year`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 40, max 100).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VodPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vod/series/{id}": {
+      "get": {
+        "summary": "A VOD series with seasons and episodes (loaded from the provider on first view).",
+        "operationId": "vod_series_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "VOD series id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VodSeriesDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/webhooks/arr": {
       "post": {
         "summary": "Radarr/Sonarr webhook receiver. Imported/removed files trigger a targeted library rescan.",
@@ -5844,6 +6461,21 @@
           },
           "tmdb_id": {
             "type": "integer",
+            "format": "int64"
+          },
+          "vod_movie_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Xtream VOD catalog entry for this title (play it from `/vod/movies/{id}`)."
+          },
+          "vod_series_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64"
           },
           "vote_average": {
@@ -8060,7 +8692,8 @@
           "library",
           "episodes",
           "people",
-          "discover"
+          "discover",
+          "vod"
         ],
         "properties": {
           "discover": {
@@ -8090,6 +8723,13 @@
               "$ref": "#/components/schemas/PersonHit"
             },
             "description": "Library cast/crew merged with TMDB people."
+          },
+          "vod": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VodCard"
+            },
+            "description": "Xtream VOD movies and series matching the text."
           }
         }
       },
@@ -8372,6 +9012,9 @@
           "epg_channel_count",
           "epg_programme_count",
           "epg_matched_channels",
+          "epg_mode",
+          "vod_movie_count",
+          "vod_series_count",
           "refreshing",
           "open_connections"
         ],
@@ -8398,6 +9041,17 @@
             "type": "integer",
             "format": "int64",
             "description": "This source's channels linked to a guide channel (tvg-id or name match)."
+          },
+          "epg_mode": {
+            "type": "string",
+            "description": "Where programmes come from: `xmltv` (feed imported), `per_channel` (Xtream `get_short_epg`,\nfetched lazily for the channels people look at) or `none`."
+          },
+          "epg_note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the XMLTV feed was not usable (`per_channel` mode)."
           },
           "epg_programme_count": {
             "type": "integer",
@@ -8483,6 +9137,15 @@
               "string",
               "null"
             ]
+          },
+          "vod_movie_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Xtream VOD catalog size."
+          },
+          "vod_series_count": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -9107,6 +9770,451 @@
             "format": "int64"
           }
         }
+      },
+      "VodCard": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "title"
+        ],
+        "properties": {
+          "category_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "genres": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`movie` | `series`"
+          },
+          "library_item_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The same title in your local library (movie, or show)."
+          },
+          "played": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "progress": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Watch progress 0..1 (movies)."
+          },
+          "rating": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "0–10"
+          },
+          "title": {
+            "type": "string"
+          },
+          "tmdb_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "VodCategory": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "VodEpisode": {
+        "type": "object",
+        "required": [
+          "id",
+          "episode_no",
+          "title"
+        ],
+        "properties": {
+          "episode_no": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "overview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "played": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "progress": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "runtime_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "still_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "VodLane": {
+        "type": "object",
+        "required": [
+          "key",
+          "title",
+          "kind",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VodCard"
+            }
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LaneKind",
+            "description": "`new` (recently added), `top_unwatched` (top rated) or `genre` (a category)."
+          },
+          "see_all": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VodSeeAll"
+              }
+            ]
+          },
+          "subtitle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "VodMovieDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/VodCard"
+          },
+          {
+            "type": "object",
+            "required": [
+              "cast"
+            ],
+            "properties": {
+              "added_at": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64"
+              },
+              "backdrop_url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "cast": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CastMember"
+                }
+              },
+              "container": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "director": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "overview": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "runtime_s": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64"
+              },
+              "trailer_youtube_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "VodPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VodCard"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "VodPlayRequest": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id"
+        ],
+        "properties": {
+          "audio_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "VOD movie id or episode id."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`movie` | `episode`"
+          },
+          "preset": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DeviceProfile"
+              }
+            ]
+          },
+          "start_s": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "subtitle_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "takeover": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Admins only: if every provider connection is held by other users, stop their streams."
+          }
+        }
+      },
+      "VodSeason": {
+        "type": "object",
+        "required": [
+          "season_no",
+          "episodes"
+        ],
+        "properties": {
+          "episodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VodEpisode"
+            }
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "season_no": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "VodSeeAll": {
+        "type": "object",
+        "required": [
+          "type",
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Query string for `GET /vod/movies` / `GET /vod/series`."
+          },
+          "type": {
+            "type": "string",
+            "description": "`movie` | `series`"
+          }
+        }
+      },
+      "VodSeriesDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/VodCard"
+          },
+          {
+            "type": "object",
+            "required": [
+              "cast",
+              "seasons"
+            ],
+            "properties": {
+              "backdrop_url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "cast": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CastMember"
+                }
+              },
+              "overview": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "seasons": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/VodSeason"
+                }
+              }
+            }
+          }
+        ]
       },
       "WebhookResult": {
         "type": "object",

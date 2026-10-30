@@ -77,11 +77,69 @@ const HLS_IDLE: Duration = Duration::from_secs(15);
 /// A passthrough session whose player disconnected is closed after this (reconnect hiccups).
 const PASSTHROUGH_GRACE: Duration = Duration::from_secs(2);
 
+/// A VOD playback holding one connection of a provider (shares the live budget).
+pub struct VodLease {
+    pub id: String,
+    pub user_id: i64,
+    pub source_id: i64,
+    pub title: String,
+    pub started_at: i64,
+    cancel: CancellationToken,
+    /// Playback session this lease belongs to (set once the session exists).
+    session: Mutex<Option<String>>,
+    on_release: Arc<dyn Fn(Option<String>) + Send + Sync>,
+    _slot: crate::hub::ExternalSlot,
+}
+
+impl VodLease {
+    /// Cancelled when the lease is taken over / released.
+    pub fn cancelled(&self) -> CancellationToken {
+        self.cancel.clone()
+    }
+    pub fn session_id(&self) -> Option<String> {
+        self.session.lock().unwrap().clone()
+    }
+}
+
 pub struct LiveManager {
     hub: ChannelHub,
     hls: HlsManager,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    vod: Mutex<HashMap<String, Arc<VodLease>>>,
     idle: Duration,
+}
+
+/// Anything that holds a provider connection on behalf of a user.
+enum Held {
+    Live(Arc<Session>),
+    Vod(Arc<VodLease>),
+}
+
+impl Held {
+    fn started_at(&self) -> i64 {
+        match self {
+            Held::Live(s) => s.started_at,
+            Held::Vod(v) => v.started_at,
+        }
+    }
+    fn holder(&self) -> Holder {
+        match self {
+            Held::Live(s) => Holder {
+                session_id: s.id.clone(),
+                user_id: s.user_id,
+                channel_id: s.channel_id,
+                channel_name: s.name.clone(),
+                since: s.started_at,
+            },
+            Held::Vod(v) => Holder {
+                session_id: v.session_id().unwrap_or_else(|| v.id.clone()),
+                user_id: v.user_id,
+                channel_id: 0,
+                channel_name: v.title.clone(),
+                since: v.started_at,
+            },
+        }
+    }
 }
 
 struct ActiveGuard(Arc<Session>);
@@ -112,6 +170,7 @@ impl LiveManager {
             hub,
             hls,
             sessions: Mutex::default(),
+            vod: Mutex::default(),
             idle: session_idle,
         })
     }
@@ -257,6 +316,21 @@ impl LiveManager {
         self.hls.release_unwatched(i64::MIN).await;
     }
 
+    /// Stop one holder right now (stream cut, upstream/packager/VOD session released).
+    async fn release_held(&self, h: Held) {
+        match h {
+            Held::Live(s) => self.release_session(s).await,
+            Held::Vod(v) => self.release_vod(&v),
+        }
+    }
+
+    fn release_vod(&self, v: &Arc<VodLease>) {
+        if self.vod.lock().unwrap().remove(&v.id).is_some() {
+            v.cancel.cancel();
+            (v.on_release)(v.session_id());
+        }
+    }
+
     /// Make sure `channel_id` can open a provider connection (see [`Self::tune_ex`]); returns the
     /// limited source it will count against.
     async fn make_room(
@@ -268,84 +342,188 @@ impl LiveManager {
         let Some((source, max)) = self.hub.channel_budget(channel_id).await? else {
             return Ok(None);
         };
-        if self.hub.has_pipe(channel_id) || self.hub.slot_available(source, max, channel_id) {
+        if self.hub.has_pipe(channel_id) {
             return Ok(Some(source));
+        }
+        self.make_room_for(user_id, source, max, channel_id, takeover)
+            .await?;
+        Ok(Some(source))
+    }
+
+    /// The budget policy, shared by live tunes and VOD plays (`except` = the channel about to be
+    /// opened, `i64::MIN` for VOD): same user → newest wins; other users → [`Error::InUseByOthers`]
+    /// unless `takeover`.
+    async fn make_room_for(
+        &self,
+        user_id: i64,
+        source: i64,
+        max: u32,
+        except: i64,
+        takeover: bool,
+    ) -> Result<()> {
+        if self.hub.slot_available(source, max, except) {
+            return Ok(());
         }
         // idle packager outputs (nobody requesting segments) hold slots through their grace
-        self.hls.release_unwatched(channel_id).await;
+        self.hls.release_unwatched(except).await;
         if self
-            .wait_slot(source, max, channel_id, Duration::from_millis(300))
+            .wait_slot(source, max, except, Duration::from_millis(300))
             .await
         {
-            return Ok(Some(source));
+            return Ok(());
         }
-        let on_source = |me: &Self, mine: bool| -> Vec<Arc<Session>> {
-            let mut v: Vec<Arc<Session>> = me
+        let on_source = |me: &Self, mine: bool| -> Vec<Held> {
+            let mut v: Vec<Held> = me
                 .sessions
                 .lock()
                 .unwrap()
                 .values()
                 .filter(|s| s.source == Some(source) && (s.user_id == user_id) == mine)
                 .cloned()
+                .map(Held::Live)
                 .collect();
-            v.sort_by_key(|s| s.started_at);
+            v.extend(
+                me.vod
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .filter(|l| l.source_id == source && (l.user_id == user_id) == mine)
+                    .cloned()
+                    .map(Held::Vod),
+            );
+            v.sort_by_key(Held::started_at);
             v
         };
         // 1. newest wins: the user's own sessions (any device), oldest first
         for victim in on_source(self, true) {
             tracing::info!(
                 user_id,
-                channel_id,
-                old_channel = victim.channel_id,
-                "provider limit reached: stopping the user's older session so the new channel gets the slot"
+                "provider limit reached: stopping the user's older stream so the new one gets the slot"
             );
-            self.release_session(victim).await;
+            self.release_held(victim).await;
             if self
-                .wait_slot(source, max, channel_id, Duration::from_secs(1))
+                .wait_slot(source, max, except, Duration::from_secs(1))
                 .await
             {
-                return Ok(Some(source));
+                return Ok(());
             }
         }
         // 2. everyone else
         let others = on_source(self, false);
         if others.is_empty() {
             // holders without a session (e.g. a raw subscriber): the hub decides
-            return Ok(Some(source));
+            return Ok(());
         }
         if takeover {
             for victim in others {
-                tracing::warn!(
-                    user_id,
-                    channel_id,
-                    taken_from = victim.user_id,
-                    old_channel = victim.channel_id,
-                    "admin takeover: stopping another user's session"
-                );
-                self.release_session(victim).await;
+                tracing::warn!(user_id, "admin takeover: stopping another user's stream");
+                self.release_held(victim).await;
                 if self
-                    .wait_slot(source, max, channel_id, Duration::from_secs(1))
+                    .wait_slot(source, max, except, Duration::from_secs(1))
                     .await
                 {
-                    return Ok(Some(source));
+                    return Ok(());
                 }
             }
-            return Ok(Some(source));
+            return Ok(());
         }
         Err(Error::InUseByOthers {
             source_id: source,
             max,
-            holders: others
-                .iter()
-                .map(|s| Holder {
-                    session_id: s.id.clone(),
-                    user_id: s.user_id,
-                    channel_id: s.channel_id,
-                    channel_name: s.name.clone(),
-                    since: s.started_at,
-                })
-                .collect(),
+            holders: others.iter().map(Held::holder).collect(),
         })
+    }
+
+    /// Claim one provider connection for VOD playback by `user_id` (same policy as live tunes).
+    /// `on_release(session_id)` is called when the lease is taken over or released early so the
+    /// caller can stop the playback session. Sources without a limit still get a (free) lease so
+    /// the stream shows up in holder lists.
+    pub async fn vod_claim(
+        &self,
+        user_id: i64,
+        source_id: i64,
+        max: Option<u32>,
+        title: &str,
+        takeover: bool,
+        on_release: Arc<dyn Fn(Option<String>) + Send + Sync>,
+    ) -> Result<Arc<VodLease>> {
+        if let Some(max) = max.filter(|m| *m > 0) {
+            self.make_room_for(user_id, source_id, max, i64::MIN, takeover)
+                .await?;
+        }
+        let lease = Arc::new(VodLease {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id,
+            source_id,
+            title: title.to_string(),
+            started_at: now_unix(),
+            cancel: CancellationToken::new(),
+            session: Mutex::new(None),
+            on_release,
+            _slot: self.hub.external_slot(source_id, max)?,
+        });
+        self.vod
+            .lock()
+            .unwrap()
+            .insert(lease.id.clone(), lease.clone());
+        Ok(lease)
+    }
+
+    /// Attach the playback session id to a lease.
+    pub fn vod_attach(&self, lease: &VodLease, session_id: &str) {
+        *lease.session.lock().unwrap() = Some(session_id.to_string());
+    }
+
+    /// Drop a lease without calling the release callback (the caller stops the session itself).
+    pub fn vod_drop(&self, lease_id: &str) {
+        if let Some(v) = self.vod.lock().unwrap().remove(lease_id) {
+            v.cancel.cancel();
+        }
+    }
+
+    /// Release the lease of a playback session (stop / end of session).
+    pub fn vod_release_session(&self, session_id: &str) -> bool {
+        let found = self
+            .vod
+            .lock()
+            .unwrap()
+            .values()
+            .find(|v| v.session_id().as_deref() == Some(session_id))
+            .cloned();
+        match found {
+            Some(v) => {
+                self.vod.lock().unwrap().remove(&v.id);
+                v.cancel.cancel();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Release leases whose playback session no longer exists (idle-reaped or crashed).
+    pub fn vod_reap(&self, alive: &std::collections::HashSet<String>) -> usize {
+        let dead: Vec<Arc<VodLease>> = self
+            .vod
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|v| match v.session_id() {
+                Some(s) => !alive.contains(&s),
+                // claimed but never attached: abandoned after a minute
+                None => now_unix() - v.started_at > 60,
+            })
+            .cloned()
+            .collect();
+        let n = dead.len();
+        for v in dead {
+            self.vod.lock().unwrap().remove(&v.id);
+            v.cancel.cancel();
+        }
+        n
+    }
+
+    pub fn vod_lease_count(&self) -> usize {
+        self.vod.lock().unwrap().len()
     }
 
     fn info_of(&self, s: &Session) -> LiveSessionInfo {

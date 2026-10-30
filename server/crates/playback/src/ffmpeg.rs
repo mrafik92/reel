@@ -51,6 +51,14 @@ pub struct BuildParams<'a> {
     pub out_dir: &'a Path,
 }
 
+/// User-Agent for remote (provider) inputs.
+pub const REMOTE_UA: &str = "VLC/3.0.20 LibVLC/3.0.20";
+
+/// Is the input a network URL (remote VOD) rather than a local file?
+pub fn is_remote(input: &str) -> bool {
+    input.starts_with("http://") || input.starts_with("https://")
+}
+
 /// Escape a value for use inside an ffmpeg filter argument (`subtitles=filename=...`).
 pub fn escape_filter_value(s: &str) -> String {
     let mut o = String::with_capacity(s.len() + 8);
@@ -152,6 +160,21 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
         }
     }
 
+    if is_remote(p.input) {
+        // provider URL: player-like agent, survive dropped connections, network protocols only
+        push(&[
+            "-user_agent",
+            REMOTE_UA,
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            "-reconnect_delay_max",
+            "5",
+            "-protocol_whitelist",
+            "http,https,tcp,tls,crypto",
+        ]);
+    }
     if p.start_segment > 0 {
         let t = match plan {
             Some(pl) => format!("{:.3}", pl.start(p.start_segment) + KEYFRAME_SEEK_MARGIN),

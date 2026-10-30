@@ -52,6 +52,7 @@ async fn main() -> anyhow::Result<()> {
     }
     state.requests.spawn_tracker();
     state.iptv.spawn_background();
+    state.spawn_vod_reaper();
     state.restart_watcher().await;
     bootstrap_libraries(&state).await;
 

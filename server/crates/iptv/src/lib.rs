@@ -1,7 +1,9 @@
 //! IPTV: M3U/Xtream ingest, XMLTV EPG, shared upstream fan-out, GOP cache, warm channels.
 
 pub mod epg;
+pub mod epg_fetch;
 pub mod error;
+pub mod gate;
 pub mod hls;
 pub mod hub;
 pub mod ingest;
@@ -11,6 +13,7 @@ pub mod net;
 pub mod service;
 pub mod store;
 pub mod ts;
+pub mod vod;
 pub mod xmltv;
 pub mod xtream;
 

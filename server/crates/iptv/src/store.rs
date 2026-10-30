@@ -59,11 +59,18 @@ pub struct Source {
     pub epg_programme_count: i64,
     /// This source's channels that are linked to a guide channel.
     pub epg_matched_channels: i64,
+    /// `xmltv` | `per_channel` | `none`
+    pub epg_mode: String,
+    /// Why the XMLTV guide was not usable (when `epg_mode` is `per_channel`).
+    pub epg_note: Option<String>,
+    pub vod_movie_count: i64,
+    pub vod_series_count: i64,
 }
 
 pub const SOURCE_COLS: &str = "id, name, kind, url, username, password, max_connections, epg_url, \
     refresh_interval, user_agent, enabled, detected_epg_url, last_refresh_at, last_epg_at, \
-    last_error, channel_count, epg_channel_count, epg_programme_count, epg_matched_channels";
+    last_error, channel_count, epg_channel_count, epg_programme_count, epg_matched_channels, \
+    epg_mode, epg_note, vod_movie_count, vod_series_count";
 
 fn source_from_row(r: &SqliteRow) -> Source {
     Source {
@@ -88,6 +95,10 @@ fn source_from_row(r: &SqliteRow) -> Source {
         epg_channel_count: r.get("epg_channel_count"),
         epg_programme_count: r.get("epg_programme_count"),
         epg_matched_channels: r.get("epg_matched_channels"),
+        epg_mode: r.get("epg_mode"),
+        epg_note: r.get("epg_note"),
+        vod_movie_count: r.get("vod_movie_count"),
+        vod_series_count: r.get("vod_series_count"),
     }
 }
 

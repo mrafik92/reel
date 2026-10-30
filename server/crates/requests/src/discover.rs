@@ -28,6 +28,9 @@ pub struct DiscoverCard {
     pub progress: Option<Progress>,
     /// Library item (movie, or show) holding this title, if it is in the library.
     pub library_item_id: Option<i64>,
+    /// Xtream VOD catalog entry with the same TMDB id (or normalized title + year).
+    pub vod_movie_id: Option<i64>,
+    pub vod_series_id: Option<i64>,
 }
 
 /// A page of cards.
@@ -149,6 +152,7 @@ impl Discovery {
                 lib_ids.insert((mt, id), item);
             }
         }
+        let vod = self.vod_matches(&typed).await?;
         // Live progress by (media_type, tmdb_id).
         let live: HashMap<(MediaType, i64), Progress> = self
             .s
@@ -173,8 +177,61 @@ impl Discovery {
                     .unwrap_or(Availability::None),
                 progress: live.get(&(mt, r.id)).cloned(),
                 library_item_id: lib_ids.get(&(mt, r.id)).copied(),
+                vod_movie_id: (mt == MediaType::Movie)
+                    .then(|| vod.get(&(mt, r.id)).copied())
+                    .flatten(),
+                vod_series_id: (mt == MediaType::Tv)
+                    .then(|| vod.get(&(mt, r.id)).copied())
+                    .flatten(),
             })
             .collect())
+    }
+
+    /// VOD catalog matches by TMDB id, else by normalized title + year.
+    async fn vod_matches(
+        &self,
+        typed: &[(MediaType, SearchResult)],
+    ) -> Result<HashMap<(MediaType, i64), i64>> {
+        let mut out = HashMap::new();
+        for (mt, table) in [
+            (MediaType::Movie, "vod_movies"),
+            (MediaType::Tv, "vod_series"),
+        ] {
+            let cards: Vec<&SearchResult> = typed
+                .iter()
+                .filter(|(m, _)| *m == mt)
+                .map(|(_, r)| r)
+                .collect();
+            if cards.is_empty() {
+                continue;
+            }
+            let tmdb: Vec<i64> = cards.iter().map(|r| r.id).collect();
+            let titles: Vec<String> = cards
+                .iter()
+                .map(|r| reel_core::text::fold(r.display_title()))
+                .collect();
+            let rows: Vec<(i64, Option<i64>, String, Option<i64>)> = sqlx::query_as(&format!(
+                "SELECT id, tmdb_id, title_norm, year FROM {table} WHERE missing = 0 AND \
+                 (tmdb_id IN (SELECT value FROM json_each(?1)) \
+                  OR title_norm IN (SELECT value FROM json_each(?2))) ORDER BY id"
+            ))
+            .bind(serde_json::to_string(&tmdb).unwrap_or_default())
+            .bind(serde_json::to_string(&titles).unwrap_or_default())
+            .fetch_all(&self.s.pool)
+            .await?;
+            for r in cards {
+                let norm = reel_core::text::fold(r.display_title());
+                let year = r.year().map(i64::from);
+                let hit = rows.iter().find(|v| v.1 == Some(r.id)).or_else(|| {
+                    rows.iter()
+                        .find(|v| v.2 == norm && v.3.is_some() && v.3 == year)
+                });
+                if let Some(v) = hit {
+                    out.insert((mt, r.id), v.0);
+                }
+            }
+        }
+        Ok(out)
     }
 
     async fn page(&self, p: Paged<SearchResult>, t: Option<MediaType>) -> Result<DiscoverPage> {

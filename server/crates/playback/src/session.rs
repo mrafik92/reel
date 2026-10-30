@@ -247,7 +247,12 @@ impl SessionManager {
         }
         let mut plan = SegmentPlan::fixed(if mode.needs_ffmpeg() { duration } else { 0.0 }, seg);
         let mut event_mode = false;
-        if mode.needs_ffmpeg() && req.decision.video == VideoAction::Copy {
+        let remote = crate::ffmpeg::is_remote(&req.file.path);
+        if remote && mode.needs_ffmpeg() && req.decision.video == VideoAction::Copy {
+            // Remote (provider) input: never scan it for keyframes — that would download the whole
+            // file over the provider connection. ffmpeg's own growing EVENT playlist is served.
+            event_mode = true;
+        } else if mode.needs_ffmpeg() && req.decision.video == VideoAction::Copy {
             // 1. disk cache, 2. container metadata (bounded, ms), 3. fall back to an EVENT
             // playlist while a background scan builds the cache. Never blocks on a full scan.
             let (dd, fid, path) = (&self.cfg.data_dir, req.file.id, req.file.path.as_str());
@@ -359,7 +364,7 @@ impl SessionManager {
             }
             map.insert(id.clone(), session.clone());
         }
-        if event_mode {
+        if event_mode && !remote {
             self.indexer
                 .acquire(&self.cfg, session.file.id, &session.file.path);
         }
@@ -510,7 +515,7 @@ impl SessionManager {
         if let Some(dir) = &s.dir {
             let _ = tokio::fs::remove_dir_all(dir).await;
         }
-        if s.event_mode {
+        if s.event_mode && !crate::ffmpeg::is_remote(&s.file.path) {
             self.indexer.release(s.file.id);
         }
         true

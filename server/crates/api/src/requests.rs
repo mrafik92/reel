@@ -137,6 +137,11 @@ pub struct DiscoverCardDto {
     /// Library item (movie or show) holding this title, when it is in the library.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub library_item_id: Option<i64>,
+    /// Xtream VOD catalog entry for this title (play it from `/vod/movies/{id}`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vod_movie_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vod_series_id: Option<i64>,
 }
 
 pub(crate) fn card_dto(c: &DiscoverCard, sg: &reel_auth::UrlSigner) -> DiscoverCardDto {
@@ -152,6 +157,8 @@ pub(crate) fn card_dto(c: &DiscoverCard, sg: &reel_auth::UrlSigner) -> DiscoverC
         status: via(&c.status),
         progress: c.progress.as_ref().map(progress_dto),
         library_item_id: c.library_item_id,
+        vod_movie_id: c.vod_movie_id,
+        vod_series_id: c.vod_series_id,
     }
 }
 

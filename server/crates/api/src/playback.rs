@@ -286,6 +286,11 @@ pub async fn playback_progress(
     }
     let pos = req.position_s.max(0.0);
     st.playback.update_progress(&sid, pos, None)?;
+    // VOD sessions keep their own watch state
+    if let Some(vs) = st.vod.get(&sid) {
+        crate::vod::record_progress(&st, &vs, pos).await?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
     let primary: i64 = sqlx::query_scalar("SELECT item_id FROM media_files WHERE id = ?")
         .bind(info.file_id)
         .fetch_optional(&st.db)

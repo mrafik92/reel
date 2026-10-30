@@ -75,6 +75,7 @@ fn ingest(pool: &SqlitePool, dir: &std::path::Path) -> Ingest {
         epg_back_secs: 86_400,
         epg_fwd_secs: 7 * 86_400,
         allow_private: true,
+        gates: reel_iptv::gate::Gates::new(Default::default()),
     }
 }
 

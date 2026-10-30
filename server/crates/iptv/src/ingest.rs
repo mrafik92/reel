@@ -32,6 +32,8 @@ pub struct Ingest {
     pub epg_fwd_secs: i64,
     /// Allow playlists / guides / provider APIs on private networks (`allow_private_fetch`).
     pub allow_private: bool,
+    /// Per-source politeness (rate limit + backoff) shared with every other provider call.
+    pub gates: std::sync::Arc<crate::gate::Gates>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
@@ -134,7 +136,8 @@ impl Ingest {
         };
         crate::net::check_url(&src.url, self.allow_private)?;
         Ok(XtreamClient::new(self.http.clone(), &src.url, u, p)
-            .with_user_agent(src.user_agent.clone()))
+            .with_user_agent(src.user_agent.clone())
+            .with_gate(self.gates.get(src.id)))
     }
 
     async fn gather(&self, src: &Source) -> Result<(Vec<Incoming>, Option<String>, Option<u32>)> {
@@ -339,7 +342,11 @@ impl Ingest {
         }
         tokio::fs::create_dir_all(&self.work_dir).await?;
         let dest = self.work_dir.join(format!("epg-{id}.tmp"));
+        let gate = self.gates.get(id);
+        gate.acquire(std::time::Duration::from_secs(120), true)
+            .await?;
         let resp = self.request(url, ua)?.send().await?;
+        gate.report(resp.status().as_u16(), crate::gate::retry_after(&resp));
         if !resp.status().is_success() {
             return Err(Error::Unavailable(format!(
                 "EPG download failed: HTTP {}",
@@ -547,7 +554,7 @@ impl Ingest {
             }));
         }
         sqlx::query(
-            "UPDATE iptv_sources SET last_epg_at = ?, \
+            "UPDATE iptv_sources SET last_epg_at = ?, epg_mode = 'xmltv', epg_note = NULL, \
              last_error = CASE WHEN last_error LIKE 'EPG:%' THEN NULL ELSE last_error END \
              WHERE id = ?",
         )
@@ -561,22 +568,7 @@ impl Ingest {
 
     /// Persist guide statistics for the admin UI.
     async fn store_epg_stats(&self, source_id: i64) -> Result<()> {
-        sqlx::query(
-            "UPDATE iptv_sources SET \
-               epg_channel_count = (SELECT count(*) FROM epg_channels), \
-               epg_programme_count = (SELECT count(*) FROM epg_programs WHERE channel_tvg_id IN \
-                  (SELECT DISTINCT epg_channel_id FROM channels WHERE source_id = ?1 \
-                   AND epg_channel_id IS NOT NULL \
-                   UNION SELECT DISTINCT tvg_id FROM channels WHERE source_id = ?1 \
-                   AND tvg_id IS NOT NULL)), \
-               epg_matched_channels = (SELECT count(*) FROM channels WHERE source_id = ?1 \
-                  AND missing = 0 AND epg_channel_id IS NOT NULL) \
-             WHERE id = ?1",
-        )
-        .bind(source_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        update_epg_counts(&self.pool, source_id).await
     }
 
     /// Re-run only the guide import; failures are recorded on the source (`last_error`).
@@ -584,11 +576,33 @@ impl Ingest {
         match self.refresh_epg(src).await {
             Ok(r) => Ok(r),
             Err(e) => {
-                let msg = crate::net::redact_text(&e.to_string());
-                warn!(source = src.id, "EPG refresh failed: {msg}");
-                self.record_error(src.id, &format!("EPG: {msg}")).await;
+                self.record_epg_failure(src, &e).await;
                 Err(e)
             }
+        }
+    }
+
+    /// The XMLTV guide is unusable. Xtream sources fall back to the lazy per-channel guide
+    /// (not an error: the reason is kept in `epg_note`); other sources record the error.
+    async fn record_epg_failure(&self, src: &Source, e: &Error) {
+        let msg = crate::net::redact_text(&e.to_string());
+        if src.kind == SourceKind::Xtream {
+            info!(
+                source = src.id,
+                "XMLTV guide unusable ({msg}); using per-channel guide"
+            );
+            let _ = sqlx::query(
+                "UPDATE iptv_sources SET epg_mode = 'per_channel', epg_note = ?, \
+                 last_error = CASE WHEN last_error LIKE 'EPG:%' THEN NULL ELSE last_error END \
+                 WHERE id = ?",
+            )
+            .bind(&msg)
+            .bind(src.id)
+            .execute(&self.pool)
+            .await;
+        } else {
+            warn!(source = src.id, "EPG refresh failed: {msg}");
+            self.record_error(src.id, &format!("EPG: {msg}")).await;
         }
     }
 
@@ -610,15 +624,23 @@ impl Ingest {
             match self.refresh_epg(&fresh).await {
                 Ok(r) => (Some(r), None),
                 Err(e) => {
-                    let msg = crate::net::redact_text(&e.to_string());
-                    warn!(source = src.id, "EPG refresh failed: {msg}");
-                    self.record_error(src.id, &format!("EPG: {msg}")).await;
-                    (None, Some(msg))
+                    self.record_epg_failure(&fresh, &e).await;
+                    (None, Some(crate::net::redact_text(&e.to_string())))
                 }
             }
         } else {
             (None, None)
         };
+        if fresh.kind == SourceKind::Xtream {
+            // the VOD catalog never fails a refresh (and waits out provider blocks politely)
+            if let Err(e) = self.refresh_vod(&fresh).await {
+                warn!(
+                    source = src.id,
+                    "VOD catalog refresh failed: {}",
+                    crate::net::redact_text(&e.to_string())
+                );
+            }
+        }
         Ok(RefreshReport {
             channels,
             epg,
@@ -633,4 +655,24 @@ impl Ingest {
             .execute(&self.pool)
             .await;
     }
+}
+
+/// Guide statistics of a source (`epg_*` columns of the admin DTO).
+pub async fn update_epg_counts(pool: &SqlitePool, source_id: i64) -> Result<()> {
+    sqlx::query(
+        "UPDATE iptv_sources SET \
+           epg_channel_count = (SELECT count(*) FROM epg_channels), \
+           epg_programme_count = (SELECT count(*) FROM epg_programs WHERE channel_tvg_id IN \
+              (SELECT DISTINCT epg_channel_id FROM channels WHERE source_id = ?1 \
+               AND epg_channel_id IS NOT NULL \
+               UNION SELECT DISTINCT tvg_id FROM channels WHERE source_id = ?1 \
+               AND tvg_id IS NOT NULL)), \
+           epg_matched_channels = (SELECT count(*) FROM channels WHERE source_id = ?1 \
+              AND missing = 0 AND epg_channel_id IS NOT NULL) \
+         WHERE id = ?1",
+    )
+    .bind(source_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }

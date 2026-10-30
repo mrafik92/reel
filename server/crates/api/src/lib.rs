@@ -11,6 +11,7 @@ mod playback;
 mod requests;
 mod routes;
 mod stream;
+pub mod vod;
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -55,6 +56,8 @@ pub struct AppState {
     pub requests: RequestsService,
     pub auth: AuthService,
     pub iptv: Arc<reel_iptv::IptvService>,
+    /// Running VOD playbacks (provider URLs stay server-side).
+    pub vod: Arc<vod::VodRuntime>,
     /// TMDB client (set by [`AppState::with_tmdb`]).
     pub tmdb: Option<reel_metadata::TmdbClient>,
     pub omdb: Option<reel_requests::reviews::OmdbClient>,
@@ -104,6 +107,7 @@ impl AppState {
             },
         );
         Self {
+            vod: Arc::default(),
             tmdb: None,
             omdb: config
                 .omdb_api_key
@@ -175,6 +179,8 @@ impl AppState {
     /// Stop a playback session and drop its DB row. False if unknown.
     pub async fn end_session(&self, id: &str) -> bool {
         let removed = self.playback.remove(id).await;
+        self.vod.forget(id);
+        self.iptv.live.vod_release_session(id);
         let _ = sqlx::query("DELETE FROM playback_sessions WHERE session_key = ?")
             .bind(id)
             .execute(&self.db)
@@ -528,6 +534,15 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(browse::browse_lanes))
         .routes(routes!(browse::pick))
         .routes(routes!(browse::search_all))
+        .routes(routes!(vod::vod_categories))
+        .routes(routes!(vod::vod_movies))
+        .routes(routes!(vod::vod_series))
+        .routes(routes!(vod::vod_movie))
+        .routes(routes!(vod::vod_series_detail))
+        .routes(routes!(vod::vod_lanes))
+        .routes(routes!(vod::vod_play))
+        .routes(routes!(vod::vod_direct))
+        .routes(routes!(vod::vod_image_route))
         .routes(routes!(extras::get_person))
         .routes(routes!(extras::get_reviews))
         .routes(routes!(extras::list_downloads))

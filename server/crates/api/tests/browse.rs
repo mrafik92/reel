@@ -721,7 +721,7 @@ async fn search_all_ranks_titles_then_cast_with_diacritics_and_episodes() {
     );
     assert_eq!(
         s("%20").await,
-        json!({"library": [], "episodes": [], "people": [], "discover": []})
+        json!({"library": [], "episodes": [], "people": [], "discover": [], "vod": []})
     );
     // the old endpoint still works
     let (c, old) = get(&e.admin, "/api/v1/search?q=zodiac").await;

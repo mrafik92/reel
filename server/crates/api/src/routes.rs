@@ -900,7 +900,7 @@ pub struct TmdbImageQuery {
 
 // ───────────────────────── direct play ─────────────────────────
 
-fn container_mime(container: &str) -> &'static str {
+pub(crate) fn container_mime(container: &str) -> &'static str {
     match container {
         "mp4" | "m4v" => "video/mp4",
         "mkv" => "video/x-matroska",

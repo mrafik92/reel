@@ -229,6 +229,14 @@ pub async fn epg_grid(
             "at most 500 channels per request".into(),
         ));
     }
+    // Xtream providers without XMLTV: fetch the visible channels' guide lazily
+    st.iptv
+        .epg
+        .ensure(
+            &ids[..ids.len().min(40)],
+            std::time::Duration::from_millis(1200),
+        )
+        .await;
     let mut map = store::epg_range(&st.db, &ids, from, to, q.detail.unwrap_or(false)).await?;
     let channels = ids
         .into_iter()
@@ -269,6 +277,13 @@ pub async fn now_next(
         Some(s) => parse_ids(s)?,
         None => default_channel_ids(&st, 500).await?,
     };
+    st.iptv
+        .epg
+        .ensure(
+            &ids[..ids.len().min(40)],
+            std::time::Duration::from_millis(1200),
+        )
+        .await;
     let mut map = store::now_next(&st.db, &ids, now()).await?;
     Ok(Json(
         ids.into_iter()
@@ -458,6 +473,11 @@ pub async fn tune(
         }) => return Err(in_use_error(&st, &u, source_id, max, &holders).await),
         Err(e) => return Err(e.into()),
     };
+    // the tuned channel's guide (lazy per-channel providers)
+    {
+        let epg = st.iptv.epg.clone();
+        tokio::spawn(async move { epg.ensure(&[id], std::time::Duration::ZERO).await });
+    }
     if takeover {
         st.audit(
             &u.user,
@@ -493,7 +513,7 @@ pub async fn tune(
 }
 
 /// Admins get a 409 with the holders and `takeover: true`; everyone else a friendly 429.
-async fn in_use_error(
+pub(crate) async fn in_use_error(
     st: &AppState,
     u: &AuthUser,
     _source_id: i64,
@@ -644,35 +664,21 @@ fn sniff_image(b: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// Channel logo, fetched once from the provider and cached on disk.
-#[utoipa::path(
-    get,
-    path = "/iptv/logo/{id}",
-    params(("id" = i64, Path, description = "Channel id"), SignedQuery),
-    responses((status = 200, description = "Image", content_type = "image/png"), (status = 404, body = ErrorBody))
-)]
-pub async fn channel_logo(
-    State(st): State<AppState>,
-    Path(id): Path<i64>,
-    Query(sq): Query<SignedQuery>,
-    headers: HeaderMap,
-) -> ApiResult<Response> {
-    st.media_user(&headers, &sq, &format!("logo:{id}")).await?;
-    let url: String =
-        sqlx::query_scalar("SELECT logo FROM channels WHERE id = ? AND logo IS NOT NULL")
-            .bind(id)
-            .fetch_optional(&st.db)
-            .await?
-            .ok_or(ApiError::NotFound)?;
-    // Logos come from third-party playlists: private/loopback targets are refused by default.
-    if reel_iptv::net::check_url(&url, st.config.allow_private_logo_fetch).is_err() {
+/// Download (once) and cache a remote image: SSRF rules of channel logos apply (private targets
+/// refused unless `allow_private_logo_fetch`), size-capped, only real images are served.
+pub(crate) async fn fetch_image_cached(
+    st: &AppState,
+    url: &str,
+    cache_dir: &str,
+) -> ApiResult<(Vec<u8>, &'static str)> {
+    if reel_iptv::net::check_url(url, st.config.allow_private_logo_fetch).is_err() {
         return Err(ApiError::NotFound);
     }
     let key: String = Sha256::digest(url.as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    let dir = st.config.data_dir.join("iptv").join("logos");
+    let dir = st.config.data_dir.join("iptv").join(cache_dir);
     let file = dir.join(&key);
     let bytes = match tokio::fs::read(&file).await {
         Ok(b) => b,
@@ -680,7 +686,7 @@ pub async fn channel_logo(
             let resp = st
                 .iptv
                 .logo_http
-                .get(&url)
+                .get(url)
                 .timeout(std::time::Duration::from_secs(10))
                 .send()
                 .await
@@ -702,6 +708,31 @@ pub async fn channel_logo(
         }
     };
     let ct = sniff_image(&bytes).ok_or(ApiError::NotFound)?;
+    Ok((bytes, ct))
+}
+
+/// Channel logo, fetched once from the provider and cached on disk.
+#[utoipa::path(
+    get,
+    path = "/iptv/logo/{id}",
+    params(("id" = i64, Path, description = "Channel id"), SignedQuery),
+    responses((status = 200, description = "Image", content_type = "image/png"), (status = 404, body = ErrorBody))
+)]
+pub async fn channel_logo(
+    State(st): State<AppState>,
+    Path(id): Path<i64>,
+    Query(sq): Query<SignedQuery>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
+    st.media_user(&headers, &sq, &format!("logo:{id}")).await?;
+    let url: String =
+        sqlx::query_scalar("SELECT logo FROM channels WHERE id = ? AND logo IS NOT NULL")
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+    // Logos come from third-party playlists: private/loopback targets are refused by default.
+    let (bytes, ct) = fetch_image_cached(&st, &url, "logos").await?;
     let mut res = Body::from(bytes).into_response();
     let h = res.headers_mut();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static(ct));
@@ -741,6 +772,14 @@ pub struct SourceDto {
     pub epg_programme_count: i64,
     /// This source's channels linked to a guide channel (tvg-id or name match).
     pub epg_matched_channels: i64,
+    /// Where programmes come from: `xmltv` (feed imported), `per_channel` (Xtream `get_short_epg`,
+    /// fetched lazily for the channels people look at) or `none`.
+    pub epg_mode: String,
+    /// Why the XMLTV feed was not usable (`per_channel` mode).
+    pub epg_note: Option<String>,
+    /// Xtream VOD catalog size.
+    pub vod_movie_count: i64,
+    pub vod_series_count: i64,
     pub refreshing: bool,
     /// Upstream connections open right now (live + warm).
     pub open_connections: usize,
@@ -771,6 +810,10 @@ fn source_dto(st: &AppState, s: &Source) -> SourceDto {
         epg_channel_count: s.epg_channel_count,
         epg_programme_count: s.epg_programme_count,
         epg_matched_channels: s.epg_matched_channels,
+        epg_mode: s.epg_mode.clone(),
+        epg_note: s.epg_note.as_deref().map(reel_iptv::net::redact_text),
+        vod_movie_count: s.vod_movie_count,
+        vod_series_count: s.vod_series_count,
         refreshing: st.iptv.is_refreshing(s.id),
         open_connections: st
             .iptv
