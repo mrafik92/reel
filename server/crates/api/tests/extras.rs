@@ -758,3 +758,128 @@ async fn downloads_are_pushed_over_websocket_while_active() {
         "pushed once when active, once when the queue drains (no repeats)"
     );
 }
+
+#[tokio::test]
+async fn downloads_explain_stuck_items_via_arr_messages_and_torrent_client_state() {
+    let radarr = MockServer::start().await;
+    let rec = |id: i64, dl: &str, size: f64, left: f64, msgs: Value| {
+        json!({"id": id, "movieId": id, "title": format!("Rel.{id}"), "size": size, "sizeleft": left,
+            "status": "queued", "trackedDownloadState": "downloading", "trackedDownloadStatus": "ok",
+            "downloadId": dl, "errorMessage": null, "statusMessages": msgs,
+            "movie": {"title": format!("M{id}"), "tmdbId": 100 + id, "images": []}})
+    };
+    let queue = json!({"page":1,"pageSize":500,"totalRecords":5,"records":[
+        // Arr message wins over the client text
+        rec(1, "H1", 0.0, 0.0, json!([{"title":"Rel.1","messages":["qBittorrent is downloading metadata"]}])),
+        // metadata, nothing from the Arr: client state explains it, and it becomes stalled after the window
+        rec(2, "H2", 0.0, 0.0, json!([])),
+        rec(3, "H3", 1000.0, 1000.0, json!([])),
+        rec(4, "H4", 1000.0, 400.0, json!([])),
+        rec(5, "H5", 1000.0, 1000.0, json!([])),
+    ]});
+    Mock::given(method("GET"))
+        .and(path("/api/v3/queue"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(queue))
+        .mount(&radarr)
+        .await;
+    let qb = MockServer::start().await;
+    let t = |h: &str, state: &str, progress: f64| json!({"hash": h, "progress": progress, "dlspeed": 0, "eta": 8640000, "num_seeds": 0, "num_leechs": 0, "state": state, "size": 1000});
+    Mock::given(method("GET"))
+        .and(path("/api/v2/torrents/info"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            t("H1", "metaDL", 0.0),
+            t("H2", "metaDL", 0.0),
+            t("H3", "queuedDL", 0.0),
+            t("H4", "stalledDL", 0.4),
+            t("H5", "pausedDL", 0.0)
+        ])))
+        .mount(&qb)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = reel_core::db::connect_url("sqlite::memory:").await.unwrap();
+    let cfg = reel_core::Config {
+        data_dir: dir.path().join("data"),
+        ..Default::default()
+    };
+    let state = AppState::new(db.clone(), cfg);
+    let opts = reel_requests::Options {
+        tracker: reel_requests::TrackerConfig {
+            stall_after: std::time::Duration::from_secs(1),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let svc =
+        reel_requests::RequestsService::with_options(db.clone(), None, state.events.clone(), opts);
+    let state = state.with_requests(svc);
+    let admin = common::authed(&state, app(state.clone())).await;
+    sqlx::query(
+        "INSERT INTO arr_servers (id, kind, name, url, api_key) VALUES (1,'radarr','R',?,'k')",
+    )
+    .bind(radarr.uri())
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO download_clients (kind, url) VALUES ('qbittorrent', ?)")
+        .bind(qb.uri())
+        .execute(&db)
+        .await
+        .unwrap();
+
+    let snap = |v: &Value| -> std::collections::HashMap<String, Value> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|i| (i["id"].as_str().unwrap().to_string(), i.clone()))
+            .collect()
+    };
+    let (_, v) = get(&admin, "/api/v1/downloads").await;
+    let m = snap(&v);
+    assert_eq!(
+        m["1:1"]["status_text"],
+        "qBittorrent is downloading metadata"
+    );
+    assert_eq!(m["1:1"]["client_state"], "metaDL");
+    assert_eq!(
+        m["1:1"]["state"], "queued",
+        "fresh metadata fetch is not yet stalled"
+    );
+    assert_eq!(
+        (
+            m["1:2"]["status_text"].as_str(),
+            m["1:2"]["client_state"].as_str()
+        ),
+        (Some("Fetching metadata"), Some("metaDL"))
+    );
+    assert_eq!(m["1:2"]["state"], "queued");
+    assert_eq!(
+        (m["1:3"]["status_text"].as_str(), m["1:3"]["state"].as_str()),
+        (Some("Queued in client"), Some("queued"))
+    );
+    assert_eq!(
+        (
+            m["1:4"]["status_text"].as_str(),
+            m["1:4"]["client_state"].as_str()
+        ),
+        (Some("Stalled — no peers"), Some("stalledDL"))
+    );
+    assert_eq!(m["1:4"]["state"], "stalled", "client says stalled");
+    assert_eq!(
+        (m["1:5"]["status_text"].as_str(), m["1:5"]["state"].as_str()),
+        (Some("Paused"), Some("stalled"))
+    );
+
+    // after the stall window, 0-byte / metadata items that never moved become stalled
+    tokio::time::sleep(std::time::Duration::from_millis(2200)).await;
+    let (_, v) = get(&admin, "/api/v1/downloads").await;
+    let m = snap(&v);
+    for id in ["1:1", "1:2"] {
+        assert_eq!(m[id]["state"], "stalled", "{id}");
+    }
+    assert_eq!(
+        m["1:3"]["state"], "queued",
+        "a sized item waiting in the client is just queued"
+    );
+    assert_eq!(m["1:2"]["status_text"], "Fetching metadata", "text kept");
+}

@@ -46,6 +46,10 @@ pub struct DownloadItem {
     pub sizeleft_bytes: Option<u64>,
     pub speed_bps: Option<u64>,
     pub error: Option<String>,
+    /// Most specific human-readable reason: Arr message, else the torrent client's state as text.
+    pub status_text: Option<String>,
+    /// Raw torrent-client state (e.g. `metaDL`, `stalledDL`), when a client is configured.
+    pub client_state: Option<String>,
     /// Reel request this download belongs to, if any.
     pub request_id: Option<i64>,
     /// Owner of that request (for per-user filtering; not serialized).
@@ -83,6 +87,22 @@ fn request_matches(req: &RequestRecord, sid: i64, item: &QueueItem, kind: ArrKin
                 }
         }
     }
+}
+
+/// Torrent-client state → (human text, stuck-without-data-now, still fetching metadata).
+/// Covers qBittorrent states and the names this crate maps Transmission to.
+pub(crate) fn client_state_text(state: &str) -> Option<(&'static str, bool, bool)> {
+    Some(match state {
+        "metaDL" | "forcedMetaDL" => ("Fetching metadata", false, true),
+        "stalledDL" => ("Stalled — no peers", true, false),
+        "queuedDL" | "queued_download" => ("Queued in client", false, false),
+        "pausedDL" | "stoppedDL" | "stopped" => ("Paused", true, false),
+        "checkingDL" | "checkingResumeData" | "checkingUP" | "checking" | "allocating" => {
+            ("Checking files", false, false)
+        }
+        "error" | "missingFiles" => ("Client error", true, false),
+        _ => return None,
+    })
 }
 
 /// `/t/p/original/abc.jpg` → `/abc.jpg` for TMDB-hosted artwork.
@@ -242,12 +262,24 @@ async fn build_snapshot(s: &SharedRef, cache: &mut DlCache) -> Result<Vec<Downlo
                 .then(|| q.timeleft.as_deref().and_then(parse_timeleft))
                 .flatten();
             let mut speed = None;
+            let mut client_state = None;
+            let mut meta = false;
+            let mut client_text = None;
+            let mut client_stuck = false;
             if let Some(t) = q
                 .download_id
                 .as_deref()
                 .and_then(|d| torrents.get(&d.to_ascii_lowercase()))
             {
                 speed = Some(t.speed_bps);
+                if !t.state.is_empty() {
+                    client_state = Some(t.state.clone());
+                }
+                if let Some((text, stuck, m)) = client_state_text(&t.state) {
+                    client_text = Some(text);
+                    client_stuck = stuck;
+                    meta = m;
+                }
                 if matches!(state, RequestState::Downloading | RequestState::Queued) {
                     progress = t.progress.clamp(0.0, 1.0);
                     eta = t.eta_seconds.or(eta);
@@ -258,9 +290,18 @@ async fn build_snapshot(s: &SharedRef, cache: &mut DlCache) -> Result<Vec<Downlo
             if (m.0 - q.sizeleft).abs() > f64::EPSILON {
                 *m = (q.sizeleft, now);
             }
-            if state == RequestState::Downloading && now.duration_since(m.1) >= s.cfg.stall_after {
+            let no_data = size <= 0.0 || meta;
+            let unchanged = now.duration_since(m.1) >= s.cfg.stall_after;
+            // Not moving for `stall_after` (default 10 min), or stuck on 0 bytes / metadata
+            // (these sit in `queued` in the Arr), or the client says it is stalled/paused/errored.
+            if (state == RequestState::Downloading && unchanged)
+                || (state == RequestState::Queued && no_data && unchanged)
+                || (matches!(state, RequestState::Downloading | RequestState::Queued)
+                    && client_stuck)
+            {
                 state = RequestState::Stalled;
             }
+            let status_text = q.message().or_else(|| client_text.map(str::to_string));
             let tmdb_id = media
                 .and_then(|m| m.tmdb_id)
                 .filter(|i| *i > 0)
@@ -291,6 +332,8 @@ async fn build_snapshot(s: &SharedRef, cache: &mut DlCache) -> Result<Vec<Downlo
                 sizeleft_bytes: (size > 0.0).then(|| q.sizeleft.clamp(0.0, size) as u64),
                 speed_bps: speed,
                 error: q.error_message.clone().filter(|e| !e.is_empty()),
+                status_text,
+                client_state,
                 request_id: req.map(|r| r.id),
                 request_user_id: req.map(|r| r.user_id),
                 library_item_id: None,

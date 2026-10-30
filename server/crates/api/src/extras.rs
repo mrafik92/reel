@@ -253,6 +253,13 @@ pub struct DownloadDto {
     pub speed_bps: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Most specific human-readable reason (Arr message, else torrent-client state such as
+    /// "Fetching metadata", "Stalled — no peers", "Queued in client", "Paused").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_text: Option<String>,
+    /// Raw torrent-client state (`metaDL`, `stalledDL`, …); needs a download client configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_state: Option<String>,
     /// Reel request this belongs to, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<i64>,
@@ -327,6 +334,8 @@ pub(crate) async fn downloads_for(
             sizeleft_bytes: i.sizeleft_bytes,
             speed_bps: i.speed_bps,
             error: i.error.clone(),
+            status_text: i.status_text.clone(),
+            client_state: i.client_state.clone(),
             request_id: i.request_id,
             library_item_id: lib,
             poster_url,

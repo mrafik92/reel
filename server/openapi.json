@@ -5653,6 +5653,13 @@
             "type": "integer",
             "format": "int64"
           },
+          "client_state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Raw torrent-client state (`metaDL`, `stalledDL`, …); needs a download client configured."
+          },
           "episode": {
             "type": [
               "integer",
@@ -5755,6 +5762,13 @@
           "state": {
             "$ref": "#/components/schemas/RequestState",
             "description": "queued | downloading | stalled | importing | failed"
+          },
+          "status_text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Most specific human-readable reason (Arr message, else torrent-client state such as\n\"Fetching metadata\", \"Stalled — no peers\", \"Queued in client\", \"Paused\")."
           },
           "title": {
             "type": "string"

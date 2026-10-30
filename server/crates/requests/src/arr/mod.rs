@@ -204,11 +204,20 @@ pub struct QueueItem {
     pub tracked_download_status: Option<String>,
     pub download_id: Option<String>,
     pub error_message: Option<String>,
+    pub status_messages: Vec<StatusMessage>,
     pub episode: Option<QueueEpisode>,
     /// Radarr (`includeMovie=true`).
     pub movie: Option<QueueMedia>,
     /// Sonarr (`includeSeries=true`).
     pub series: Option<QueueMedia>,
+}
+
+/// `statusMessages[]` entry of a queue record.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StatusMessage {
+    pub title: Option<String>,
+    pub messages: Vec<String>,
 }
 
 /// Movie / series embedded in a queue record.
@@ -238,6 +247,29 @@ pub struct QueueEpisode {
 }
 
 impl QueueItem {
+    /// Most specific human-readable message the Arr gives: `errorMessage`, else the first
+    /// `statusMessages` text (its detail lines, falling back to the title).
+    pub fn message(&self) -> Option<String> {
+        let clean = |s: &str| {
+            let s = s.trim();
+            (!s.is_empty()).then(|| s.to_string())
+        };
+        self.error_message.as_deref().and_then(clean).or_else(|| {
+            self.status_messages.iter().find_map(|m| {
+                let detail: Vec<&str> = m
+                    .messages
+                    .iter()
+                    .map(|x| x.trim())
+                    .filter(|x| !x.is_empty())
+                    .collect();
+                if detail.is_empty() {
+                    m.title.as_deref().and_then(clean)
+                } else {
+                    Some(detail.join(" "))
+                }
+            })
+        })
+    }
     /// Season this item belongs to.
     pub fn season(&self) -> Option<i64> {
         self.season_number
