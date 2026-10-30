@@ -1215,3 +1215,41 @@ html.reel-avplay-active .grain {
   border-radius: var(--radius-l);
   background: rgba(16, 18, 25, 0.94);
 }
+
+/* ---------- Settings → About (versions) ---------------------------------- */
+.admin__about {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  color: var(--ink-3);
+  font-size: 0.8rem;
+}
+.admin__about-title {
+  margin: 0 0 0.5rem;
+  color: var(--ink-2);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+}
+.admin__about dl {
+  margin: 0;
+}
+.admin__about dt {
+  color: var(--ink-2);
+  font-weight: 600;
+  margin-top: 0.4rem;
+}
+.admin__about dd {
+  margin: 0.1rem 0 0;
+}
+.admin__about small {
+  display: block;
+}
+.admin__about code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.admin__about-reload {
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+}

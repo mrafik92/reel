@@ -6,6 +6,9 @@ interface ImportMetaEnv {
   readonly VITE_TARGET?: string;
   /** "web" (default), "webos" or "tizen" — reported to the server on login and decide. */
   readonly VITE_CLIENT?: string;
+  /** Git commit + build time of this bundle (set by the image build). */
+  readonly VITE_GIT_SHA?: string;
+  readonly VITE_BUILD_DATE?: string;
   readonly DEV: boolean;
 }
 interface ImportMeta {

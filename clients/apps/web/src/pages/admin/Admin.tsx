@@ -13,6 +13,7 @@ const Notifications = lazy(() => import("./Notifications"));
 const Sessions = lazy(() => import("./Sessions"));
 const Hardware = lazy(() => import("./Hardware"));
 const Iptv = lazy(() => import("./Iptv"));
+import About from "./About";
 
 const SECTIONS: { id: string; label: string; icon: IconName; blurb: string }[] = [
   { id: "libraries", label: "Libraries", icon: "folder", blurb: "Folders Reel scans" },
@@ -36,7 +37,15 @@ export default function Admin(): JSX.Element {
         <p class="eyebrow eyebrow--accent">Settings</p>
         <h1 class="page-title">Server</h1>
       </header>
-      <Show when={isAdmin()} fallback={<p class="state__body">Only admins can change server settings.</p>}>
+      <Show
+        when={isAdmin()}
+        fallback={
+          <>
+            <p class="state__body">Only admins can change server settings.</p>
+            <About />
+          </>
+        }
+      >
         <div class="admin__layout">
           <nav class="admin__nav" aria-label="Settings sections" data-nav-group>
             <For each={SECTIONS}>
@@ -50,6 +59,7 @@ export default function Admin(): JSX.Element {
                 </a>
               )}
             </For>
+            <About />
           </nav>
           <div class="admin__content" data-nav-group>
             <Switch fallback={<p>Unknown section.</p>}>

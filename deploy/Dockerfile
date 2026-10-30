@@ -8,6 +8,9 @@
 
 ARG RUST_VERSION=1.86
 ARG BUN_VERSION=1
+# Build metadata (CI passes these; shown in Settings → About).
+ARG GIT_SHA=""
+ARG BUILD_DATE=""
 
 # ── 1. web client (platform independent → always built on the build host's arch) ──────────────
 FROM --platform=$BUILDPLATFORM oven/bun:${BUN_VERSION} AS web
@@ -16,7 +19,9 @@ COPY clients/package.json clients/bun.lock clients/tsconfig.base.json ./
 COPY clients/packages ./packages
 COPY clients/apps ./apps
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile
-RUN cd apps/web && bun run build
+ARG GIT_SHA
+ARG BUILD_DATE
+RUN cd apps/web && VITE_GIT_SHA="$GIT_SHA" VITE_BUILD_DATE="$BUILD_DATE" bun run build
 
 # ── 2. server ───────────────────────────────────────────────────────────────────────────────────
 FROM rust:${RUST_VERSION}-bookworm AS build
@@ -59,6 +64,11 @@ ENV REEL_BIND=0.0.0.0:8420 \
     REEL_WEB_DIR=/app/web \
     REEL_CONFIG=/config/config.toml \
     RUST_LOG=info,tower_http=warn
+
+ARG GIT_SHA
+ARG BUILD_DATE
+ENV REEL_GIT_SHA=$GIT_SHA \
+    REEL_BUILD_DATE=$BUILD_DATE
 
 USER reel
 WORKDIR /data

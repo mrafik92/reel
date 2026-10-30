@@ -6856,6 +6856,20 @@
           "version"
         ],
         "properties": {
+          "build_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Build timestamp (UTC, RFC 3339), when known."
+          },
+          "git_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Git commit the server was built from (short SHA), when known."
+          },
           "status": {
             "type": "string"
           },

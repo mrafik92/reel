@@ -328,6 +328,21 @@ impl utoipa::Modify for SecurityAddon {
 pub struct Health {
     pub status: String,
     pub version: String,
+    /// Git commit the server was built from (short SHA), when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_sha: Option<String>,
+    /// Build timestamp (UTC, RFC 3339), when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_date: Option<String>,
+}
+
+/// Build metadata set by the image (`REEL_GIT_SHA`, `REEL_BUILD_DATE` env vars in the runtime
+/// layer, so a new commit doesn't invalidate the cached Rust build).
+fn build_info(var: &str) -> Option<String> {
+    std::env::var(var)
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
 }
 
 /// Liveness check.
@@ -336,6 +351,8 @@ pub async fn health() -> Json<Health> {
     Json(Health {
         status: "ok".into(),
         version: env!("CARGO_PKG_VERSION").into(),
+        git_sha: build_info("REEL_GIT_SHA").map(|s| s.chars().take(12).collect()),
+        build_date: build_info("REEL_BUILD_DATE"),
     })
 }
 
