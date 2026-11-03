@@ -24,6 +24,7 @@ mod requests;
 mod routes;
 mod stream;
 pub mod vod;
+pub mod ws;
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -72,6 +73,8 @@ pub struct AppState {
     pub vod: Arc<vod::VodRuntime>,
     /// DLNA renderers and running casts.
     pub cast: Arc<cast::CastRuntime>,
+    /// WebSocket tickets and per-user socket slots.
+    pub ws: Arc<ws::WsHub>,
     /// TMDB client (set by [`AppState::with_tmdb`]).
     pub tmdb: Option<reel_metadata::TmdbClient>,
     pub omdb: Option<reel_requests::reviews::OmdbClient>,
@@ -84,7 +87,7 @@ impl AppState {
         let (events, _) = broadcast::channel(256);
         let images = ImageCache::new(&config.data_dir);
         let hw = HwAccelStatus::software();
-        let playback = new_playback(&config, hw.selected.clone());
+        let playback = SessionManager::new(session_config(&config), hw.selected.clone());
         let requests = RequestsService::new(db.clone(), None, events.clone());
         let key = match config.signing_secret.as_deref().filter(|s| s.len() >= 16) {
             Some(s) => s.as_bytes().to_vec(),
@@ -123,6 +126,7 @@ impl AppState {
         Self {
             vod: Arc::default(),
             cast: Arc::default(),
+            ws: Arc::default(),
             tmdb: None,
             omdb: config
                 .omdb_api_key
@@ -184,7 +188,7 @@ impl AppState {
 
     /// Use detected hardware acceleration (rebuilds the session manager).
     pub fn with_hwaccel(mut self, hw: HwAccelStatus) -> Self {
-        self.playback = new_playback(&self.config, hw.selected.clone());
+        self.playback = SessionManager::new(session_config(&self.config), hw.selected.clone());
         // IPTV transcodes (non-H.264 sources, e.g. MPEG-2 SD) use the same hardware encoder.
         self.iptv.live.set_hwaccel(hw.selected.clone());
         self.hwaccel = Arc::new(hw);
@@ -273,19 +277,6 @@ impl AppState {
         self.restart_watcher().await;
         Ok(id)
     }
-}
-
-/// Session manager wired to the upstream proxy: ffmpeg/ffprobe fetch provider URLs only through
-/// a loopback endpoint backed by the SSRF-guarded HTTP client.
-fn new_playback(config: &reel_core::Config, hw: reel_playback::HwAccel) -> Arc<SessionManager> {
-    let m = SessionManager::new(session_config(config), hw);
-    let allow = config.allow_private_fetch;
-    m.media()
-        .set_upstream(reel_playback::upstream::UpstreamProxy::new(
-            reel_iptv::net::client(allow),
-            Arc::new(move |u: &str| reel_iptv::net::check_url(u, allow).map_err(|e| e.to_string())),
-        ));
-    m
 }
 
 fn session_config(config: &reel_core::Config) -> SessionConfig {
@@ -386,12 +377,16 @@ pub async fn health() -> Json<Health> {
 
 #[derive(serde::Deserialize, utoipa::IntoParams)]
 pub struct EventsQuery {
-    /// Session token (browsers cannot set headers on WebSocket upgrades).
+    /// Single-use ticket from `POST /auth/ws-ticket` (preferred; browsers cannot set headers on
+    /// WebSocket upgrades).
+    pub ticket: Option<String>,
+    /// Deprecated: the session token in the URL (ends up in logs). Still accepted for one release.
     pub token: Option<String>,
 }
 
-/// WebSocket stream of [`ServerEvent`]s as JSON text frames. Authenticate with
-/// `Authorization: Bearer` or `?token=`. `request_progress` is delivered to the requester (and
+/// WebSocket stream of [`ServerEvent`]s as JSON text frames. Authenticate with `?ticket=` (from
+/// `POST /auth/ws-ticket`), `Authorization: Bearer`, or the deprecated `?token=`. The socket is
+/// closed when the session is revoked or the user disabled; at most 8 sockets per user. `request_progress` is delivered to the requester (and
 /// admins); `scan_progress` to admins only.
 #[utoipa::path(
     get,
@@ -399,7 +394,8 @@ pub struct EventsQuery {
     params(EventsQuery),
     responses(
         (status = 101, description = "WebSocket upgrade; frames are JSON ServerEvent"),
-        (status = 401, body = error::ErrorBody)
+        (status = 401, body = error::ErrorBody),
+        (status = 429, description = "Too many open sockets", body = error::ErrorBody)
     )
 )]
 pub async fn events(
@@ -408,13 +404,42 @@ pub async fn events(
     headers: HeaderMap,
     Query(q): Query<EventsQuery>,
 ) -> Result<Response, error::ApiError> {
-    let token = auth::bearer(&headers)
-        .map(str::to_string)
-        .or(q.token)
-        .ok_or_else(|| error::ApiError::Unauthorized("authentication required".into()))?;
-    let (user, _) = st.auth.authenticate(&token).await?;
+    let unauthorized = || error::ApiError::Unauthorized("authentication required".into());
+    let (user, session_id) = if let Some(t) = q.ticket.as_deref() {
+        let (uid, sid) = st.ws.redeem(t).ok_or_else(unauthorized)?;
+        let user = st
+            .auth
+            .get_user(uid)
+            .await?
+            .filter(|u| !u.disabled)
+            .ok_or_else(unauthorized)?;
+        if !st.auth.session_valid(sid, uid).await {
+            return Err(unauthorized());
+        }
+        (user, sid)
+    } else {
+        let token = auth::bearer(&headers)
+            .map(str::to_string)
+            .or_else(|| {
+                q.token.inspect(|_| {
+                    tracing::warn!(
+                        "WebSocket authenticated with ?token= (deprecated, token visible in URLs); \
+                         use POST /auth/ws-ticket and ?ticket="
+                    )
+                })
+            })
+            .ok_or_else(unauthorized)?;
+        let (user, s) = st.auth.authenticate(&token).await?;
+        (user, s.id)
+    };
+    let slot = st.ws.acquire(user.id).ok_or_else(|| {
+        error::ApiError::TooManyRequests("too many open event streams for this account".into())
+    })?;
     let rx = st.events.subscribe();
-    Ok(ws.on_upgrade(move |socket| forward_events(socket, rx, st, user)))
+    Ok(ws.on_upgrade(move |socket| async move {
+        forward_events(socket, rx, st, user, session_id).await;
+        drop(slot);
+    }))
 }
 
 /// May `user` see `ev`?
@@ -454,6 +479,7 @@ async fn forward_events(
     mut rx: broadcast::Receiver<ServerEvent>,
     st: AppState,
     user: User,
+    session_id: i64,
 ) {
     let mut owners = std::collections::HashMap::new();
     // Download activity of all Arr queues is pushed as `{"type":"downloads","items":[…]}`: every
@@ -462,8 +488,19 @@ async fn forward_events(
     let mut dl_tick = tokio::time::interval(Duration::from_secs(2));
     dl_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let (mut dl_active, mut dl_idle, mut dl_last) = (false, 0u32, String::from("[]"));
+    // revoked / disabled accounts lose their socket within half a minute
+    let mut alive_tick =
+        tokio::time::interval(Duration::from_secs(st.config.ws_recheck_secs.max(1)));
+    alive_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    alive_tick.tick().await;
     loop {
         tokio::select! {
+            _ = alive_tick.tick() => {
+                if !st.auth.session_valid(session_id, user.id).await {
+                    let _ = socket.send(Message::Close(None)).await;
+                    return;
+                }
+            }
             _ = dl_tick.tick() => {
                 if !dl_active {
                     dl_idle += 1;
@@ -590,6 +627,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(vod::vod_subs))
         .routes(routes!(prefs::get_preferences, prefs::put_preferences))
         .routes(routes!(prefs::cast_url))
+        .routes(routes!(ws::ws_ticket))
         .routes(routes!(cast::list_devices))
         .routes(routes!(cast::add_device))
         .routes(routes!(cast::play_on_device))
@@ -663,7 +701,12 @@ pub fn app(state: AppState) -> Router {
         )
         .with_state(state)
         .nest("/api/v1", stream)
-        .layer(TraceLayer::new_for_http())
+        // spans carry the path only: query strings hold signatures, tokens and tickets
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|req: &axum::http::Request<_>| {
+                tracing::info_span!("request", method = %req.method(), path = %req.uri().path())
+            }),
+        )
         .layer(RequestBodyLimitLayer::new(body_limit))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,

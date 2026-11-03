@@ -302,7 +302,8 @@ async fn bob(e: &Env) -> Router {
         &e.admin,
         "POST",
         "/api/v1/admin/invites",
-        Some(json!({"limits": {}})),
+        // invited accounts start without feature access: this one watches live TV
+        Some(json!({"limits": {}, "permissions": {"iptv_access": true, "vod_access": true, "can_request": false, "can_cast": false}})),
     )
     .await;
     assert_eq!(s, 201);
@@ -812,7 +813,7 @@ async fn user_stream_limit_counts_live_sessions() {
         &e.admin,
         "POST",
         "/api/v1/admin/invites",
-        Some(json!({"limits": {"max_streams": 1}})),
+        Some(json!({"limits": {"max_streams": 1}, "permissions": {"iptv_access": true, "vod_access": false, "can_request": false, "can_cast": false}})),
     )
     .await;
     assert_eq!(s, 201);

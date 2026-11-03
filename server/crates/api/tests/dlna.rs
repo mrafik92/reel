@@ -96,6 +96,12 @@ async fn user(e: &Env, name: &str) -> Router {
         })
         .await
         .unwrap();
+    // casting is opt-in per user
+    sqlx::query("UPDATE users SET can_cast = 1 WHERE username = ?")
+        .bind(name)
+        .execute(&e.db)
+        .await
+        .unwrap();
     let t = e
         .state
         .auth

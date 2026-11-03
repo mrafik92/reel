@@ -1393,6 +1393,15 @@ async fn requests_are_scoped_to_their_owner_and_security_headers_present() {
     let e = env().await;
     let (btoken, bob_id) = invited_user(&e, "bob", &[], json!({})).await;
     let bob = as_token(&e, &btoken);
+    // invited accounts start without request access; an admin grants it
+    let (st, _) = send(
+        &e.admin,
+        "PATCH",
+        &format!("/api/v1/admin/users/{bob_id}"),
+        Some(json!({"permissions": {"iptv_access": false, "vod_access": false, "can_request": true, "can_cast": false}})),
+    )
+    .await;
+    assert_eq!(st, 200);
     sqlx::query("INSERT INTO requests (user_id, media_type, tmdb_id, status) VALUES (1, 'movie', 10, 'searching'), (?, 'movie', 11, 'searching')")
         .bind(bob_id)
         .execute(&e.pool)
