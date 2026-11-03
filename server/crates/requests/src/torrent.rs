@@ -119,7 +119,8 @@ impl Qbittorrent {
             .get_all(reqwest::header::SET_COOKIE)
             .iter()
             .filter_map(|v| v.to_str().ok())
-            .find_map(|c| c.split(';').next().filter(|p| p.starts_with("SID=")))
+            // qBittorrent < 5 names the session cookie `SID`; 5.x uses `QBT_SID_<port>`.
+            .find_map(|c| c.split(';').next().filter(|p| is_session_cookie(p)))
             .map(str::to_string);
         let body = resp.text().await.unwrap_or_default();
         if !status.is_success() || body.trim().eq_ignore_ascii_case("fails.") {
@@ -330,6 +331,12 @@ pub fn parse_transmission(v: &Value) -> HashMap<String, TorrentInfo> {
     out
 }
 
+/// Session cookie of the qBittorrent WebUI: `SID=…` (≤ 4.x) or `QBT_SID_<port>=…` (5.x).
+fn is_session_cookie(pair: &str) -> bool {
+    let name = pair.split('=').next().unwrap_or("").trim();
+    name == "SID" || name.starts_with("QBT_SID")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,6 +405,45 @@ mod tests {
         assert_eq!(m["aa"].peers, 2);
         // second call reuses the cookie (login expected exactly once)
         c.info(&["aa".into(), "bb".into()]).await.unwrap();
+    }
+
+    /// qBittorrent 5.x: login answers 204 with no body and the cookie is `QBT_SID_<port>`.
+    #[tokio::test]
+    async fn qbit5_login_cookie_name_and_204() {
+        let s = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/auth/login"))
+            .respond_with(ResponseTemplate::new(204).insert_header(
+                "set-cookie",
+                "QBT_SID_8200=abc123; HttpOnly; SameSite=Strict; path=/",
+            ))
+            .expect(1)
+            .mount(&s)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v2/torrents/info"))
+            .and(header("cookie", "QBT_SID_8200=abc123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"hash":"CC","progress":1.0,"dlspeed":0,"eta":8640000,"num_seeds":0,"num_leechs":0,"state":"stalledUP","size":9}
+            ])))
+            .mount(&s)
+            .await;
+        let c = TorrentClient::from_config(&TorrentClientConfig {
+            kind: TorrentKind::Qbittorrent,
+            url: s.uri(),
+            username: Some("admin".into()),
+            password: Some("p".into()),
+        });
+        let m = c.info(&["cc".into()]).await.unwrap();
+        assert_eq!(m["cc"].state, "stalledUP");
+    }
+
+    #[test]
+    fn session_cookie_names() {
+        assert!(is_session_cookie("SID=x"));
+        assert!(is_session_cookie("QBT_SID_8080=x"));
+        assert!(!is_session_cookie("SIDEBAR=x"));
+        assert!(!is_session_cookie("other=1"));
     }
 
     #[tokio::test]
