@@ -14,6 +14,7 @@ use std::path::Path;
 use std::process::Command;
 
 fn make_mkv(dir: &Path) -> std::path::PathBuf {
+    let gop = std::env::var("E2E_GOP").unwrap_or_else(|_| "100".into());
     let out = dir.join("movie.mkv");
     let st = Command::new("ffmpeg")
         .args([
@@ -42,9 +43,9 @@ fn make_mkv(dir: &Path) -> std::path::PathBuf {
             "-bf",
             "2",
             "-g",
-            "100",
+            &gop,
             "-keyint_min",
-            "100",
+            &gop,
             "-sc_threshold",
             "0",
         ])

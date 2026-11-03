@@ -141,33 +141,41 @@ fn trafs(d: &[u8]) -> Vec<Traf> {
     out
 }
 
-/// Shift all `tfdt` values in `data` so that the first video sample's presentation time becomes
-/// `expected_video_pts` (seconds). Returns the applied shift in seconds (`None` if nothing to do).
-pub fn retime(
-    data: &mut [u8],
-    tracks: &HashMap<u32, Track>,
-    expected_video_pts: f64,
-) -> Option<f64> {
+/// Presentation time (seconds) of the first video sample in decode order.
+pub fn first_video_pts(data: &[u8], tracks: &HashMap<u32, Track>) -> Option<f64> {
     let ts = trafs(data);
-    let first_video = ts
+    let t = ts
         .iter()
         .find(|t| tracks.get(&t.track).is_some_and(|k| k.video))?;
-    let scale = tracks[&first_video.track].timescale as f64;
-    let actual = (first_video.tfdt as f64 + first_video.first_cts as f64) / scale;
-    let delta = expected_video_pts - actual;
-    if delta.abs() < 0.0005 {
-        return Some(0.0);
-    }
+    let scale = tracks[&t.track].timescale as f64;
+    Some((t.tfdt as f64 + t.first_cts as f64) / scale)
+}
+
+/// `tfdt` (seconds) of the first video fragment.
+pub fn first_video_tfdt(data: &[u8], tracks: &HashMap<u32, Track>) -> Option<f64> {
+    let ts = trafs(data);
+    let t = ts
+        .iter()
+        .find(|t| tracks.get(&t.track).is_some_and(|k| k.video))?;
+    Some(t.tfdt as f64 / tracks[&t.track].timescale as f64)
+}
+
+/// Add `delta` seconds to every `tfdt` in `data` (all tracks alike, keeping A/V sync). Audio is
+/// clamped at 0; a video track that would go negative leaves the buffer untouched (`false`).
+pub fn shift(data: &mut [u8], tracks: &HashMap<u32, Track>, delta: f64) -> bool {
+    let ts = trafs(data);
     // compute everything first so a failure leaves the buffer untouched
     let mut edits = Vec::with_capacity(ts.len());
     for t in &ts {
-        let k = tracks.get(&t.track)?;
+        let Some(k) = tracks.get(&t.track) else {
+            return false;
+        };
         let mut new = t.tfdt as i64 + (delta * k.timescale as f64).round() as i64;
         if new < 0 && !k.video {
             new = 0; // audio may lead video by a few ms at the very start of the file
         }
         if new < 0 || (!t.wide && new > u32::MAX as i64) {
-            return None;
+            return false;
         }
         edits.push((t.tfdt_at, t.wide, new as u64));
     }
@@ -178,7 +186,122 @@ pub fn retime(
             data[at..at + 4].copy_from_slice(&(v as u32).to_be_bytes());
         }
     }
-    Some(delta)
+    true
+}
+
+/// Shift all `tfdt` values in `data` so that the first video sample's presentation time becomes
+/// `expected_video_pts` (seconds). Returns the applied shift in seconds (`None` if refused).
+pub fn retime(
+    data: &mut [u8],
+    tracks: &HashMap<u32, Track>,
+    expected_video_pts: f64,
+) -> Option<f64> {
+    let delta = expected_video_pts - first_video_pts(data, tracks)?;
+    if delta.abs() < 0.0005 {
+        return Some(0.0);
+    }
+    shift(data, tracks, delta).then_some(delta)
+}
+
+/// A validated media segment split into its (optional) `styp` and the `moof`/`mdat` body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cleaned {
+    pub styp: Option<Vec<u8>>,
+    /// `moof`+`mdat` (and `emsg`/`prft`) boxes only: no `sidx` (it would disagree with retimed
+    /// `tfdt` values), no further `styp`.
+    pub body: Vec<u8>,
+}
+
+/// Validate a media segment produced by ffmpeg and strip boxes we must not forward.
+///
+/// Errors if the bytes are not a clean `[styp] [sidx]* (moof mdat)+` sequence covering the whole
+/// buffer (truncated file, a stray `ftyp`/`moov`, MPEG-TS, …) or if a `moof` references a track
+/// that is not in the init segment.
+pub fn clean_segment(data: &[u8], tracks: &HashMap<u32, Track>) -> Result<Cleaned, String> {
+    let mut pos = 0usize;
+    let mut styp = None;
+    let mut body = Vec::with_capacity(data.len());
+    let mut pending_moof = false;
+    let mut moofs = 0;
+    while pos < data.len() {
+        if pos + 8 > data.len() {
+            return Err(format!("trailing {} bytes", data.len() - pos));
+        }
+        let size =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let kind: [u8; 4] = [data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]];
+        if size < 8 || pos + size > data.len() {
+            return Err(format!(
+                "box {:?} at {pos} has size {size} but only {} bytes remain",
+                String::from_utf8_lossy(&kind),
+                data.len() - pos
+            ));
+        }
+        let b = &data[pos..pos + size];
+        match &kind {
+            b"styp" => {
+                if styp.is_none() {
+                    styp = Some(b.to_vec());
+                }
+            }
+            b"sidx" | b"free" | b"skip" => {}
+            b"moof" => {
+                if pending_moof {
+                    return Err("moof not followed by mdat".into());
+                }
+                for t in trafs(b) {
+                    if !tracks.contains_key(&t.track) {
+                        return Err(format!(
+                            "moof references track {} missing from init",
+                            t.track
+                        ));
+                    }
+                }
+                pending_moof = true;
+                moofs += 1;
+                body.extend_from_slice(b);
+            }
+            b"mdat" => {
+                if !pending_moof {
+                    return Err("mdat without preceding moof".into());
+                }
+                pending_moof = false;
+                body.extend_from_slice(b);
+            }
+            b"emsg" | b"prft" => body.extend_from_slice(b),
+            other => {
+                return Err(format!(
+                    "unexpected box {:?} in media segment",
+                    String::from_utf8_lossy(other)
+                ));
+            }
+        }
+        pos += size;
+    }
+    if pending_moof {
+        return Err("segment ends with a moof without mdat".into());
+    }
+    if moofs == 0 {
+        return Err("segment contains no moof".into());
+    }
+    Ok(Cleaned { styp, body })
+}
+
+/// Renumber the `mfhd` sequence numbers of all fragments in `data` as `base, base+1, …` so
+/// fragments stitched together from different ffmpeg runs stay strictly increasing.
+pub fn renumber(data: &mut [u8], base: u32) {
+    let mut seq = base;
+    for (ms, me, mk) in boxes(data, 0) {
+        if &mk != b"moof" {
+            continue;
+        }
+        if let Some(mfhd) = child(data, (ms, me), b"mfhd") {
+            if mfhd.0 + 8 <= mfhd.1 {
+                data[mfhd.0 + 4..mfhd.0 + 8].copy_from_slice(&seq.to_be_bytes());
+                seq += 1;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -190,6 +313,76 @@ mod tests {
         v.extend_from_slice(k);
         v.extend_from_slice(payload);
         v
+    }
+
+    #[test]
+    fn clean_segment_validates_and_strips() {
+        let tracks = HashMap::from([(
+            1,
+            Track {
+                timescale: 1000,
+                video: true,
+            },
+        )]);
+        let traf = |id: u32| {
+            let mut tfhd = vec![0, 0, 0, 0];
+            tfhd.extend(id.to_be_bytes());
+            let mut tf = vec![1, 0, 0, 0];
+            tf.extend(0u64.to_be_bytes());
+            let mut trun = vec![0, 0, 0, 0];
+            trun.extend(0u32.to_be_bytes());
+            bx(
+                b"traf",
+                &[bx(b"tfhd", &tfhd), bx(b"tfdt", &tf), bx(b"trun", &trun)].concat(),
+            )
+        };
+        let good = [
+            bx(b"styp", b"msdh"),
+            bx(b"sidx", &[0; 8]),
+            bx(b"moof", &traf(1)),
+            bx(b"mdat", b"xx"),
+            bx(b"styp", b"msdh"),
+            bx(b"moof", &traf(1)),
+            bx(b"mdat", b"yy"),
+        ]
+        .concat();
+        let c = clean_segment(&good, &tracks).unwrap();
+        assert_eq!(c.styp, Some(bx(b"styp", b"msdh")));
+        assert_eq!(
+            c.body,
+            [
+                bx(b"moof", &traf(1)),
+                bx(b"mdat", b"xx"),
+                bx(b"moof", &traf(1)),
+                bx(b"mdat", b"yy")
+            ]
+            .concat()
+        );
+        // truncated mdat
+        assert!(clean_segment(&good[..good.len() - 3], &tracks).is_err());
+        // stray init boxes / ts / unknown track / missing mdat
+        assert!(
+            clean_segment(
+                &[
+                    bx(b"ftyp", b"isom"),
+                    bx(b"moof", &traf(1)),
+                    bx(b"mdat", b"x")
+                ]
+                .concat(),
+                &tracks
+            )
+            .is_err()
+        );
+        assert!(clean_segment(&[0x47u8; 188], &tracks).is_err());
+        assert!(
+            clean_segment(
+                &[bx(b"moof", &traf(9)), bx(b"mdat", b"x")].concat(),
+                &tracks
+            )
+            .is_err()
+        );
+        assert!(clean_segment(&bx(b"moof", &traf(1)), &tracks).is_err());
+        assert!(clean_segment(&[], &tracks).is_err());
     }
 
     #[test]

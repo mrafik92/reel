@@ -149,6 +149,13 @@ struct Session {
     total_segments: u32,
     hw: Mutex<HwAccel>,
     last_req: AtomicU32,
+    /// Incremented on every ffmpeg (re)start; in-flight post-processing of files from an older
+    /// run is discarded.
+    epoch: std::sync::atomic::AtomicU64,
+    /// Timeline shift of the current ffmpeg run (plan time − actual time), measured on the first
+    /// fragment processed after a (re)start and then applied to the whole run so continuity inside
+    /// the run is preserved bit-exactly.
+    run_delta: Mutex<Option<(u64, f64)>>,
     source_video_codec: Option<String>,
     source_hdr: Hdr,
     burn_in: Option<BurnIn>,
@@ -324,6 +331,8 @@ impl SessionManager {
             total_segments,
             hw: Mutex::new(self.effective_hwaccel()),
             last_req: AtomicU32::new(0),
+            epoch: std::sync::atomic::AtomicU64::new(0),
+            run_delta: Mutex::new(None),
             source_video_codec: video.and_then(|v| v.codec.as_deref().map(normalize_codec)),
             source_hdr: video.map(|v| v.hdr).unwrap_or_default(),
             burn_in,
@@ -687,6 +696,7 @@ impl SessionManager {
         let path = dir.join(name);
         let deadline = Instant::now() + self.cfg.segment_wait_timeout;
         let mut restarts = 0;
+        let mut force_restart = false;
         loop {
             // a removed/reaped session must not respawn ffmpeg or recreate its directory
             if !self.sessions.lock().unwrap().contains_key(id) {
@@ -699,21 +709,41 @@ impl SessionManager {
                     return Ok(ready);
                 }
             } else if path.exists() {
-                // segments are written via temp file + rename (or assembled likewise): complete
-                if let (Some(n), false, true) = (
-                    wanted,
-                    s.event_mode,
-                    matches!(s.decision.video, VideoAction::Encode { .. }),
-                ) {
-                    // encoded fixed grid: snap the run-dependent timeline shift to n * segment_secs
-                    normalize_encoded(&dir, &path, s.plan.start(n)).await;
+                // segments are written via temp file + rename (or assembled likewise): complete.
+                // Re-validate on every serve: only clean [styp] moof/mdat bytes may reach MSE.
+                let n = wanted.unwrap_or(0);
+                let epoch = s.epoch.load(Ordering::SeqCst);
+                let expected =
+                    if s.event_mode || !matches!(s.decision.video, VideoAction::Encode { .. }) {
+                        None // copy-mode files were normalised when assembled; fallback has no grid
+                    } else {
+                        Some((s.plan.start(n), n * 16 + 1))
+                    };
+                let valid = {
+                    match normalize_segment(&dir, &path, expected, &s, epoch).await {
+                        Ok(()) => true,
+                        Err(e) => {
+                            tracing::warn!(session = %id, segment = n, error = %e, "discarding invalid segment");
+                            let _ = tokio::fs::remove_file(&path).await;
+                            false
+                        }
+                    }
+                };
+                if valid {
+                    self.touch(&s);
+                    return Ok(path);
                 }
-                self.touch(&s);
-                return Ok(path);
+                force_restart = true;
             }
             if let (Some(n), true) = (wanted, s.plan.is_keyframe_plan()) {
-                if assemble_segment(&dir, &s.plan, n).await? {
-                    return Ok(path);
+                match assemble_segment(&dir, &s, n).await {
+                    Ok(true) => return Ok(path),
+                    Ok(false) => {}
+                    Err(AssembleError::Invalid(e)) => {
+                        tracing::warn!(session = %id, segment = n, error = %e, "discarding invalid GOP data");
+                        force_restart = true;
+                    }
+                    Err(AssembleError::Fatal(e)) => return Err(e),
                 }
             }
             {
@@ -754,7 +784,7 @@ impl SessionManager {
                     }
                     p.paused = false;
                 }
-                let must_restart = if fallback {
+                let must_restart = if fallback || force_restart {
                     true
                 } else if alive {
                     match wanted {
@@ -779,6 +809,7 @@ impl SessionManager {
                     }
                     tracing::info!(session = %id, segment = target, "restarting ffmpeg");
                     self.start_ffmpeg(&s, &mut p, target).await?;
+                    force_restart = false;
                 }
             }
             if Instant::now() >= deadline {
@@ -805,6 +836,11 @@ impl SessionManager {
             .as_ref()
             .ok_or_else(|| PlaybackError::Invalid("no output dir".into()))?;
         tokio::fs::create_dir_all(dir).await?;
+        // everything this run will (re)produce must come from *this* run: drop leftovers of older
+        // runs from `start_segment` on (init and earlier segments stay valid)
+        s.epoch.fetch_add(1, Ordering::SeqCst);
+        *s.run_delta.lock().unwrap() = None;
+        remove_stale(dir, start_segment, s.plan.is_keyframe_plan()).await;
         let hw = s.hw.lock().unwrap().clone();
         let params = BuildParams {
             input: &s.file.path,
@@ -1005,27 +1041,112 @@ async fn ready_init(dir: &Path) -> Option<PathBuf> {
     Some(ready)
 }
 
-/// Rewrite an encoded segment in place so its first video sample sits exactly at `expected`
-/// seconds (idempotent; leaves the file alone when already aligned or on any error).
-async fn normalize_encoded(dir: &Path, path: &Path, expected: f64) {
-    let Some(init) = ready_init(dir).await else {
+/// Delete output of earlier ffmpeg runs that the run starting at `start_segment` will replace.
+async fn remove_stale(dir: &Path, start_segment: u32, copy_plan: bool) {
+    let Ok(mut rd) = tokio::fs::read_dir(dir).await else {
         return;
     };
-    let (Ok(init), Ok(mut data)) = (tokio::fs::read(init).await, tokio::fs::read(path).await)
-    else {
-        return;
-    };
-    let tracks = fmp4::init_tracks(&init);
-    if matches!(fmp4::retime(&mut data, &tracks, expected), Some(d) if d != 0.0) {
-        let tmp = path.with_extension("m4s.tmp");
-        if tokio::fs::write(&tmp, &data).await.is_ok() {
-            let _ = tokio::fs::rename(&tmp, path).await;
+    while let Ok(Some(e)) = rd.next_entry().await {
+        let name = e.file_name().to_string_lossy().into_owned();
+        // unassembled GOP files of older runs are dropped entirely: they carry another run's
+        // timeline shift and are regenerated on demand
+        let stale = name.ends_with(".tmp")
+            || ffmpeg::parse_segment_name(&name).is_some_and(|k| k >= start_segment)
+            || (copy_plan && ffmpeg::parse_gop_name(&name).is_some());
+        if stale {
+            let _ = tokio::fs::remove_file(e.path()).await;
         }
     }
 }
 
-/// Concatenate the GOP files of plan segment `n` into `seg_n.m4s` once all exist.
-async fn assemble_segment(dir: &Path, plan: &SegmentPlan, n: u32) -> Result<bool, PlaybackError> {
+/// Timeline shift (plan time − actual time) of the current ffmpeg run, measured once on the first
+/// fragment processed and then reused for the whole run. `None` if ffmpeg was restarted meanwhile.
+fn run_shift(
+    cell: &Mutex<Option<(u64, f64)>>,
+    epoch: &std::sync::atomic::AtomicU64,
+    epoch_seen: u64,
+    data: &[u8],
+    tracks: &HashMap<u32, fmp4::Track>,
+    plan_time: f64,
+) -> Option<f64> {
+    let mut g = cell.lock().unwrap();
+    if let Some((e, d)) = *g {
+        if e == epoch_seen {
+            return Some(d);
+        }
+    }
+    if epoch.load(Ordering::SeqCst) != epoch_seen {
+        return None;
+    }
+    let mut d = plan_time - fmp4::first_video_pts(data, tracks)?;
+    // never push the video decode time below zero (the very first fragment of a file starts
+    // `B-frame delay` late; that offset is then kept for the whole run, consistently)
+    d = d.max(-fmp4::first_video_tfdt(data, tracks)?);
+    *g = Some((epoch_seen, d));
+    Some(d)
+}
+
+/// Validate an ffmpeg-written segment. With `expected` (encoded fixed grid) it is also rewritten
+/// to `[styp] moof/mdat…` (no `sidx`) with its first video sample exactly at `expected` seconds.
+/// Discarded (rename skipped) if ffmpeg was restarted meanwhile.
+async fn normalize_segment(
+    dir: &Path,
+    path: &Path,
+    expected: Option<(f64, u32)>,
+    sess: &Session,
+    epoch_seen: u64,
+) -> Result<(), String> {
+    let epoch = &sess.epoch;
+    let init = ready_init(dir).await.ok_or("init not ready")?;
+    let init = tokio::fs::read(init).await.map_err(|e| e.to_string())?;
+    let data = tokio::fs::read(path).await.map_err(|e| e.to_string())?;
+    let tracks = fmp4::init_tracks(&init);
+    let cleaned = fmp4::clean_segment(&data, &tracks)?;
+    let Some((expected, expected_seq)) = expected else {
+        return Ok(());
+    };
+    let mut out = cleaned.styp.unwrap_or_default();
+    out.extend(cleaned.body);
+    let delta = run_shift(&sess.run_delta, epoch, epoch_seen, &out, &tracks, expected)
+        .ok_or("ffmpeg restarted")?;
+    if delta.abs() >= 0.0005 && !fmp4::shift(&mut out, &tracks, delta) {
+        tracing::warn!("could not normalise fragment timestamps");
+    }
+    fmp4::renumber(&mut out, expected_seq);
+    if out != data && epoch.load(Ordering::SeqCst) == epoch_seen {
+        let tmp = path.with_extension("m4s.tmp");
+        tokio::fs::write(&tmp, &out)
+            .await
+            .map_err(|e| e.to_string())?;
+        if epoch.load(Ordering::SeqCst) == epoch_seen {
+            tokio::fs::rename(&tmp, path)
+                .await
+                .map_err(|e| e.to_string())?;
+        } else {
+            let _ = tokio::fs::remove_file(&tmp).await;
+        }
+    }
+    Ok(())
+}
+
+enum AssembleError {
+    /// GOP data is unusable (deleted; the caller should restart ffmpeg).
+    Invalid(String),
+    Fatal(PlaybackError),
+}
+
+impl From<std::io::Error> for AssembleError {
+    fn from(e: std::io::Error) -> Self {
+        AssembleError::Fatal(e.into())
+    }
+}
+
+/// Concatenate the GOP files of plan segment `n` into `seg_n.m4s` once all exist: each GOP is
+/// validated (`[styp] [sidx] moof mdat` only, tracks known to the init) and retimed onto the
+/// index timeline; the segment is `styp` + all `moof/mdat` pairs.
+async fn assemble_segment(dir: &Path, sess: &Session, n: u32) -> Result<bool, AssembleError> {
+    let (plan, epoch) = (&sess.plan, &sess.epoch);
+    let epoch_seen = epoch.load(Ordering::SeqCst);
     let (a, b) = plan.gop_range(n);
     for g in a..b {
         if !dir.join(ffmpeg::gop_name(g)).exists() {
@@ -1037,13 +1158,39 @@ async fn assemble_segment(dir: &Path, plan: &SegmentPlan, n: u32) -> Result<bool
         return Ok(false);
     };
     let tracks = fmp4::init_tracks(&tokio::fs::read(init).await?);
+    let mut styp = None;
     let mut out = Vec::new();
     for g in a..b {
-        let mut gop = tokio::fs::read(dir.join(ffmpeg::gop_name(g))).await?;
+        let raw = tokio::fs::read(dir.join(ffmpeg::gop_name(g))).await?;
+        let cleaned = match fmp4::clean_segment(&raw, &tracks) {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(dir.join(ffmpeg::gop_name(g))).await;
+                return Err(AssembleError::Invalid(format!("gop {g}: {e}")));
+            }
+        };
+        if styp.is_none() {
+            styp = cleaned.styp;
+        }
+        let mut body = cleaned.body;
+        fmp4::renumber(&mut body, g * 16 + 1);
         if let Some(t) = plan.gop_time(g) {
             // a run-dependent timeline shift (B-frame delay, audio priming) would make restarted
-            // segments land off the playlist timeline; snap to the index time
-            if fmp4::retime(&mut gop, &tracks, t).is_none() {
+            // segments land off the playlist timeline; shift the whole run onto the index time
+            let Some(d) = run_shift(&sess.run_delta, epoch, epoch_seen, &body, &tracks, t) else {
+                return Ok(false);
+            };
+            let actual = fmp4::first_video_pts(&body, &tracks).unwrap_or(t) + d;
+            if (actual - t).abs() > 1.0 {
+                let _ = tokio::fs::remove_file(dir.join(ffmpeg::gop_name(g))).await;
+                return Err(AssembleError::Fatal(PlaybackError::SegmentUnavailable(
+                    format!(
+                        "keyframe index does not match the media (gop {g} is {:+.2}s off)",
+                        actual - t
+                    ),
+                )));
+            }
+            if d.abs() >= 0.0005 && !fmp4::shift(&mut body, &tracks, d) {
                 tracing::warn!(
                     segment = n,
                     gop = g,
@@ -1051,10 +1198,19 @@ async fn assemble_segment(dir: &Path, plan: &SegmentPlan, n: u32) -> Result<bool
                 );
             }
         }
-        out.extend(gop);
+        out.extend(body);
+    }
+    let mut seg = styp.unwrap_or_default();
+    seg.extend(out);
+    if epoch.load(Ordering::SeqCst) != epoch_seen {
+        return Ok(false); // ffmpeg restarted while we worked: do not publish old-run data
     }
     let tmp = dir.join(format!("{}.tmp", ffmpeg::segment_name(n)));
-    tokio::fs::write(&tmp, out).await?;
+    tokio::fs::write(&tmp, seg).await?;
+    if epoch.load(Ordering::SeqCst) != epoch_seen {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Ok(false);
+    }
     tokio::fs::rename(&tmp, dir.join(ffmpeg::segment_name(n))).await?;
     for g in a..b {
         let _ = tokio::fs::remove_file(dir.join(ffmpeg::gop_name(g))).await;

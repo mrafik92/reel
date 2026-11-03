@@ -23,6 +23,14 @@ pub fn gop_name(n: u32) -> String {
     format!("gop_{n:05}.m4s")
 }
 
+/// Parse `gop_00012.m4s` → 12.
+pub fn parse_gop_name(name: &str) -> Option<u32> {
+    name.strip_prefix("gop_")?
+        .strip_suffix(".m4s")?
+        .parse()
+        .ok()
+}
+
 /// Parse `seg_00012.m4s` → 12.
 pub fn parse_segment_name(name: &str) -> Option<u32> {
     name.strip_prefix("seg_")?
