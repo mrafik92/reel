@@ -4,7 +4,7 @@ use axum::{
     Json,
     body::Bytes,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode, header},
 };
 use reel_core::RequestState;
 use reel_requests::{
@@ -19,7 +19,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::{
     AppState,
-    auth::{AdminUser, AuthUser},
+    auth::{AdminUser, AuthUser, ClientIp},
     error::{ApiError, ApiResult, ErrorBody},
 };
 
@@ -466,6 +466,9 @@ pub async fn create_request(
     u: AuthUser,
     Json(b): Json<CreateRequestBody>,
 ) -> ApiResult<(StatusCode, Json<RequestDto>)> {
+    // routing a request to a particular Radarr/Sonarr, quality profile or folder is an admin's
+    // call: everyone else's values are ignored (the configured defaults apply)
+    let admin = u.is_admin();
     let r = st
         .requests
         .create_request_with(
@@ -474,9 +477,9 @@ pub async fn create_request(
             b.tmdb_id,
             CreateOptions {
                 seasons: b.seasons,
-                arr_server_id: b.arr_server_id,
-                quality_profile_id: b.quality_profile_id,
-                root_folder: b.root_folder,
+                arr_server_id: b.arr_server_id.filter(|_| admin),
+                quality_profile_id: b.quality_profile_id.filter(|_| admin),
+                root_folder: b.root_folder.filter(|_| admin),
             },
         )
         .await?;
@@ -567,7 +570,8 @@ pub async fn retry_request(
 pub struct WebhookQuery {
     /// Arr server id (`arr_servers.id`), to disambiguate multiple instances.
     pub server: Option<i64>,
-    /// Shared secret (`webhook_secret` in the config).
+    /// Deprecated: shared secret in the URL (leaks into logs). Send it as the `X-Reel-Token`
+    /// header, a Bearer token or the HTTP Basic password instead. Must be at least 32 characters.
     pub token: Option<String>,
 }
 
@@ -581,27 +585,75 @@ pub struct WebhookResult {
     pub scanned_paths: Vec<String>,
 }
 
+/// Constant-time comparison that does not leak the secret's length (both sides are hashed first).
 fn secrets_match(a: &str, b: &str) -> bool {
-    a.len() == b.len()
-        && a.bytes()
-            .zip(b.bytes())
-            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-            == 0
+    use sha2::{Digest, Sha256};
+    let (x, y) = (Sha256::digest(a.as_bytes()), Sha256::digest(b.as_bytes()));
+    x.iter()
+        .zip(y.iter())
+        .fold(0u8, |acc, (p, q)| acc | (p ^ q))
+        == 0
+}
+
+/// Minimum length of `webhook_secret`; shorter secrets keep webhooks disabled.
+pub const MIN_WEBHOOK_SECRET: usize = 32;
+
+/// Every token a webhook caller presented: `X-Reel-Token`, `Authorization: Bearer <t>`, HTTP
+/// Basic (the password part: Radarr/Sonarr "Connection" username/password) and the deprecated
+/// `?token=` (visible in access logs and proxies). Any one matching is enough.
+fn presented_tokens(headers: &HeaderMap, query: Option<&str>) -> Vec<String> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let mut out = vec![];
+    if let Some(t) = headers.get("x-reel-token").and_then(|v| v.to_str().ok()) {
+        out.push(t.trim().to_string());
+    }
+    if let Some(a) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(t) = a.strip_prefix("Bearer ") {
+            out.push(t.trim().to_string());
+        }
+        if let Some(b) = a.strip_prefix("Basic ") {
+            if let Some(s) = STANDARD
+                .decode(b.trim())
+                .ok()
+                .and_then(|r| String::from_utf8(r).ok())
+            {
+                if let Some((_, p)) = s.split_once(':') {
+                    out.push(p.to_string());
+                }
+            }
+        }
+    }
+    out.extend(query.map(str::to_string));
+    out
 }
 
 /// Canonicalize a webhook path so it matches library roots (which are stored canonicalized);
 /// removed files fall back to their canonical parent directory.
-fn resolve_path(p: &str) -> std::path::PathBuf {
+fn resolve_path(p: &str) -> Option<std::path::PathBuf> {
     let path = std::path::Path::new(p);
+    // `..` (or a relative path) has no business in a webhook: it is how a path escapes a library root
+    if !path.is_absolute()
+        || path.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
+        return None;
+    }
     if let Ok(c) = std::fs::canonicalize(path) {
-        return c;
+        return Some(c);
     }
     match (
         path.parent().and_then(|d| std::fs::canonicalize(d).ok()),
         path.file_name(),
     ) {
-        (Some(d), Some(f)) => d.join(f),
-        _ => path.to_path_buf(),
+        (Some(d), Some(f)) => Some(d.join(f)),
+        _ => None,
     }
 }
 
@@ -620,6 +672,8 @@ fn resolve_path(p: &str) -> std::path::PathBuf {
 )]
 pub async fn arr_webhook(
     State(st): State<AppState>,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
     Query(q): Query<WebhookQuery>,
     body: Bytes,
 ) -> ApiResult<Json<WebhookResult>> {
@@ -633,9 +687,30 @@ pub async fn arr_webhook(
             "webhooks are disabled: set webhook_secret".into(),
         ));
     };
-    if !q.token.as_deref().is_some_and(|t| secrets_match(t, secret)) {
+    if secret.len() < MIN_WEBHOOK_SECRET {
+        return Err(ApiError::Forbidden(format!(
+            "webhooks are disabled: webhook_secret must be at least {MIN_WEBHOOK_SECRET} characters"
+        )));
+    }
+    // wrong tokens are counted per address (guessing is locked out)
+    let key = format!("webhook:{}", reel_auth::ip_bucket(ip.as_deref()));
+    st.auth
+        .limiter()
+        .reserve(&key, 10)
+        .map_err(ApiError::Locked)?;
+    let presented = presented_tokens(&headers, q.token.as_deref());
+    if !presented
+        .iter()
+        .fold(false, |ok, t| secrets_match(t, secret) | ok)
+    {
         return Err(ApiError::Forbidden("invalid webhook token".into()));
     }
+    if q.token.as_deref().is_some_and(|t| secrets_match(t, secret)) {
+        tracing::warn!(
+            "webhook authenticated with ?token=; send it as the X-Reel-Token header instead"
+        );
+    }
+    st.auth.limiter().refund(&key, 10);
     let outcome = st.requests.handle_webhook(&body, q.server).await?;
 
     let mut scanned = Vec::new();
@@ -645,7 +720,11 @@ pub async fn arr_webhook(
         .iter()
         .chain(outcome.removed_paths.iter())
     {
-        match st.scanner.scan_path(&st.db, &resolve_path(p)).await {
+        let Some(path) = resolve_path(p) else {
+            tracing::warn!("webhook path rejected (relative or containing `..`)");
+            continue;
+        };
+        match st.scanner.scan_path(&st.db, &path).await {
             Ok(s) => {
                 ingested |= s.scanned > 0;
                 scanned.push(p.clone());

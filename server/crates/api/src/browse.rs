@@ -887,7 +887,8 @@ pub async fn search_all(
 
     // ── discover: not already in (a visible part of) the library ──
     let mut discover = vec![];
-    for c in cards.iter().take(40) {
+    // discover cards lead to requests: only for accounts that may request
+    for c in cards.iter().take(if u.user.can_request() { 40 } else { 0 }) {
         let mut dto = card_dto(c, &sg);
         if let Some(item) = c.library_item_id {
             if u.is_admin() || st.require_item(&u.user, item).await.is_ok() {
@@ -905,6 +906,10 @@ pub async fn search_all(
         episodes,
         people: people_out,
         discover,
-        vod: crate::vod::search_cards(&st, &u, &needle, 12).await?,
+        vod: if u.user.can_vod() {
+            crate::vod::search_cards(&st, &u, &needle, 12).await?
+        } else {
+            vec![]
+        },
     }))
 }

@@ -161,6 +161,43 @@ pub(crate) fn wants_original(p: &PlaybackPrefs) -> bool {
         .any(|l| l.eq_ignore_ascii_case("original"))
 }
 
+// ───────────────────────── device profiles ─────────────────────────
+
+/// A client-supplied device profile, made safe for non-admins: bounded sizes, sane resolution /
+/// bitrate, and always able to take H.264, so a transcode can never be steered into a (software)
+/// HEVC/AV1 encode. Admins are trusted as they are. Unknown JSON fields are already ignored.
+pub(crate) fn sanitize_profile(
+    u: &reel_auth::User,
+    mut p: reel_playback::DeviceProfile,
+) -> reel_playback::DeviceProfile {
+    if u.is_admin() {
+        return p;
+    }
+    p.name = p.name.chars().take(64).collect();
+    p.containers.truncate(12);
+    p.video.truncate(12);
+    p.audio.truncate(16);
+    p.subtitles.text.truncate(8);
+    p.subtitles.image.truncate(8);
+    p.max_width = p.max_width.clamp(160, 7680);
+    p.max_height = p.max_height.clamp(120, 4320);
+    p.max_bitrate_kbps = p.max_bitrate_kbps.map(|b| b.clamp(100, 200_000));
+    if p.video_support("h264").is_none() {
+        // put H.264 (any level a client decodes) first-class: the encoder target is H.264
+        p.video.insert(
+            0,
+            reel_playback::profile::VideoCodecSupport {
+                codec: "h264".into(),
+                max_profile: Some("high".into()),
+                max_level: Some(41),
+                max_bit_depth: 8,
+                hdr: vec![],
+            },
+        );
+    }
+    p
+}
+
 // ───────────────────────── cast ─────────────────────────
 
 /// Cast URLs live this long (a long film plus pauses).

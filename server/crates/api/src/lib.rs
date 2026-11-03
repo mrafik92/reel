@@ -9,6 +9,15 @@ pub mod error;
 mod extras;
 mod iptv;
 pub mod netutil;
+
+/// Test hook for the profile sanitizer.
+#[doc(hidden)]
+pub fn sanitize_profile_for_tests(
+    u: &reel_auth::User,
+    p: reel_playback::DeviceProfile,
+) -> reel_playback::DeviceProfile {
+    prefs::sanitize_profile(u, p)
+}
 mod playback;
 pub mod prefs;
 mod requests;

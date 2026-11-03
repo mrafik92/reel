@@ -67,7 +67,7 @@ async fn env(tmdb: &MockServer, tracker: bool) -> Env {
     let db = reel_core::db::connect_url("sqlite::memory:").await.unwrap();
     let cfg = reel_core::Config {
         data_dir: dir.path().join("data"),
-        webhook_secret: Some("s3cret".into()),
+        webhook_secret: Some("s3cret-webhook-secret-0123456789abcdef".into()),
         ..Default::default()
     };
     let mut state = AppState::new(db.clone(), cfg);
@@ -572,13 +572,24 @@ async fn webhook_import_ingests_file_and_marks_available() {
         403
     );
     assert_eq!(
-        send(&e.app, "POST", &url("s3cret"), Some(json!({"nope":1})))
-            .await
-            .0,
+        send(
+            &e.app,
+            "POST",
+            &url("s3cret-webhook-secret-0123456789abcdef"),
+            Some(json!({"nope":1}))
+        )
+        .await
+        .0,
         400
     );
 
-    let (s, v) = send(&e.app, "POST", &url("s3cret"), Some(payload)).await;
+    let (s, v) = send(
+        &e.app,
+        "POST",
+        &url("s3cret-webhook-secret-0123456789abcdef"),
+        Some(payload),
+    )
+    .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["event"], "Download");
     assert_eq!(v["request_ids"], json!([rid]));
@@ -596,7 +607,7 @@ async fn webhook_import_ingests_file_and_marks_available() {
     let (s, v) = send(
         &e.app,
         "POST",
-        &url("s3cret"),
+        &url("s3cret-webhook-secret-0123456789abcdef"),
         Some(json!({"eventType":"Test"})),
     )
     .await;

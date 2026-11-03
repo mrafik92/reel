@@ -448,7 +448,7 @@ pub async fn tune(
     }
     let cast = crate::prefs::cast_ctx(&st, b.for_cast.unwrap_or(false))?;
     let profile = match (b.profile, b.preset.as_deref()) {
-        (Some(p), _) => Some(p),
+        (Some(p), _) => Some(crate::prefs::sanitize_profile(&u.user, p)),
         (None, Some(name)) => Some(DeviceProfile::preset(name).ok_or_else(|| {
             ApiError::BadRequest(format!(
                 "unknown preset '{name}' (available: {})",

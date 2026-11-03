@@ -23,6 +23,19 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(selected = hw.selected.name(), "hardware acceleration");
     let mut state = AppState::new(pool.clone(), config.clone()).with_hwaccel(hw);
     state.playback.spawn_reaper();
+    if let Some(s) = state
+        .config
+        .webhook_secret
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
+        if s.len() < 32 {
+            tracing::warn!(
+                "webhook_secret is shorter than 32 characters: Radarr/Sonarr webhooks are DISABLED \
+                 until it is longer (generate one with `openssl rand -hex 32`)"
+            );
+        }
+    }
     // signed-URL revocation epochs survive restarts
     state.auth.load_epochs().await?;
     // first boot: only the LAN (or whoever has this token) may claim the server

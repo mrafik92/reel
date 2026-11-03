@@ -134,7 +134,7 @@ pub async fn decide_playback(
 ) -> ApiResult<Json<DecideResponse>> {
     let cast = crate::prefs::cast_ctx(&st, req.for_cast.unwrap_or(false))?;
     let profile = match (req.profile, req.preset.as_deref()) {
-        (Some(p), _) => p,
+        (Some(p), _) => crate::prefs::sanitize_profile(&u.user, p),
         (None, name) => {
             let name = name.unwrap_or(if cast.is_some() {
                 "chromecast"

@@ -52,10 +52,54 @@ impl FromRequestParts<AppState> for AuthUser {
         let token = bearer(&parts.headers)
             .ok_or_else(|| ApiError::Unauthorized("authentication required".into()))?;
         let (user, session) = st.auth.authenticate(token).await?;
+        check_feature(&user, feature_of_path(parts.uri.path()))?;
         Ok(AuthUser {
             user,
             session_id: session.id,
         })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Feature {
+    Iptv,
+    Vod,
+    Requests,
+    Cast,
+}
+
+/// Which per-user permission a route needs (by path), if any.
+pub fn feature_of_path(path: &str) -> Option<Feature> {
+    let p = path.strip_prefix("/api/v1").unwrap_or(path);
+    let under = |pre: &str| p == pre.trim_end_matches('/') || p.starts_with(pre);
+    if under("/iptv/") {
+        Some(Feature::Iptv)
+    } else if under("/vod/") {
+        Some(Feature::Vod)
+    } else if under("/requests/") || under("/downloads/") || under("/discover/") {
+        Some(Feature::Requests)
+    } else if under("/cast/") {
+        Some(Feature::Cast)
+    } else {
+        None
+    }
+}
+
+/// 403 unless `user` holds the permission (admins always do).
+pub fn check_feature(user: &User, f: Option<Feature>) -> Result<(), ApiError> {
+    let (ok, what) = match f {
+        None => return Ok(()),
+        Some(Feature::Iptv) => (user.can_iptv(), "live TV"),
+        Some(Feature::Vod) => (user.can_vod(), "the VOD catalog"),
+        Some(Feature::Requests) => (user.can_request(), "requests"),
+        Some(Feature::Cast) => (user.can_cast(), "casting to TVs"),
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden(format!(
+            "your account does not have access to {what}; ask an administrator"
+        )))
     }
 }
 
@@ -181,12 +225,23 @@ impl AppState {
         q: &SignedQuery,
         scope: &str,
     ) -> ApiResult<User> {
+        let feature = if scope.starts_with("live:") {
+            Some(Feature::Iptv)
+        } else if scope.starts_with("vod:") || scope.starts_with("vodsub:") {
+            Some(Feature::Vod)
+        } else {
+            None
+        };
         if let Some(t) = bearer(headers) {
-            return Ok(self.auth.authenticate(t).await?.0);
+            let user = self.auth.authenticate(t).await?.0;
+            check_feature(&user, feature)?;
+            return Ok(user);
         }
         match (q.exp, q.u, q.sig.as_deref()) {
             (Some(exp), Some(u), Some(sig)) => {
-                Ok(self.auth.verify_signature(scope, u, exp, sig).await?)
+                let user = self.auth.verify_signature(scope, u, exp, sig).await?;
+                check_feature(&user, feature)?;
+                Ok(user)
             }
             _ => Err(ApiError::Unauthorized(
                 "authentication required (token or signed URL)".into(),

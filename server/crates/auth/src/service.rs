@@ -872,7 +872,13 @@ impl AuthService {
                 .await?;
         }
         tx.commit().await?;
-        if hash.is_some() || p.disabled == Some(true) {
+        let lost_perm = p.perms.is_some_and(|n| {
+            (cur.perms.iptv_access && !n.iptv_access)
+                || (cur.perms.vod_access && !n.vod_access)
+                || (cur.perms.can_cast && !n.can_cast)
+        });
+        // links already handed out must not outlive the access they were issued under
+        if hash.is_some() || p.disabled == Some(true) || lost_perm {
             self.bump_epoch(id).await?;
         }
         self.get_user(id).await?.ok_or(AuthError::NotFound)

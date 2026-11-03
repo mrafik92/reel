@@ -595,3 +595,305 @@ async fn forwarded_headers_are_ignored_unless_the_peer_is_a_trusted_proxy() {
         "203.0.113.50"
     );
 }
+
+// ───────────── permissions / requests / webhook / profiles ─────────────
+
+fn authed_as(e: &Env, token: &str) -> Router {
+    common::with_token(e.raw.clone(), token)
+}
+
+async fn api(app: &Router, m: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+    call(app, "192.168.1.2", m, uri, body, &[]).await
+}
+
+#[tokio::test]
+async fn invited_users_start_without_live_tv_vod_requests_or_casting_until_an_admin_grants_them() {
+    let e = env_with(|_| {}, opts(100, 100), true).await;
+    let admin_tok = e
+        .state
+        .auth
+        .login("admin", PW, dev("192.168.1.2"))
+        .await
+        .unwrap()
+        .token;
+    let admin = authed_as(&e, &admin_tok);
+    // an invite without explicit limits/permissions: conservative limits, no feature access
+    let (s, inv) = api(&admin, "POST", "/api/v1/admin/invites", Some(json!({}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{inv}");
+    assert_eq!(
+        inv["permissions"],
+        json!({"iptv_access": false, "vod_access": false, "can_request": false, "can_cast": false})
+    );
+    assert_eq!(inv["limits"]["max_streams"], 2);
+    assert_eq!(inv["limits"]["max_transcodes"], 1);
+    assert_eq!(inv["limits"]["max_bitrate_kbps"], 8000);
+    assert!(inv["limits"]["request_quota_movies"].as_i64().unwrap() > 0);
+    let code = inv["code"].as_str().unwrap();
+    let (s, v) = api(
+        &e.raw,
+        "POST",
+        &format!("/api/v1/auth/invite/{code}/accept"),
+        Some(json!({"username":"newbie","password":PW})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let tok = v["token"].as_str().unwrap().to_string();
+    let uid = v["user"]["id"].as_i64().unwrap();
+    assert_eq!(v["user"]["permissions"]["iptv_access"], false);
+    let user = authed_as(&e, &tok);
+    for (m, uri) in [
+        ("GET", "/api/v1/iptv/channels"),
+        ("GET", "/api/v1/iptv/groups"),
+        ("GET", "/api/v1/vod/movies"),
+        ("GET", "/api/v1/requests"),
+        ("GET", "/api/v1/discover/trending"),
+        ("GET", "/api/v1/downloads"),
+        ("GET", "/api/v1/cast/devices"),
+    ] {
+        let (s, v) = api(&user, m, uri, None).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{uri}: {v}");
+    }
+    // normal things still work, and search quietly leaves out the gated sections
+    assert_eq!(
+        api(&user, "GET", "/api/v1/me", None).await.0,
+        StatusCode::OK
+    );
+    let (s, v) = api(&user, "GET", "/api/v1/search/all?q=matrix", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["discover"], json!([]));
+    assert_eq!(v["vod"], json!([]));
+    // an admin grants exactly what they want
+    let (s, v) = api(&admin, "PATCH", &format!("/api/v1/admin/users/{uid}"), Some(json!({"permissions": {"iptv_access": true, "vod_access": false, "can_request": true, "can_cast": true}}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["permissions"]["can_cast"], true);
+    assert_eq!(
+        api(&user, "GET", "/api/v1/iptv/channels", None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        api(&user, "GET", "/api/v1/requests", None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        api(&user, "GET", "/api/v1/cast/devices", None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        api(&user, "GET", "/api/v1/vod/movies", None).await.0,
+        StatusCode::FORBIDDEN
+    );
+    // admins are never gated; the device list admin endpoint stays admin-only
+    assert_eq!(
+        api(&admin, "GET", "/api/v1/vod/movies", None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        api(
+            &user,
+            "POST",
+            "/api/v1/admin/cast/devices",
+            Some(json!({"ip": "127.0.0.1"}))
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    // accounts an admin creates directly / pre-existing users keep IPTV, VOD and requests; casting is opt-in
+    e.state
+        .auth
+        .create_user(reel_auth::NewUser {
+            username: "oldtimer".into(),
+            password: PW.into(),
+            role: reel_auth::Role::User,
+            limits: Default::default(),
+            library_ids: vec![],
+        })
+        .await
+        .unwrap();
+    let t = e
+        .state
+        .auth
+        .login("oldtimer", PW, dev("192.168.1.2"))
+        .await
+        .unwrap()
+        .token;
+    let old = authed_as(&e, &t);
+    assert_eq!(
+        api(&old, "GET", "/api/v1/iptv/channels", None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        api(&old, "GET", "/api/v1/vod/movies", None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        api(&old, "GET", "/api/v1/cast/devices", None).await.0,
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn webhooks_need_a_long_secret_accept_header_and_basic_auth_reject_dotdot_paths_and_lock_out_guessers()
+ {
+    let long = "w".repeat(40);
+    let cfg = |c: &mut reel_core::Config| c.webhook_secret = Some("w".repeat(40));
+    let e = env_with(cfg, opts(100, 100), true).await;
+    let hook = |headers: &[(&str, &str)], q: &str, peer: &str, body: Value| {
+        let raw = e.raw.clone();
+        let headers: Vec<(String, String)> = headers
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        let q = q.to_string();
+        let peer = peer.to_string();
+        async move {
+            let h: Vec<(&str, &str)> = headers
+                .iter()
+                .map(|(a, b)| (a.as_str(), b.as_str()))
+                .collect();
+            call(
+                &raw,
+                &peer,
+                "POST",
+                &format!("/api/v1/webhooks/arr{q}"),
+                Some(body),
+                &h,
+            )
+            .await
+        }
+    };
+    let test = json!({"eventType": "Test"});
+    let basic = {
+        use base64::Engine;
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("radarr:{long}"))
+        )
+    };
+    assert_eq!(
+        hook(&[("x-reel-token", &long)], "", "10.0.0.5", test.clone())
+            .await
+            .0,
+        StatusCode::OK,
+        "header"
+    );
+    assert_eq!(
+        hook(&[("authorization", &basic)], "", "10.0.0.5", test.clone())
+            .await
+            .0,
+        StatusCode::OK,
+        "basic"
+    );
+    assert_eq!(
+        hook(
+            &[("authorization", &format!("Bearer {long}"))],
+            "",
+            "10.0.0.5",
+            test.clone()
+        )
+        .await
+        .0,
+        StatusCode::OK,
+        "bearer"
+    );
+    assert_eq!(
+        hook(&[], &format!("?token={long}"), "10.0.0.5", test.clone())
+            .await
+            .0,
+        StatusCode::OK,
+        "query (deprecated)"
+    );
+    assert_eq!(
+        hook(&[("x-reel-token", "short")], "", "10.0.0.5", test.clone())
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    // a prefix / different length never matches (and says nothing about the length)
+    assert_eq!(
+        hook(
+            &[("x-reel-token", &long[..39])],
+            "",
+            "10.0.0.5",
+            test.clone()
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    // `..` paths are ignored, never scanned
+    let evil = json!({"eventType": "Download", "movie": {"id": 1, "tmdbId": 603, "title": "x"}, "movieFile": {"path": "/media/../etc/passwd"}});
+    let (s, v) = hook(&[("x-reel-token", &long)], "", "10.0.0.5", evil).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["scanned_paths"], json!([]));
+    // guessing is locked out per address (valid callers elsewhere are unaffected)
+    for _ in 0..12 {
+        let _ = hook(
+            &[("x-reel-token", "guess")],
+            "",
+            "203.0.113.77",
+            test.clone(),
+        )
+        .await;
+    }
+    assert_eq!(
+        hook(&[("x-reel-token", &long)], "", "203.0.113.77", test.clone())
+            .await
+            .0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        hook(&[("x-reel-token", &long)], "", "10.0.0.5", test.clone())
+            .await
+            .0,
+        StatusCode::OK
+    );
+    // a secret shorter than 32 characters keeps webhooks off
+    let e2 = env_with(
+        |c| c.webhook_secret = Some("tooshort".into()),
+        opts(100, 100),
+        true,
+    )
+    .await;
+    let (s, v) = call(
+        &e2.raw,
+        "10.0.0.5",
+        "POST",
+        "/api/v1/webhooks/arr",
+        Some(test),
+        &[("x-reel-token", "tooshort")],
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    assert!(v["error"].as_str().unwrap().contains("at least 32"), "{v}");
+}
+
+#[test]
+fn client_supplied_device_profiles_cannot_force_a_hevc_encode_for_non_admins() {
+    // exercised through the preset/profile parser used by decide: an HEVC-only profile gets H.264 added
+    let mk = |role| reel_auth::User {
+        id: 2,
+        username: "u".into(),
+        role,
+        disabled: false,
+        created_at: 0,
+        limits: Default::default(),
+        perms: reel_auth::Permissions::all(),
+    };
+    let mut p = reel_playback::DeviceProfile::preset("tizen").unwrap();
+    p.video.retain(|v| v.codec == "hevc");
+    p.max_width = 99_999;
+    p.max_height = 99_999;
+    let s = reel_api::sanitize_profile_for_tests(&mk(reel_auth::Role::User), p.clone());
+    assert!(
+        s.video_support("h264").is_some(),
+        "H.264 is always a target"
+    );
+    assert_eq!(s.video[0].codec, "h264");
+    assert!(s.max_width <= 7680 && s.max_height <= 4320);
+    let a = reel_api::sanitize_profile_for_tests(&mk(reel_auth::Role::Admin), p);
+    assert!(
+        a.video_support("h264").is_none(),
+        "admins are trusted as they are"
+    );
+}
