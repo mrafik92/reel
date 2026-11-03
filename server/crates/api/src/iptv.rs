@@ -815,8 +815,12 @@ pub struct EpgSourceDto {
     pub channels: i64,
     /// Programmes stored from this guide.
     pub programmes: i64,
-    /// This source's channels linked to a channel of this guide.
+    /// This source's channels that end up using a channel of this guide (the earliest guide that
+    /// has programmes for a channel supplies it).
     pub matched: i64,
+    /// This source's channels that have a name/id match in this guide, even if an earlier guide
+    /// supplies them.
+    pub available: i64,
     pub last_error: Option<String>,
     pub last_at: Option<i64>,
 }
@@ -830,6 +834,7 @@ async fn epg_sources(st: &AppState, s: &Source) -> Vec<EpgSourceDto> {
         channels: r.channels,
         programmes: r.programmes,
         matched: r.matched,
+        available: r.available,
         last_error: r.last_error.as_deref().map(reel_iptv::net::redact_text),
         last_at: r.last_at,
     };
@@ -850,6 +855,7 @@ async fn epg_sources(st: &AppState, s: &Source) -> Vec<EpgSourceDto> {
                     channels: 0,
                     programmes: 0,
                     matched: 0,
+                    available: 0,
                     last_error: None,
                     last_at: None,
                 })

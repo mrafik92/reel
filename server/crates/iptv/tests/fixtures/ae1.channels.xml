@@ -1,0 +1,48 @@
+<channel id="MBC.2.ae">
+    <display-name lang="en">MBC 2</display-name>
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-43636.png" />
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-43636.png" />
+    <url>http://www.sat.tv</url>
+  </channel>
+<channel id="Al.Jazeera.Documentary.HD.ae">
+    <display-name lang="en">Al Jazeera Documentary HD</display-name>
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-298.png" />
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-298.png" />
+    <url>http://www.sat.tv</url>
+  </channel>
+<channel id="beIN.Sports.HD.ae">
+    <display-name lang="en">beIN Sports HD</display-name>
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-300.png" />
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-300.png" />
+    <url>http://www.sat.tv</url>
+  </channel>
+<channel id="beIN.Sports.News.ae">
+    <display-name lang="en">beIN Sports News</display-name>
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-301.png" />
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-301.png" />
+    <url>http://www.sat.tv</url>
+  </channel>
+<channel id="Al.Jazeera.HD.ae">
+    <display-name lang="en">Al Jazeera HD</display-name>
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-303.png" />
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-303.png" />
+    <url>http://www.sat.tv</url>
+  </channel>
+<channel id="Al.Jazeera.Mobasher.HD.ae">
+    <display-name lang="en">Al Jazeera Mobasher HD</display-name>
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-5953.png" />
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-5953.png" />
+    <url>http://www.sat.tv</url>
+  </channel>
+<channel id="Al.Jazeera.Mobasher.2.HD.ae">
+    <display-name lang="en">Al Jazeera Mobasher 2 HD</display-name>
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-125.png" />
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-125.png" />
+    <url>http://www.sat.tv</url>
+  </channel>
+<channel id="Al.Jazeera.English.HD.ae">
+    <display-name lang="en">Al Jazeera English HD</display-name>
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-304.png" />
+    <icon src="https://www.sat.tv/wp-content/themes/twentytwenty-child/data_lineups/nilesat/images1/ecl-304.png" />
+    <url>http://www.sat.tv</url>
+  </channel>

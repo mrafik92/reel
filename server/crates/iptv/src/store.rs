@@ -94,13 +94,14 @@ pub struct GuideStat {
     pub channels: i64,
     pub programmes: i64,
     pub matched: i64,
+    pub available: i64,
     pub last_error: Option<String>,
     pub last_at: Option<i64>,
 }
 
 pub async fn guide_stats(pool: &SqlitePool, source_id: i64) -> Result<Vec<GuideStat>> {
     let rows = sqlx::query(
-        "SELECT url, provider, channels, programmes, matched, last_error, last_at \
+        "SELECT url, provider, channels, programmes, matched, available, last_error, last_at \
          FROM iptv_epg_sources WHERE source_id = ? ORDER BY rank",
     )
     .bind(source_id)
@@ -114,6 +115,7 @@ pub async fn guide_stats(pool: &SqlitePool, source_id: i64) -> Result<Vec<GuideS
             channels: r.get("channels"),
             programmes: r.get("programmes"),
             matched: r.get("matched"),
+            available: r.get("available"),
             last_error: r.get("last_error"),
             last_at: r.get("last_at"),
         })

@@ -1,0 +1,12 @@
+<channel id="AlJazeera.Arabic.net">
+    <display-name lang="en">AlJazeera Arabic</display-name>
+    <icon src="http://www.aljazeera.com/mritems/assets/images/aj-logo-lg.png" />
+    <icon src="http://www.aljazeera.com/mritems/assets/images/aj-logo-lg.png" />
+    <url>http://www.aljazeera.com</url>
+  </channel>
+<channel id="AlJazeera.English.net">
+    <display-name lang="en">AlJazeera English</display-name>
+    <icon src="http://www.aljazeera.com/mritems/assets/images/aj-logo-lg.png" />
+    <icon src="http://www.aljazeera.com/mritems/assets/images/aj-logo-lg.png" />
+    <url>http://www.aljazeera.com</url>
+  </channel>

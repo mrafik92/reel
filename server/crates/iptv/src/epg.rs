@@ -36,7 +36,7 @@ const NOISE: &[&str] = &[
 /// `"BBC One"` and `"bbc-one fhd"` collide. A `+1`-style timeshift suffix is kept (`plus1`) so
 /// `"Channel 4 +1"` never collides with `"Channel 4"` or `"Channel 41"`. Arabic and Latin names
 /// are both supported (letters unified, digits ASCII).
-pub fn norm_name(name: &str) -> String {
+fn tokens_of(name: &str) -> Vec<String> {
     let s = fold(name).replace("h.265", " ").replace("h.264", " ");
     // `+1` / `+24` timeshift → a word of its own; drop (...) and [...] groups
     let mut out = String::with_capacity(s.len());
@@ -76,27 +76,106 @@ pub fn norm_name(name: &str) -> String {
             tokens.remove(0);
         }
     }
-    tokens.retain(|t| !NOISE.contains(&t.as_str()));
-    tokens.join("")
+    // leading zeros of numbers ("XTRA 04" = "XTRA 4"), common spelling variants
+    for t in tokens.iter_mut() {
+        if t.len() > 1 && t.chars().all(|c| c.is_ascii_digit()) && t.starts_with('0') {
+            let n = t.trim_start_matches('0');
+            *t = if n.is_empty() { "0".into() } else { n.into() };
+        }
+        if t == "mubasher" {
+            *t = "mobasher".into();
+        }
+    }
+    tokens
+}
+
+pub fn norm_name(name: &str) -> String {
+    let mut t = tokens_of(name);
+    t.retain(|t| !NOISE.contains(&t.as_str()));
+    t.join("")
 }
 
 /// Key of an XMLTV channel *id*. epgshare-style ids are dotted names with the country as the last
 /// label (`MBC.2.ae`, `beIN.Sports.1.HD.qa`, `Sky.Sports.Main.Event.uk`): the TLD is dropped and the
 /// rest normalised like a name. Other ids are normalised as names.
 pub fn norm_id(id: &str) -> String {
+    norm_name(&strip_tld(id))
+}
+
+/// Country / feed suffix of a dotted id: `.ae`, `.uk`, `.net`, `.com`, `.bein`.
+fn strip_tld(id: &str) -> String {
     let t = id.trim();
     if t.contains(char::is_whitespace) || !t.contains('.') {
-        return norm_name(t);
+        return t.to_string();
     }
     let mut parts: Vec<&str> = t.split('.').filter(|p| !p.is_empty()).collect();
-    if parts.len() >= 2
-        && parts
-            .last()
-            .is_some_and(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_alphabetic()))
-    {
-        parts.pop();
+    if parts.len() >= 2 {
+        let last = parts[parts.len() - 1].to_lowercase();
+        let alpha = last.chars().all(|c| c.is_ascii_alphabetic());
+        if alpha
+            && (last.len() == 2
+                || ["net", "com", "org", "tv", "bein", "info"].contains(&last.as_str()))
+        {
+            parts.pop();
+        }
     }
-    norm_name(&parts.join(" "))
+    parts.join(" ")
+}
+
+/// Words that only describe the feed in guide ids (`beIN_SPORTS1_DIGITAL_Mono_AR`).
+const GUIDE_NOISE: &[&str] = &[
+    "digital", "mono", "stereo", "new", "logos", "com", "net", "www",
+];
+
+/// Aggressive key of a guide channel (id or display-name): feed words, a trailing `AR`/`EN` language
+/// tag and repeated words dropped.
+fn reduce(s: &str, is_id: bool) -> String {
+    let src = if is_id { strip_tld(s) } else { s.to_string() };
+    let mut t: Vec<String> = tokens_of(&src)
+        .into_iter()
+        .filter(|t| !NOISE.contains(&t.as_str()) && !GUIDE_NOISE.contains(&t.as_str()))
+        .collect();
+    if t.len() > 1 && t.last().is_some_and(|l| l == "ar" || l == "en") {
+        t.pop();
+    }
+    let mut seen: Vec<String> = vec![];
+    for x in t {
+        if !seen.contains(&x) {
+            seen.push(x);
+        }
+    }
+    seen.join("")
+}
+
+/// Every key a guide channel can be found under: the names as written, the id, the reduced forms,
+/// and (last) a number-less alias for `…1` channels (`beIN SPORTS XTRA` → `XTRA 1`).
+pub fn guide_keys(id: &str, names: &[String]) -> Vec<String> {
+    fn push(out: &mut Vec<String>, k: String) {
+        if !k.is_empty() && !out.contains(&k) {
+            out.push(k);
+        }
+    }
+    let mut out = vec![];
+    for n in names {
+        push(&mut out, norm_name(n));
+    }
+    push(&mut out, norm_id(id));
+    let reduced: Vec<String> = names
+        .iter()
+        .map(|n| reduce(n, false))
+        .chain(std::iter::once(reduce(id, true)))
+        .collect();
+    for r in &reduced {
+        push(&mut out, r.clone());
+    }
+    for r in &reduced {
+        if let Some(base) = r.strip_suffix('1') {
+            if base.len() >= 3 && base.chars().last().is_some_and(char::is_alphabetic) {
+                push(&mut out, base.to_string());
+            }
+        }
+    }
+    out
 }
 
 /// Order-insensitive variant (`"One BBC"` ≈ `"BBC One"`).
@@ -111,10 +190,19 @@ pub fn token_key(name: &str) -> String {
     parts.join("")
 }
 
-/// Recompute `channels.epg_channel_id` for channels without a manual override:
-/// exact `tvg-id` match first, then normalised-name match. Returns the number of channels
-/// that now have a mapping.
-pub async fn map_channels(pool: &SqlitePool) -> Result<usize> {
+/// A channel of ours with every guide channel it could be linked to, best first: an exact
+/// `tvg-id`, then name matches ordered by guide precedence (rank), then guide order.
+pub struct ChanCands {
+    pub id: i64,
+    pub source_id: i64,
+    pub enabled: bool,
+    pub manual: bool,
+    pub tvg_id: Option<String>,
+    pub current: Option<String>,
+    pub cands: Vec<String>,
+}
+
+pub async fn candidates(pool: &SqlitePool) -> Result<Vec<ChanCands>> {
     let by_id: HashMap<String, String> =
         sqlx::query_as::<_, (String,)>("SELECT id FROM epg_channels")
             .fetch_all(pool)
@@ -122,10 +210,7 @@ pub async fn map_channels(pool: &SqlitePool) -> Result<usize> {
             .into_iter()
             .map(|(id,)| (id.to_lowercase(), id))
             .collect();
-    if by_id.is_empty() {
-        return Ok(0);
-    }
-    let mut by_name: HashMap<String, String> = HashMap::new();
+    let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
     for (n, id) in sqlx::query_as::<_, (String, String)>(
         "SELECT n.norm_name, n.epg_id FROM epg_channel_names n \
          JOIN epg_channels c ON c.id = n.epg_id ORDER BY c.rank, n.rowid",
@@ -133,31 +218,123 @@ pub async fn map_channels(pool: &SqlitePool) -> Result<usize> {
     .fetch_all(pool)
     .await?
     {
-        by_name.entry(n).or_insert(id);
+        let v = by_name.entry(n).or_default();
+        if !v.contains(&id) {
+            v.push(id);
+        }
     }
-    type Row = (i64, String, Option<String>, Option<String>, Option<String>);
+    type Row = (
+        i64,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        i64,
+        i64,
+    );
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT id, name, tvg_id, tvg_name, epg_channel_id FROM channels \
-         WHERE epg_manual = 0 AND missing = 0",
+        "SELECT id, source_id, name, tvg_id, tvg_name, epg_channel_id, epg_manual, enabled \
+         FROM channels WHERE missing = 0",
     )
     .fetch_all(pool)
     .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for (id, source_id, name, tvg_id, tvg_name, current, manual, enabled) in rows {
+        let mut cands: Vec<String> = vec![];
+        let mut add = |c: &String| {
+            if !cands.contains(c) {
+                cands.push(c.clone());
+            }
+        };
+        if let Some(c) = tvg_id.as_deref().and_then(|t| by_id.get(&t.to_lowercase())) {
+            add(c);
+        }
+        for key in [Some(norm_name(&name)), tvg_name.as_deref().map(norm_name)]
+            .into_iter()
+            .flatten()
+        {
+            if let Some(v) = by_name.get(&key) {
+                v.iter().for_each(&mut add);
+            }
+        }
+        out.push(ChanCands {
+            id,
+            source_id,
+            enabled: enabled != 0,
+            manual: manual != 0,
+            tvg_id,
+            current,
+            cands,
+        });
+    }
+    Ok(out)
+}
+
+/// Guide channel ids whose programmes are worth storing: every candidate of every enabled channel
+/// (the final choice is made once all guides are in), plus tvg-ids and manual links.
+pub async fn wanted_ids(pool: &SqlitePool) -> Result<std::collections::HashSet<String>> {
+    let mut w = std::collections::HashSet::new();
+    for c in candidates(pool).await?.into_iter().filter(|c| c.enabled) {
+        w.extend(c.cands);
+        w.extend(c.tvg_id);
+        w.extend(c.current);
+    }
+    Ok(w)
+}
+
+/// Guide channels that were stored only as alternatives: name candidates of some channel that no
+/// channel ended up using (neither as its mapping nor as its tvg-id).
+pub async fn unused_candidates(pool: &SqlitePool) -> Result<Vec<String>> {
+    let rows = candidates(pool).await?;
+    let used: std::collections::HashSet<&String> = rows
+        .iter()
+        .flat_map(|c| c.current.iter().chain(c.tvg_id.iter()))
+        .collect();
+    let mut out: Vec<String> = rows
+        .iter()
+        .flat_map(|c| c.cands.iter())
+        .filter(|id| !used.contains(id))
+        .cloned()
+        .collect();
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// Recompute `channels.epg_channel_id` for channels without a manual override: among the
+/// candidates, the first (best guide) that actually has programmes stored; with none stored yet,
+/// the first. Returns the number of channels that now have a mapping.
+pub async fn map_channels(pool: &SqlitePool) -> Result<usize> {
+    let has_epg: i64 = sqlx::query_scalar("SELECT count(*) FROM epg_channels")
+        .fetch_one(pool)
+        .await?;
+    if has_epg == 0 {
+        return Ok(0);
+    }
+    let with_data: std::collections::HashSet<String> =
+        sqlx::query_scalar::<_, String>("SELECT DISTINCT channel_tvg_id FROM epg_programs")
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .collect();
+    let rows = candidates(pool).await?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let mut mapped = 0;
-    for (id, name, tvg_id, tvg_name, current) in rows {
-        let found = tvg_id
-            .as_deref()
-            .and_then(|t| by_id.get(&t.to_lowercase()))
-            .or_else(|| by_name.get(&norm_name(&name)))
-            .or_else(|| tvg_name.as_deref().and_then(|n| by_name.get(&norm_name(n))))
+    for c in rows.into_iter().filter(|c| !c.manual) {
+        let found = c
+            .cands
+            .iter()
+            .find(|x| with_data.contains(*x))
+            .or_else(|| c.cands.first())
             .cloned();
         if found.is_some() {
             mapped += 1;
         }
-        if found != current {
+        if found != c.current {
             sqlx::query("UPDATE channels SET epg_channel_id = ? WHERE id = ?")
                 .bind(&found)
-                .bind(id)
+                .bind(c.id)
                 .execute(&mut *tx)
                 .await?;
         }

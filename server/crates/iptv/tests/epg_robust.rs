@@ -288,7 +288,7 @@ async fn bad_guides_are_reported_never_as_success() {
             )
             .into_bytes(),
             "text/xml",
-            "none belong to your channels",
+            "match your channels by id or name",
         ),
     ];
     let src = store::get_source(&pool, sid).await.unwrap();

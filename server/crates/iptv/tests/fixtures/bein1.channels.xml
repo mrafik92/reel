@@ -1,0 +1,320 @@
+<channel id="4K-HDR-200x200-1_AR.bein">
+    <display-name lang="en">4K-HDR-200x200-1_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="4K-HDR-200x200-1_EN.bein">
+    <display-name lang="en">4K-HDR-200x200-1_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="4k_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">4k_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="4k_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">4k_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="Alkass_1_AR.bein">
+    <display-name lang="en">Alkass_1_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="Alkass_1_EN.bein">
+    <display-name lang="en">Alkass_1_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="Alkass_2_AR.bein">
+    <display-name lang="en">Alkass_2_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="Alkass_2_EN.bein">
+    <display-name lang="en">Alkass_2_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="Alkass_3_AR.bein">
+    <display-name lang="en">Alkass_3_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="Alkass_3_EN.bein">
+    <display-name lang="en">Alkass_3_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="Alkass_4_AR.bein">
+    <display-name lang="en">Alkass_4_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="Alkass_4_EN.bein">
+    <display-name lang="en">Alkass_4_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="Alkass_5_AR.bein">
+    <display-name lang="en">Alkass_5_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="Alkass_5_EN.bein">
+    <display-name lang="en">Alkass_5_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="Alkass_6_AR.bein">
+    <display-name lang="en">Alkass_6_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="Alkass_6_EN.bein">
+    <display-name lang="en">Alkass_6_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="Alkass_7_AR.bein">
+    <display-name lang="en">Alkass_7_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="Alkass_7_EN.bein">
+    <display-name lang="en">Alkass_7_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="Alkass_8_AR.bein">
+    <display-name lang="en">Alkass_8_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="Alkass_8_EN.bein">
+    <display-name lang="en">Alkass_8_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="NEWS_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">NEWS_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="NEWS_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">NEWS_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="NEW_beIN-SPORTS-MAX-05_AR.bein">
+    <display-name lang="en">NEW_beIN-SPORTS-MAX-05_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="NEW_beIN-SPORTS-MAX-06_AR.bein">
+    <display-name lang="en">NEW_beIN-SPORTS-MAX-06_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS1_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS1_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS1_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS1_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS1_ENGLISH_Digital_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS1_ENGLISH_Digital_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS1_ENGLISH_Digital_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS1_ENGLISH_Digital_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS1_FRENCH_Digital_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS1_FRENCH_Digital_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS1_FRENCH_Digital_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS1_FRENCH_Digital_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS2_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS2_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS2_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS2_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS2_ENGLISH_Digital_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS2_ENGLISH_Digital_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS2_ENGLISH_Digital_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS2_ENGLISH_Digital_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS2_FRENCH_Digital_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS2_FRENCH_Digital_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS2_FRENCH_Digital_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS2_FRENCH_Digital_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS3_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS3_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS3_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS3_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS4_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS4_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS4_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS4_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS5_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS5_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS5_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS5_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS66_DIGITAL_Mono-01_EN.bein">
+    <display-name lang="en">beIN_SPORTS66_DIGITAL_Mono-01_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS6_DIGITAL_Mono-d-1_AR.bein">
+    <display-name lang="en">beIN_SPORTS6_DIGITAL_Mono-d-1_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS7_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS7_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS7_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS7_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_MAX1_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS_MAX1_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS_MAX1_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS_MAX1_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_MAX2_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS_MAX2_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS_MAX2_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS_MAX2_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_MAX3_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS_MAX3_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS_MAX3_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS_MAX3_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_MAX4_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS_MAX4_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS_MAX4_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS_MAX4_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_MAX5_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS_MAX5_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_MAX6_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS_MAX6_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA1_Digital_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA1_Digital_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA1_Digital_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA1_Digital_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA2_Digital_Mono_AR.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA2_Digital_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA2_Digital_Mono_EN.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA2_Digital_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA_04_bein.com_AR.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA_04_bein.com_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA_04_bein.com_EN.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA_04_bein.com_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA_05_bein.com_AR.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA_05_bein.com_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA_05_bein.com_EN.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA_05_bein.com_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA_06_bein.com_AR.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA_06_bein.com_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA_06_bein.com_EN.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA_06_bein.com_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA_07_bein.com_AR.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA_07_bein.com_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA_07_bein.com_EN.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA_07_bein.com_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA_08_Bein.com_AR.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA_08_Bein.com_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA_08_Bein.com_EN.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA_08_Bein.com_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA_Digital_09_Bein.com_AR.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA_Digital_09_Bein.com_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="beIN_SPORTS_XTRA_Digital_09_Bein.com_EN.bein">
+    <display-name lang="en">beIN_SPORTS_XTRA_Digital_09_Bein.com_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="bein_SPORTS_FTA_DIGITAL_Mono_AR.bein">
+    <display-name lang="en">bein_SPORTS_FTA_DIGITAL_Mono_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="bein_SPORTS_FTA_DIGITAL_Mono_EN.bein">
+    <display-name lang="en">bein_SPORTS_FTA_DIGITAL_Mono_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="logos-_beINSPORTS8_AR.bein">
+    <display-name lang="en">logos-_beINSPORTS8_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="logos-_beINSPORTS8_EN.bein">
+    <display-name lang="en">logos-_beINSPORTS8_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="logos-_beINSPORTS9_AR.bein">
+    <display-name lang="en">logos-_beINSPORTS9_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="logos-_beINSPORTS9_EN.bein">
+    <display-name lang="en">logos-_beINSPORTS9_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
+<channel id="logos-_beINSPORTSXTRA3_AR.bein">
+    <display-name lang="en">logos-_beINSPORTSXTRA3_AR</display-name>
+    <url>http://www.bein.com_sports_ar</url>
+  </channel>
+<channel id="logos-_beINSPORTSXTRA3_EN.bein">
+    <display-name lang="en">logos-_beINSPORTSXTRA3_EN</display-name>
+    <url>http://www.bein.com_sports_en</url>
+  </channel>
