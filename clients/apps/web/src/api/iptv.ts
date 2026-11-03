@@ -26,6 +26,8 @@ export interface EpgSourceStat {
   channels: number;
   programmes: number;
   matched: number;
+  /** Channels with a match in this guide even if an earlier guide supplies them (newer servers). */
+  available?: number | null;
   last_error?: string | null;
   last_at?: number | null;
 }

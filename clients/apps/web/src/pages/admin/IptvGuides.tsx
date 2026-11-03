@@ -87,6 +87,11 @@ function StatLine(props: { stat?: EpgSourceStat; pending?: boolean }): JSX.Eleme
           fallback={<><Icon name="alert" /> {friendlyGuideError(st()!.last_error!)}</>}
         >
           {st()!.programmes.toLocaleString()} programmes · {st()!.matched.toLocaleString()} channels matched
+          <Show when={(st()!.available ?? 0) > st()!.matched}>
+            <span class="guide-row__avail" title="Channels this guide also covers, but an earlier guide in the list supplies them">
+              {" "}({st()!.available!.toLocaleString()} covered — move up to use it for more)
+            </span>
+          </Show>
           <Show when={st()!.channels}> · {st()!.channels.toLocaleString()} guide channels</Show>
         </Show>
         <Show when={st()!.last_at}><span class="guide-row__when">· {timeAgo(st()!.last_at!)}</span></Show>
