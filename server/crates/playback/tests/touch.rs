@@ -28,6 +28,8 @@ fn req() -> StartRequest {
             subtitle_index: None,
         },
         start_position_s: 0.0,
+        user_max_streams: None,
+        user_max_transcodes: None,
     }
 }
 

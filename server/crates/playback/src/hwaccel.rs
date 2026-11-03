@@ -165,11 +165,12 @@ async fn test_encode(ffmpeg: &str, hw: &HwAccel) -> Result<(), String> {
     if out.status.success() {
         Ok(())
     } else {
-        Err(String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .last()
-            .unwrap_or("failed")
-            .to_string())
+        Err(crate::redact::redact_text(
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .last()
+                .unwrap_or("failed"),
+        ))
     }
 }
 

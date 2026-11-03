@@ -119,6 +119,8 @@ fn request(path: &Path, encode: bool) -> StartRequest {
         streams,
         decision,
         start_position_s: 86.9,
+        user_max_streams: None,
+        user_max_transcodes: None,
     }
 }
 

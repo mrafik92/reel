@@ -1042,9 +1042,19 @@ async fn probe_cached(
         .user_agent
         .clone()
         .unwrap_or_else(|| reel_iptv::net::DEFAULT_UA.to_string());
+    // the provider URL never reaches the subprocess: ffprobe reads through the loopback proxy,
+    // under the shared ffmpeg process budget
+    let media = st.playback.media();
+    let _slot = media
+        .proc(Duration::from_secs(30))
+        .await
+        .map_err(ApiError::from)?;
+    let (probe_input, _lease) = media
+        .proxied_input(&target.url, &ua, Duration::from_secs(120))
+        .map_err(ApiError::from)?;
     let pr = reel_scanner::probe::probe_url(
         &ffprobe_path(st),
-        &target.url,
+        &probe_input,
         &ua,
         Some(&target.container),
         Duration::from_secs(40),
@@ -1333,6 +1343,8 @@ async fn vod_play_inner(
             streams: streams.clone(),
             decision: decision.clone(),
             start_position_s: req.start_s.unwrap_or(0.0).max(0.0),
+            user_max_streams: limits.max_streams.and_then(|v| usize::try_from(v).ok()),
+            user_max_transcodes: limits.max_transcodes.and_then(|v| usize::try_from(v).ok()),
         })
         .await?;
     let sg = st.signer(u.id());
@@ -1630,7 +1642,8 @@ pub async fn vod_subs(
         ));
     }
     st.playback.touch_session(&sid);
-    let out = reel_playback::subtitles::to_vtt(
+    let out = reel_playback::subtitles::to_vtt_with(
+        st.playback.media(),
         &st.playback.config().ffmpeg_path,
         &reel_playback::subtitles::SubtitleSource::Embedded {
             path: vs.url.clone(),

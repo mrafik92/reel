@@ -9,8 +9,10 @@ use crate::ffmpeg::{self, BuildParams, BurnIn, INIT_NAME};
 use crate::fmp4;
 use crate::hwaccel::HwAccel;
 use crate::hwaccel::HwAccelStatus;
+use crate::media::{MediaCtx, ProcPermit};
 use crate::model::{FileInfo, Hdr, StreamInfo, StreamKind};
 use crate::plan::{self, SegmentPlan};
+use crate::redact::redact_text;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -58,6 +60,19 @@ pub struct SessionConfig {
     /// A HW-backed ffmpeg failing within this window before producing output triggers the
     /// software fallback.
     pub hw_startup_grace: Duration,
+    /// Global budget of concurrent ffmpeg/ffprobe processes: every transcode *and remux* session,
+    /// subtitle extraction and remote probe counts. 0 = default (6).
+    pub max_ffmpeg_processes: usize,
+    /// Disk budget of one session's scratch directory (older segments behind the playhead are
+    /// dropped when exceeded).
+    pub max_session_disk_bytes: u64,
+    /// Disk budget of `data_dir/transcode` as a whole: idle sessions are evicted oldest-first,
+    /// new transcodes are refused (503) while still over budget. 0 = unlimited.
+    pub max_total_disk_bytes: u64,
+    /// Sessions idle for at least this long may be evicted to free scratch space.
+    pub disk_evict_min_idle: Duration,
+    /// Lifetime of upstream-proxy tokens of a session (also revoked when the session ends).
+    pub upstream_ttl: Duration,
 }
 
 impl SessionConfig {
@@ -80,6 +95,11 @@ impl SessionConfig {
             max_ahead_segments: 20,
             throttle_interval: Duration::from_millis(500),
             hw_startup_grace: Duration::from_secs(15),
+            max_ffmpeg_processes: crate::media::DEFAULT_MAX_FFMPEG_PROCESSES,
+            max_session_disk_bytes: 4 << 30,
+            max_total_disk_bytes: 20 << 30,
+            disk_evict_min_idle: Duration::from_secs(15),
+            upstream_ttl: Duration::from_secs(12 * 3600),
         }
     }
     pub fn transcode_root(&self) -> PathBuf {
@@ -95,6 +115,11 @@ pub struct StartRequest {
     pub streams: Vec<StreamInfo>,
     pub decision: PlaybackDecision,
     pub start_position_s: f64,
+    /// The user's concurrent-stream limit (every live session of the user counts). Enforced
+    /// atomically inside `create_session`.
+    pub user_max_streams: Option<usize>,
+    /// The user's concurrent-transcode limit (enforced atomically like the stream limit).
+    pub user_max_transcodes: Option<usize>,
 }
 
 /// Snapshot of a session for the admin dashboard / `playback_sessions` mirroring.
@@ -158,7 +183,13 @@ struct Session {
     run_delta: Mutex<Option<(u64, f64)>>,
     source_video_codec: Option<String>,
     source_hdr: Hdr,
-    burn_in: Option<BurnIn>,
+    /// What ffmpeg opens: a local path or a loopback upstream-proxy URL (never a provider URL).
+    input: String,
+    /// Process-budget slot held while the session exists.
+    permit: Mutex<Option<ProcPermit>>,
+    /// Redacted tail of ffmpeg's stderr (server-side diagnostics only).
+    log: LogTail,
+    burn_in: Mutex<Option<BurnIn>>,
     meta: Mutex<Meta>,
     proc: tokio::sync::Mutex<Proc>,
 }
@@ -176,19 +207,28 @@ pub struct SessionManager {
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     degraded: Mutex<Vec<String>>,
     indexer: Arc<Indexer>,
+    media: MediaCtx,
 }
 
 impl SessionManager {
     /// Create a manager. Removes stale transcode directories left by a previous run.
     pub fn new(cfg: SessionConfig, hw: HwAccel) -> Arc<Self> {
         let _ = std::fs::remove_dir_all(cfg.transcode_root());
+        let media = MediaCtx::new(cfg.max_ffmpeg_processes);
         Arc::new(SessionManager {
+            media,
             cfg,
             hw,
             sessions: Mutex::new(HashMap::new()),
             degraded: Mutex::new(Vec::new()),
             indexer: Arc::new(Indexer::default()),
         })
+    }
+
+    /// Shared process budget / upstream proxy / single-flight locks (also used for subtitle
+    /// conversion and remote probes).
+    pub fn media(&self) -> &MediaCtx {
+        &self.media
     }
 
     pub fn config(&self) -> &SessionConfig {
@@ -292,6 +332,8 @@ impl SessionManager {
             .streams
             .iter()
             .find(|s| Some(s.idx) == req.decision.video_index && s.kind == StreamKind::Video);
+        // (burn-in descriptor, subtitle stream index, external file) for text burn-in staging
+        let mut stage: Option<(i64, Option<String>)> = None;
         let burn_in = if req.decision.subtitle == SubtitleAction::BurnIn {
             req.decision.subtitle_index.and_then(|si| {
                 let s = req
@@ -305,12 +347,56 @@ impl SessionManager {
                         x.kind == StreamKind::Subtitle && x.external_path.is_none() && x.idx < s.idx
                     })
                     .count() as u32;
+                let image = is_image_subtitle(s.codec.as_deref().unwrap_or(""));
+                if !image {
+                    stage = Some((s.idx, s.external_path.clone()));
+                }
                 Some(BurnIn {
                     ordinal,
-                    image: is_image_subtitle(s.codec.as_deref().unwrap_or("")),
-                    external_path: s.external_path.clone(),
+                    image,
+                    external_path: None, // text subtitles are staged under a safe generated name
                 })
             })
+        } else {
+            None
+        };
+
+        // ffmpeg never receives a provider URL: remote inputs go through the loopback proxy
+        let input = if mode.needs_ffmpeg() && remote {
+            self.media
+                .upstream()
+                .ok_or_else(|| PlaybackError::Invalid("remote playback is not available".into()))?
+                .register(
+                    &req.file.path,
+                    crate::ffmpeg::REMOTE_UA,
+                    self.cfg.upstream_ttl,
+                    Some(&id),
+                )?
+        } else {
+            req.file.path.clone()
+        };
+        // from here on a failure must revoke the tokens again
+        let revoke = |m: &Self| {
+            if let Some(p) = m.media.upstream() {
+                p.revoke_owner(&id);
+            }
+        };
+
+        if mode.needs_ffmpeg() {
+            if let Err(e) = self.ensure_disk_budget().await {
+                revoke(self);
+                return Err(e);
+            }
+        }
+        // one slot of the global ffmpeg budget per ffmpeg-backed session (remux included)
+        let permit = if mode.needs_ffmpeg() {
+            match self.media.try_proc() {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    revoke(self);
+                    return Err(e);
+                }
+            }
         } else {
             None
         };
@@ -335,7 +421,10 @@ impl SessionManager {
             run_delta: Mutex::new(None),
             source_video_codec: video.and_then(|v| v.codec.as_deref().map(normalize_codec)),
             source_hdr: video.map(|v| v.hdr).unwrap_or_default(),
-            burn_in,
+            input,
+            permit: Mutex::new(permit),
+            log: LogTail::default(),
+            burn_in: Mutex::new(burn_in),
             meta: Mutex::new(Meta {
                 last_ping: now_unix(),
                 last_activity: Instant::now(),
@@ -351,7 +440,17 @@ impl SessionManager {
         });
 
         {
+            // limits are checked and the session registered under one lock: concurrent requests
+            // cannot both pass the same check
             let mut map = self.sessions.lock().unwrap();
+            if let Some(max) = req.user_max_streams.filter(|m| *m > 0) {
+                let mine = map.values().filter(|s| s.user_id == req.user_id).count();
+                if mine >= max {
+                    drop(map);
+                    revoke(self);
+                    return Err(PlaybackError::UserStreamLimit(max));
+                }
+            }
             if counts {
                 let live = |s: &&Arc<Session>| {
                     matches!(
@@ -361,6 +460,8 @@ impl SessionManager {
                 };
                 let global = map.values().filter(live).count();
                 if self.cfg.max_global_transcodes > 0 && global >= self.cfg.max_global_transcodes {
+                    drop(map);
+                    revoke(self);
                     return Err(PlaybackError::GlobalLimit(self.cfg.max_global_transcodes));
                 }
                 let user = map
@@ -368,8 +469,18 @@ impl SessionManager {
                     .filter(live)
                     .filter(|s| s.user_id == req.user_id)
                     .count();
-                if self.cfg.max_user_transcodes > 0 && user >= self.cfg.max_user_transcodes {
-                    return Err(PlaybackError::UserLimit(self.cfg.max_user_transcodes));
+                let user_max = [
+                    self.cfg.max_user_transcodes,
+                    req.user_max_transcodes.unwrap_or(0),
+                ]
+                .into_iter()
+                .filter(|m| *m > 0)
+                .min()
+                .unwrap_or(0);
+                if user_max > 0 && user >= user_max {
+                    drop(map);
+                    revoke(self);
+                    return Err(PlaybackError::UserLimit(user_max));
                 }
             }
             map.insert(id.clone(), session.clone());
@@ -388,6 +499,10 @@ impl SessionManager {
             session.last_req.store(start, Ordering::Relaxed);
             let res = async {
                 tokio::fs::create_dir_all(dir).await?;
+                if let Some((idx, external)) = &stage {
+                    self.stage_burn_in(&session, dir, *idx, external.as_deref())
+                        .await?;
+                }
                 let mut p = session.proc.lock().await;
                 self.start_ffmpeg(&session, &mut p, start).await
             }
@@ -397,22 +512,125 @@ impl SessionManager {
                 return Err(e);
             }
         }
-        if dir.is_some() && self.cfg.max_ahead_segments > 0 {
-            self.spawn_throttle(Arc::downgrade(&session));
+        if dir.is_some() {
+            self.spawn_throttle(Arc::downgrade(&session), self.cfg.max_session_disk_bytes);
         }
         Ok(self.info_of(&session).await)
     }
 
+    /// Extract a text subtitle track into the session directory under a fixed, safe name
+    /// (`burn.ass`) so the `subtitles=` filter never sees user-controlled paths.
+    async fn stage_burn_in(
+        &self,
+        s: &Session,
+        dir: &Path,
+        stream_idx: i64,
+        external: Option<&str>,
+    ) -> Result<(), PlaybackError> {
+        let out = dir.join("burn.ass");
+        let (src, map) = match external {
+            Some(p) if !crate::ffmpeg::is_remote(p) => (p.to_string(), "0:s:0".to_string()),
+            Some(_) => {
+                return Err(PlaybackError::Invalid(
+                    "remote subtitle files cannot be burned in".into(),
+                ));
+            }
+            None => (s.input.clone(), format!("0:{stream_idx}")),
+        };
+        let remote_in = crate::ffmpeg::is_remote(&src);
+        let mut cmd = Command::new(&self.cfg.ffmpeg_path);
+        cmd.args(["-hide_banner", "-nostdin", "-loglevel", "error", "-y"]);
+        cmd.args([
+            "-protocol_whitelist",
+            crate::ffmpeg::protocol_whitelist(remote_in),
+        ]);
+        cmd.arg("-i")
+            .arg(&src)
+            .args(["-map", &map, "-c:s", "ass"])
+            .arg(&out);
+        let output = tokio::time::timeout(
+            Duration::from_secs(180),
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| PlaybackError::ffmpeg("subtitle staging timed out"))??;
+        if !output.status.success() || !out.exists() {
+            return Err(PlaybackError::ffmpeg(format!(
+                "subtitle staging failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        *s.burn_in.lock().unwrap() = Some(BurnIn {
+            ordinal: 0,
+            image: false,
+            external_path: Some(out.to_string_lossy().into_owned()),
+        });
+        Ok(())
+    }
+
+    /// Sum of all session scratch directories.
+    pub async fn disk_usage(&self) -> u64 {
+        dir_size(&self.cfg.transcode_root()).await
+    }
+
+    /// Keep `data_dir/transcode` within its budget: evict idle sessions oldest-first; refuse
+    /// (`DiskBudget`) while still over.
+    async fn ensure_disk_budget(&self) -> Result<(), PlaybackError> {
+        let max = self.cfg.max_total_disk_bytes;
+        if max == 0 {
+            return Ok(());
+        }
+        loop {
+            if dir_size(&self.cfg.transcode_root()).await <= max {
+                return Ok(());
+            }
+            let victim = {
+                let map = self.sessions.lock().unwrap();
+                map.values()
+                    .filter(|s| s.dir.is_some())
+                    .filter_map(|s| {
+                        let idle = s.meta.lock().unwrap().last_activity.elapsed();
+                        (idle >= self.cfg.disk_evict_min_idle).then(|| (idle, s.id.clone()))
+                    })
+                    .max_by_key(|(idle, _)| *idle)
+                    .map(|(_, id)| id)
+            };
+            match victim {
+                Some(id) => {
+                    tracing::warn!(session = %id, "scratch disk over budget: evicting idle session");
+                    self.remove(&id).await;
+                }
+                None => return Err(PlaybackError::DiskBudget),
+            }
+        }
+    }
+
     /// Per-session task pausing ffmpeg when it runs too far ahead of the client.
-    fn spawn_throttle(&self, weak: Weak<Session>) {
+    fn spawn_throttle(&self, weak: Weak<Session>, session_disk_cap: u64) {
         let max_ahead = self.cfg.max_ahead_segments;
         let resume_at = max_ahead - (max_ahead / 4).max(1).min(max_ahead);
         let interval = self.cfg.throttle_interval;
         tokio::spawn(async move {
+            let mut tick = 0u32;
             loop {
                 tokio::time::sleep(interval).await;
                 let Some(s) = weak.upgrade() else { break };
                 let Some(dir) = s.dir.clone() else { break };
+                tick = tick.wrapping_add(1);
+                if tick % 10 == 0 && session_disk_cap > 0 && dir_size(&dir).await > session_disk_cap
+                {
+                    // bounded scratch: drop segments well behind the playhead (a seek back simply
+                    // restarts ffmpeg there)
+                    let keep_from = s.last_req.load(Ordering::Relaxed).saturating_sub(10);
+                    trim_behind(&dir, keep_from).await;
+                }
+                if max_ahead == 0 {
+                    continue;
+                }
                 let mut p = s.proc.lock().await;
                 let alive = p
                     .child
@@ -539,6 +757,10 @@ impl SessionManager {
         if s.event_mode && !crate::ffmpeg::is_remote(&s.file.path) {
             self.indexer.release(s.file.id);
         }
+        if let Some(p) = self.media.upstream() {
+            p.revoke_owner(id);
+        }
+        s.permit.lock().unwrap().take(); // free the ffmpeg process slot right away
         true
     }
 
@@ -628,7 +850,7 @@ impl SessionManager {
             return std::fs::read_to_string(dir.join(ffmpeg::FFMPEG_PLAYLIST))
                 .ok()
                 .and_then(|t| event_playlist(&t))
-                .ok_or_else(|| PlaybackError::SegmentUnavailable("playlist not ready".into()));
+                .ok_or_else(|| PlaybackError::segment_unavailable("playlist not ready"));
         }
         Ok(build_plan_playlist(&s.plan, self.cfg.segment_secs))
     }
@@ -659,9 +881,9 @@ impl SessionManager {
                 matches!(p.child.as_mut().map(|c| c.try_wait()), Some(Ok(Some(st))) if !st.success())
             };
             if failed || Instant::now() >= deadline {
-                return Err(PlaybackError::SegmentUnavailable(format!(
+                return Err(PlaybackError::segment_unavailable(format!(
                     "no playlist from ffmpeg: {}",
-                    read_log_tail(&dir).await
+                    s.log.tail(5)
                 )));
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -765,7 +987,7 @@ impl SessionManager {
                             session = %id,
                             backend = cur.name(),
                             "hardware ffmpeg failed before producing output; retrying with software encoding: {}",
-                            read_log_tail(&dir).await
+                            s.log.tail(5)
                         );
                         {
                             let mut d = self.degraded.lock().unwrap();
@@ -800,9 +1022,9 @@ impl SessionManager {
                 if must_restart {
                     if !fallback {
                         if restarts >= 2 {
-                            return Err(PlaybackError::SegmentUnavailable(format!(
+                            return Err(PlaybackError::segment_unavailable(format!(
                                 "ffmpeg failed: {}",
-                                read_log_tail(&dir).await
+                                s.log.tail(5)
                             )));
                         }
                         restarts += 1;
@@ -813,7 +1035,7 @@ impl SessionManager {
                 }
             }
             if Instant::now() >= deadline {
-                return Err(PlaybackError::SegmentUnavailable(format!(
+                return Err(PlaybackError::segment_unavailable(format!(
                     "timeout waiting for {name}"
                 )));
             }
@@ -843,12 +1065,12 @@ impl SessionManager {
         remove_stale(dir, start_segment, s.plan.is_keyframe_plan()).await;
         let hw = s.hw.lock().unwrap().clone();
         let params = BuildParams {
-            input: &s.file.path,
+            input: &s.input,
             decision: &s.decision,
             hwaccel: &hw,
             source_video_codec: s.source_video_codec.as_deref(),
             source_hdr: s.source_hdr,
-            burn_in: s.burn_in.clone(),
+            burn_in: s.burn_in.lock().unwrap().clone(),
             start_segment,
             segment_secs: self.cfg.segment_secs,
             out_dir: dir,
@@ -858,15 +1080,44 @@ impl SessionManager {
         } else {
             ffmpeg::build_args(&params)
         };
-        let log = std::fs::File::create(dir.join("ffmpeg.log"))?;
-        let child = Command::new(&self.cfg.ffmpeg_path)
+        let mut child = Command::new(&self.cfg.ffmpeg_path)
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::from(log))
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| PlaybackError::Ffmpeg(format!("spawn {}: {e}", self.cfg.ffmpeg_path)))?;
+            .map_err(|_| PlaybackError::ffmpeg("cannot start ffmpeg"))?;
+        // stderr may contain URLs, credentials and paths: it is redacted line by line before it is
+        // stored anywhere, and only a bounded tail is kept in memory
+        if let Some(err) = child.stderr.take() {
+            let weak_log = s.log.handle();
+            tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut err = err;
+                let mut buf = [0u8; 4096];
+                let mut cur: Vec<u8> = Vec::new();
+                // read everything (a full pipe would stall ffmpeg) but keep only bounded lines
+                while let Ok(n) = err.read(&mut buf).await {
+                    if n == 0 {
+                        break;
+                    }
+                    for &b in &buf[..n] {
+                        if b == b'\n' || b == b'\r' {
+                            if !cur.is_empty() {
+                                weak_log.push(&String::from_utf8_lossy(&cur));
+                                cur.clear();
+                            }
+                        } else if cur.len() < 1024 {
+                            cur.push(b);
+                        }
+                    }
+                }
+                if !cur.is_empty() {
+                    weak_log.push(&String::from_utf8_lossy(&cur));
+                }
+            });
+        }
         p.child = Some(child);
         p.start_segment = start_segment;
         p.started = Instant::now();
@@ -1183,7 +1434,7 @@ async fn assemble_segment(dir: &Path, sess: &Session, n: u32) -> Result<bool, As
             let actual = fmp4::first_video_pts(&body, &tracks).unwrap_or(t) + d;
             if (actual - t).abs() > 1.0 {
                 let _ = tokio::fs::remove_file(dir.join(ffmpeg::gop_name(g))).await;
-                return Err(AssembleError::Fatal(PlaybackError::SegmentUnavailable(
+                return Err(AssembleError::Fatal(PlaybackError::segment_unavailable(
                     format!(
                         "keyframe index does not match the media (gop {g} is {:+.2}s off)",
                         actual - t
@@ -1240,18 +1491,74 @@ fn signal(child: &Child, sig: Sig) {
 #[cfg(not(unix))]
 fn signal(_child: &Child, _sig: Sig) {}
 
-async fn read_log_tail(dir: &Path) -> String {
-    let log = tokio::fs::read_to_string(dir.join("ffmpeg.log"))
-        .await
-        .unwrap_or_default();
-    log.lines()
-        .rev()
-        .take(5)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
-        .join(" | ")
+/// Bounded, redacted tail of a subprocess' stderr.
+#[derive(Default)]
+struct LogTail(Arc<Mutex<std::collections::VecDeque<String>>>);
+
+#[derive(Clone)]
+struct LogHandle(Arc<Mutex<std::collections::VecDeque<String>>>);
+
+impl LogTail {
+    fn handle(&self) -> LogHandle {
+        LogHandle(self.0.clone())
+    }
+    /// Last lines, joined (already redacted).
+    fn tail(&self, n: usize) -> String {
+        let l = self.0.lock().unwrap();
+        l.iter()
+            .rev()
+            .take(n)
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }
+}
+
+impl LogHandle {
+    fn push(&self, line: &str) {
+        let mut red = redact_text(line);
+        red.truncate(300);
+        let mut l = self.0.lock().unwrap();
+        l.push_back(red);
+        while l.len() > 64 {
+            l.pop_front();
+        }
+    }
+}
+
+/// Total size of regular files under `root` (one level of session directories).
+async fn dir_size(root: &Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(mut rd) = tokio::fs::read_dir(&d).await else {
+            continue;
+        };
+        while let Ok(Some(e)) = rd.next_entry().await {
+            match e.metadata().await {
+                Ok(m) if m.is_dir() => stack.push(e.path()),
+                Ok(m) => total += m.len(),
+                Err(_) => {}
+            }
+        }
+    }
+    total
+}
+
+/// Remove assembled/encoded segments (and GOP leftovers) with index below `keep_from`.
+async fn trim_behind(dir: &Path, keep_from: u32) {
+    let Ok(mut rd) = tokio::fs::read_dir(dir).await else {
+        return;
+    };
+    while let Ok(Some(e)) = rd.next_entry().await {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let old = ffmpeg::parse_segment_name(&name).is_some_and(|k| k < keep_from)
+            || ffmpeg::parse_gop_name(&name).is_some_and(|k| k < keep_from);
+        if old {
+            let _ = tokio::fs::remove_file(e.path()).await;
+        }
+    }
 }
 
 pub fn build_master_playlist(bandwidth_bps: u64, resolution: Option<(u32, u32)>) -> String {

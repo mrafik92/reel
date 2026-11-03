@@ -11,7 +11,7 @@ use reel_playback::{
     QualityOption, QualityRequest, decide_quality,
     decision::is_image_subtitle,
     model::{self, StreamKind},
-    subtitles::{SubtitleSource, to_vtt},
+    subtitles::{SubtitleSource, to_vtt_with},
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -247,6 +247,8 @@ pub async fn decide_playback(
             streams: streams.clone(),
             decision: decision.clone(),
             start_position_s: req.start_s.unwrap_or(0.0).max(0.0),
+            user_max_streams: limits.max_streams.and_then(|v| usize::try_from(v).ok()),
+            user_max_transcodes: limits.max_transcodes.and_then(|v| usize::try_from(v).ok()),
         })
         .await?;
     let sg = st.signer(u.id());
@@ -520,7 +522,8 @@ pub async fn subtitle_vtt(
             stream_index: row.get("idx"),
         },
     };
-    let out = to_vtt(
+    let out = to_vtt_with(
+        st.playback.media(),
         &st.playback.config().ffmpeg_path,
         &src,
         &st.config.data_dir.join("subs"),

@@ -20,14 +20,17 @@ pub mod fmp4;
 pub mod hwaccel;
 pub mod keyindex;
 pub mod langs;
+pub mod media;
 pub mod model;
 pub mod plan;
 pub mod profile;
 pub mod quality;
+pub mod redact;
 pub mod router;
 pub mod select;
 pub mod session;
 pub mod subtitles;
+pub mod upstream;
 
 pub use decision::{DecisionInput, PlaybackDecision, PlaybackMode, decide};
 pub use error::PlaybackError;

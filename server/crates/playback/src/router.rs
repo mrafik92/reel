@@ -20,10 +20,12 @@ impl IntoResponse for PlaybackError {
         let code = match &self {
             PlaybackError::SessionNotFound => StatusCode::NOT_FOUND,
             PlaybackError::Invalid(_) => StatusCode::BAD_REQUEST,
-            PlaybackError::GlobalLimit(_) | PlaybackError::UserLimit(_) => {
-                StatusCode::TOO_MANY_REQUESTS
-            }
-            PlaybackError::SegmentUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            PlaybackError::GlobalLimit(_)
+            | PlaybackError::UserLimit(_)
+            | PlaybackError::UserStreamLimit(_) => StatusCode::TOO_MANY_REQUESTS,
+            PlaybackError::SegmentUnavailable(_)
+            | PlaybackError::Busy
+            | PlaybackError::DiskBudget => StatusCode::SERVICE_UNAVAILABLE,
             PlaybackError::Ffmpeg(_) | PlaybackError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (code, self.to_string()).into_response()

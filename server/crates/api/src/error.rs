@@ -91,6 +91,12 @@ impl From<reel_playback::PlaybackError> for ApiError {
             P::UserLimit(n) => Self::TooManyRequests(format!(
                 "You reached your limit of {n} concurrent transcoded streams; stop another stream first"
             )),
+            P::UserStreamLimit(n) => Self::TooManyRequests(format!(
+                "You reached your limit of {n} concurrent stream(s); stop another stream first"
+            )),
+            e @ (P::Busy | P::DiskBudget) => {
+                Self::Status(StatusCode::SERVICE_UNAVAILABLE, e.to_string())
+            }
             e => Self::Internal(e.to_string()),
         }
     }

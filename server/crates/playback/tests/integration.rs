@@ -76,6 +76,8 @@ fn request(path: &Path, decision: PlaybackDecision, user: i64, start: f64) -> St
         streams: streams(),
         decision,
         start_position_s: start,
+        user_max_streams: None,
+        user_max_transcodes: None,
     }
 }
 

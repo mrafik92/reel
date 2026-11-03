@@ -269,6 +269,8 @@ pub async fn probe_keyframes_cmd(
     let pk = run(vec![
         "-v",
         "error",
+        "-protocol_whitelist",
+        "file",
         "-select_streams",
         "v:0",
         "-show_entries",
@@ -277,23 +279,25 @@ pub async fn probe_keyframes_cmd(
         "csv=p=0",
     ])
     .await
-    .map_err(|_| PlaybackError::Ffmpeg("keyframe probe timed out".into()))??;
+    .map_err(|_| PlaybackError::ffmpeg("keyframe probe timed out"))??;
     if !pk.status.success() {
-        return Err(PlaybackError::Ffmpeg(
-            String::from_utf8_lossy(&pk.stderr).trim().to_string(),
+        return Err(PlaybackError::ffmpeg(
+            String::from_utf8_lossy(&pk.stderr).trim(),
         ));
     }
     let mut kfs = parse_keyframe_csv(&String::from_utf8_lossy(&pk.stdout));
     let st = run(vec![
         "-v",
         "error",
+        "-protocol_whitelist",
+        "file",
         "-show_entries",
         "format=start_time",
         "-of",
         "csv=p=0",
     ])
     .await
-    .map_err(|_| PlaybackError::Ffmpeg("probe timed out".into()))??;
+    .map_err(|_| PlaybackError::ffmpeg("probe timed out"))??;
     let start: f64 = String::from_utf8_lossy(&st.stdout)
         .trim()
         .parse()

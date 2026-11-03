@@ -70,16 +70,32 @@ pub fn is_remote(input: &str) -> bool {
     input.starts_with("http://") || input.starts_with("https://")
 }
 
-/// Escape a value for use inside an ffmpeg filter argument (`subtitles=filename=...`).
-pub fn escape_filter_value(s: &str) -> String {
+fn backslash_escape(s: &str, special: &[char]) -> String {
     let mut o = String::with_capacity(s.len() + 8);
     for c in s.chars() {
-        if matches!(c, '\\' | ':' | '\'' | ',' | '[' | ']' | ';' | '=') {
+        if special.contains(&c) {
             o.push('\\');
         }
         o.push(c);
     }
     o
+}
+
+/// Escape a value (file name) for `filter=option=VALUE` inside a `-vf`/`-lavfi` graph.
+///
+/// ffmpeg parses twice (see "Quoting and escaping" in ffmpeg-utils): first the filter's option
+/// string, where `\`, `'` and `:` are special, then the filtergraph description, where `\`, `'`,
+/// `[`, `]`, `,` and `;` are special. The value is escaped for the first level, then the result for
+/// the second.
+pub fn escape_filter_value(s: &str) -> String {
+    let level1 = backslash_escape(s, &['\\', '\'', ':']);
+    backslash_escape(&level1, &['\\', '\'', '[', ']', ',', ';'])
+}
+
+/// `-protocol_whitelist` for an input: local files only, or plain http to the loopback upstream
+/// proxy (never https/tls/crypto/concat/subfile/data…).
+pub fn protocol_whitelist(remote: bool) -> &'static str {
+    if remote { "http,tcp" } else { "file" }
 }
 
 const SW_TONEMAP: &str = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
@@ -111,7 +127,14 @@ pub fn build_args_with_plan(p: &BuildParams<'_>, plan: &crate::plan::SegmentPlan
 fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> Vec<String> {
     let mut a: Vec<String> = Vec::new();
     let mut push = |xs: &[&str]| a.extend(xs.iter().map(|s| s.to_string()));
-    push(&["-hide_banner", "-nostdin", "-loglevel", "warning", "-y"]);
+    push(&[
+        "-hide_banner",
+        "-nostdin",
+        "-nostats",
+        "-loglevel",
+        "warning",
+        "-y",
+    ]);
 
     let encode = match &p.decision.video {
         VideoAction::Encode {
@@ -171,19 +194,17 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
         }
     }
 
-    if is_remote(p.input) {
-        // provider URL: player-like agent, survive dropped connections, network protocols only
+    let remote = is_remote(p.input);
+    if remote {
+        // loopback upstream proxy: it supplies the provider URL/credentials/user agent; ffmpeg
+        // only needs to survive dropped connections
         push(&[
-            "-user_agent",
-            REMOTE_UA,
             "-reconnect",
             "1",
             "-reconnect_streamed",
             "1",
             "-reconnect_delay_max",
             "5",
-            "-protocol_whitelist",
-            "http,https,tcp,tls,crypto",
         ]);
     }
     if p.start_segment > 0 {
@@ -198,7 +219,14 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
         }
         push(&["-ss", &t]);
     }
-    push(&["-copyts", "-start_at_zero", "-i", p.input]);
+    push(&[
+        "-copyts",
+        "-start_at_zero",
+        "-protocol_whitelist",
+        protocol_whitelist(remote),
+        "-i",
+        p.input,
+    ]);
 
     // ---- stream mapping + filters ----
     let mut complex: Option<String> = None;
@@ -270,7 +298,8 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
                 push(&["-vf", vf]);
             }
             let enc = match (codec, p.hwaccel) {
-                ("hevc", HwAccel::Software) => "libx265",
+                // software HEVC encoding is never offered (CPU-exhaustion vector): H.264 instead
+                ("hevc", HwAccel::Software) => "libx264",
                 ("hevc", HwAccel::Vaapi { .. }) => "hevc_vaapi",
                 ("hevc", HwAccel::Qsv { .. }) => "hevc_qsv",
                 ("hevc", HwAccel::Nvenc) => "hevc_nvenc",
@@ -469,7 +498,7 @@ mod tests {
     }
 
     const HLS_TAIL: &str = "-f hls -hls_time 4 -hls_playlist_type event -hls_list_size 0 -hls_segment_type fmp4 -hls_fmp4_init_filename init.mp4 -hls_segment_filename /tmp/o/seg_%05d.m4s -hls_flags independent_segments+temp_file -hls_segment_options movflags=+frag_discont+negative_cts_offsets:use_editlist=0";
-    const HEAD: &str = "-hide_banner -nostdin -loglevel warning -y";
+    const HEAD: &str = "-hide_banner -nostdin -nostats -loglevel warning -y";
     const KF: &str =
         "-force_key_frames expr:if(isnan(prev_forced_t),gte(t,0),gte(t,prev_forced_t+4))";
 
@@ -484,7 +513,7 @@ mod tests {
         assert_eq!(
             got,
             format!(
-                "{HEAD} -copyts -start_at_zero -i /m/a b.mkv -map 0:0 -map 0:1 -sn -dn -map_metadata -1 -map_chapters -1 -c:v copy -c:a copy {HLS_TAIL} -start_number 0 /tmp/o/ffmpeg.m3u8"
+                "{HEAD} -copyts -start_at_zero -protocol_whitelist file -i /m/a b.mkv -map 0:0 -map 0:1 -sn -dn -map_metadata -1 -map_chapters -1 -c:v copy -c:a copy {HLS_TAIL} -start_number 0 /tmp/o/ffmpeg.m3u8"
             )
         );
     }
@@ -501,7 +530,9 @@ mod tests {
     fn seek_start_number_and_ss_before_input() {
         let d = dec(VideoAction::Copy, aac());
         let got = s(build_args(&params(&d, &HwAccel::Software, 2)));
-        assert!(got.contains("-ss 8 -copyts -start_at_zero -i /m/a b.mkv"));
+        assert!(
+            got.contains("-ss 8 -copyts -start_at_zero -protocol_whitelist file -i /m/a b.mkv")
+        );
         assert!(got.contains("-start_number 2 /tmp/o/ffmpeg.m3u8"));
         assert!(got.contains("-c:a aac -b:a 160k -ac 2"));
     }
@@ -513,7 +544,7 @@ mod tests {
         assert_eq!(
             got,
             format!(
-                "{HEAD} -copyts -start_at_zero -i /m/a b.mkv -map 0:0 -map 0:1 -sn -dn -map_metadata -1 -map_chapters -1 -vf scale=1280:720,format=yuv420p -c:v libx264 -preset veryfast -profile:v high -sc_threshold 0 -b:v 4000k -maxrate 4800k -bufsize 8000k {KF} -c:a aac -b:a 160k -ac 2 {HLS_TAIL} -start_number 0 /tmp/o/ffmpeg.m3u8"
+                "{HEAD} -copyts -start_at_zero -protocol_whitelist file -i /m/a b.mkv -map 0:0 -map 0:1 -sn -dn -map_metadata -1 -map_chapters -1 -vf scale=1280:720,format=yuv420p -c:v libx264 -preset veryfast -profile:v high -sc_threshold 0 -b:v 4000k -maxrate 4800k -bufsize 8000k {KF} -c:a aac -b:a 160k -ac 2 {HLS_TAIL} -start_number 0 /tmp/o/ffmpeg.m3u8"
             )
         );
     }
@@ -608,7 +639,11 @@ mod tests {
             external_path: Some("/s/it's, [a].srt".into()),
         });
         let got = s(build_args(&p));
-        assert!(got.contains(r"-vf subtitles=filename=/s/it\'s\, \[a\].srt,scale=1280:720"));
+        // two-level escaping: \ ' : (option parser) then \ ' [ ] , ; (filtergraph parser)
+        assert!(
+            got.contains(r"-vf subtitles=filename=/s/it\\\'s\, \[a\].srt,scale=1280:720"),
+            "{got}"
+        );
     }
 
     #[test]
