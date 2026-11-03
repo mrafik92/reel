@@ -5,6 +5,7 @@ import {
   iptv, type AdminChannel, type ChannelMetrics, type HubStatus, type SourceBody, type SourceDto, type SourcePatch, type SourceTest,
 } from "../../api/iptv";
 import { ApiError } from "../../api/http";
+import { GuideListEditor, GuidePanel } from "./IptvGuides";
 import { toast } from "../../lib/toast";
 import { href } from "../../lib/mode";
 import { Field, PasswordField } from "../../components/Form";
@@ -154,6 +155,8 @@ function SourceRow(props: { source: SourceDto; follow: boolean; onChange: (s: So
   const [job, setJob] = createSignal<Job>();
   const [elapsed, setElapsed] = createSignal(0);
   const [outcome, setOutcome] = createSignal<Outcome>();
+  const [guidesDirty, setGuidesDirty] = createSignal(false);
+  const [epgRunning, setEpgRunning] = createSignal(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let ticker: ReturnType<typeof setInterval> | undefined;
   onCleanup(() => {
@@ -275,10 +278,12 @@ function SourceRow(props: { source: SourceDto; follow: boolean; onChange: (s: So
             {s().username ? ` · ${s().username}` : ""}
           </span>
           <span class="iptv-src__status">
-            <Show when={!busy()} fallback={<span class="iptv-src__busy"><span class="spinner spinner--xs" /> Loading channels and guide…</span>}>
+            <Show
+              when={!busy()}
+              fallback={<span class="iptv-src__busy"><span class="spinner spinner--xs" /> {epgRunning() ? "Refreshing the guide…" : "Loading channels and guide…"}</span>}
+            >
               <span><strong>{s().channel_count.toLocaleString()}</strong> channels</span>
               <span>{s().last_refresh_at ? `refreshed ${timeAgo(s().last_refresh_at!)}` : "never refreshed"}</span>
-              <Show when={s().last_epg_at}><span>guide {timeAgo(s().last_epg_at!)}</span></Show>
             </Show>
             <ConnMeter open={s().open_connections} max={s().max_connections ?? null} />
           </span>
@@ -298,6 +303,10 @@ function SourceRow(props: { source: SourceDto; follow: boolean; onChange: (s: So
           </button>
         </div>
       </div>
+
+      <Show when={!job()}>
+        <GuidePanel source={s()} onChange={props.onChange} dirty={guidesDirty()} onClean={() => setGuidesDirty(false)} onRunning={setEpgRunning} />
+      </Show>
 
       <Show when={job()}>
         <div class="loadjob" role="status" aria-live="polite">
@@ -362,12 +371,15 @@ function SourceRow(props: { source: SourceDto; follow: boolean; onChange: (s: So
       <Show when={editing()}>
         <SourceForm
           source={s()}
-          onDone={(n, reload) => {
+          onDone={(n, reload, guidesChanged) => {
             setEditing(false);
             if (!n) return;
             props.onChange(n);
             if (reload) void refresh();
-            else toast("Saved", "success", 1800);
+            else {
+              if (guidesChanged) setGuidesDirty(true);
+              toast(guidesChanged ? "Saved — refresh the guide to import the new list" : "Saved", "success", 2600);
+            }
           }}
           extra={
             <>
@@ -508,14 +520,20 @@ function parseProviderLink(input: string): { base: string; username?: string; pa
   };
 }
 
-function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?: boolean) => void; extra?: JSX.Element }): JSX.Element {
+function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?: boolean, guidesChanged?: boolean) => void; extra?: JSX.Element }): JSX.Element {
   const src = props.source;
   const [kind, setKind] = createSignal<"xtream" | "m3u">(src?.kind === "m3u" ? "m3u" : "xtream");
   const [name, setName] = createSignal(src?.name ?? "");
   const [url, setUrl] = createSignal(src?.url ?? "");
   const [username, setUsername] = createSignal(src?.username ?? "");
   const [password, setPassword] = createSignal("");
-  const [epg, setEpg] = createSignal(src?.epg_url ?? "");
+  // Ordered guide URLs (precedence). `epg_url` is deprecated and no longer sent.
+  const [guides, setGuides] = createSignal<string[]>((src?.epg_urls ?? (src?.epg_url ? [src.epg_url] : [])).slice());
+  const guidesChanged = () => {
+    const a = guides();
+    const b = src?.epg_urls ?? [];
+    return a.length !== b.length || a.some((u, i) => u !== b[i]);
+  };
   const [maxConn, setMaxConn] = createSignal(src?.max_connections != null ? String(src.max_connections) : "");
   const [interval, setIntervalV] = createSignal(src?.refresh_interval != null ? String(src.refresh_interval) : "");
   const [ua, setUa] = createSignal(src?.user_agent ?? "");
@@ -569,7 +587,7 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
     url: url().trim(),
     username: kind() === "xtream" ? username().trim() || null : null,
     password: kind() === "xtream" && password() ? password() : null,
-    epg_url: epg().trim() || null,
+    epg_urls: guides(),
     max_connections: maxConn().trim() === "" ? null : Math.max(0, Math.floor(Number(maxConn())) || 0),
     refresh_interval: interval() === "" ? null : Number(interval()),
     user_agent: ua().trim() || null,
@@ -580,7 +598,6 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
     if (!/^https?:\/\/[^/\s]+/i.test(url().trim())) return "The address should look like http://server:port.";
     if (kind() === "xtream" && !username().trim()) return "Enter your Xtream username.";
     if (kind() === "xtream" && !password() && !src?.password_set) return "Enter your Xtream password.";
-    if (epg().trim() && !/^https?:\/\//i.test(epg().trim())) return "The guide URL should start with http:// or https://.";
     return undefined;
   };
 
@@ -620,12 +637,15 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
       if (src) {
         const b = body();
         const patch: SourcePatch = {
-          name: b.name, url: b.url, username: b.username ?? "", epg_url: b.epg_url ?? "", max_connections: b.max_connections ?? 0,
+          name: b.name, url: b.url, username: b.username ?? "", max_connections: b.max_connections ?? 0,
           refresh_interval: b.refresh_interval, user_agent: b.user_agent ?? "",
         };
         if (password()) patch.password = password();
-        const reload = b.url !== src.url || (b.username ?? "") !== (src.username ?? "") || !!password() || (b.epg_url ?? "") !== (src.epg_url ?? "");
-        props.onDone(await iptv.updateSource(src.id, patch), reload);
+        // The full list, only when it changed (omitting keeps the saved one). Saving doesn't import it.
+        const gChanged = guidesChanged();
+        if (gChanged) patch.epg_urls = guides();
+        const reload = b.url !== src.url || (b.username ?? "") !== (src.username ?? "") || !!password();
+        props.onDone(await iptv.updateSource(src.id, patch), reload, gChanged);
       } else {
         // The server starts the first channel + guide load itself; the row follows it.
         props.onDone(await iptv.createSource({ ...body(), enabled: true }));
@@ -696,16 +716,6 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
         </p>
       </Show>
       <div class="form-grid">
-        <Field
-          label="Guide (EPG) URL"
-          placeholder={kind() === "xtream" ? "Automatic from your provider" : src?.detected_epg_url ?? "From the playlist, if it has one"}
-          hint={kind() === "xtream" ? "Optional — only to use a different XMLTV guide" : "Optional — an XMLTV link (.xml or .xml.gz)"}
-          value={epg()}
-          onInput={(e) => setEpg(e.currentTarget.value)}
-          autocapitalize="off"
-          spellcheck={false}
-          inputmode="url"
-        />
         <div class="field field--num">
           <label class="field__label" for="iptv-maxconn">Max connections</label>
           <input
@@ -725,6 +735,7 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
         </div>
         <Select label="Refresh channels & guide" value={interval()} onChange={(e) => setIntervalV(e.currentTarget.value)} options={REFRESH_OPTS} />
       </div>
+      <GuideListEditor kind={kind()} source={src} value={guides()} onChange={setGuides} />
       <Show when={more()} fallback={<button type="button" class="btn btn--sm btn--quiet iptv-more" onClick={() => setMore(true)}><Icon name="plus" /> <span>More options</span></button>}>
         <div class="form-grid">
           <Field label="User agent" placeholder="Default" hint="Only if your provider requires a specific player" value={ua()} onInput={(e) => setUa(e.currentTarget.value)} autocapitalize="off" spellcheck={false} />

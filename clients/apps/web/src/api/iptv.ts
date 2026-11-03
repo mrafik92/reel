@@ -19,9 +19,31 @@ export type EpgChannel = S["EpgChannel"];
 export type LiveMode = S["LiveModeDto"];
 export type TuneBody = S["TuneBody"];
 export type TuneResponse = S["TuneResponse"];
-export type SourceDto = S["SourceDto"];
-export type SourceBody = S["SourceBody"];
-export type SourcePatch = S["SourcePatch"];
+/** Import result of one guide (provider's own first, then `epg_urls` in order). URLs credential-masked. */
+export interface EpgSourceStat {
+  url: string;
+  provider: boolean;
+  channels: number;
+  programmes: number;
+  matched: number;
+  last_error?: string | null;
+  last_at?: number | null;
+}
+/** Guide fields added server-side (multiple guide URLs); the generated schema predates them. */
+export interface GuideFields {
+  epg_urls?: string[];
+  epg_sources?: EpgSourceStat[];
+  epg_channel_count?: number;
+  epg_programme_count?: number;
+  epg_matched_channels?: number;
+  /** `xmltv` | `per_channel` | `none` */
+  epg_mode?: string;
+  epg_note?: string | null;
+}
+export type SourceDto = S["SourceDto"] & GuideFields;
+/** `epg_url` is deprecated — send `epg_urls` (full list, precedence order). */
+export type SourceBody = Omit<S["SourceBody"], "epg_url"> & { epg_urls?: string[] | null };
+export type SourcePatch = Omit<S["SourcePatch"], "epg_url"> & { epg_urls?: string[] | null };
 export type SourceTest = S["SourceTest"];
 export type AccountDto = S["AccountDto"];
 export type AdminChannel = S["AdminChannel"];
@@ -55,6 +77,8 @@ export interface IptvApi {
   updateSource(id: number, b: SourcePatch): Promise<SourceDto>;
   deleteSource(id: number): Promise<void>;
   refreshSource(id: number): Promise<void>;
+  /** Re-run only the guide import (background; poll `refreshing` / `last_epg_at`). */
+  refreshEpg(id: number): Promise<void>;
   testSource(id: number): Promise<SourceTest>;
   testConfig(b: SourceBody): Promise<SourceTest>;
   adminChannels(o?: { source?: number; q?: string; group?: string; hidden?: boolean }): Promise<AdminChannel[]>;
@@ -81,6 +105,7 @@ const httpIptv: IptvApi = {
   updateSource: (id, b) => http.patch(`/admin/iptv/sources/${id}`, b),
   deleteSource: (id) => http.del(`/admin/iptv/sources/${id}`),
   refreshSource: (id) => http.post(`/admin/iptv/sources/${id}/refresh`),
+  refreshEpg: (id) => http.post(`/admin/iptv/sources/${id}/refresh-epg`),
   testSource: (id) => http.post(`/admin/iptv/sources/${id}/test`),
   testConfig: (b) => http.post("/admin/iptv/sources/test", b),
   adminChannels: (o = {}) => http.get("/admin/iptv/channels", { source: o.source, q: o.q, group: o.group, hidden: o.hidden }),

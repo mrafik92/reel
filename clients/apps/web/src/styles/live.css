@@ -3228,3 +3228,359 @@ html[data-input="pointer"] .gmenu__item:focus:not(:hover) {
   background: rgba(10, 11, 15, 0.12);
   color: inherit;
 }
+
+/* ==========================================================================
+   Admin → Live TV: TV guides (ordered list, suggestions, guide panel)
+   ========================================================================== */
+.guides {
+  margin: 0.4rem 0 1.2rem;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.guides__legend {
+  display: block;
+  margin-bottom: 0.5rem;
+  padding: 0;
+}
+.guides__legend small {
+  margin-left: 0.4rem;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.guides__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.guides__list--read {
+  margin-top: 0.8rem;
+}
+.guide-row {
+  display: flex;
+  align-items: center;
+  padding: 0.65rem 0.6rem 0.65rem 0.75rem;
+  background: rgba(16, 18, 25, 0.6);
+}
+.guide-row + .guide-row {
+  border-top: 1px solid var(--line);
+}
+.guide-row--provider {
+  background: rgba(243, 238, 228, 0.03);
+}
+.guide-row__rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.9rem;
+  height: 1.9rem;
+  margin-right: 0.8rem;
+  border-radius: 50%;
+  background: var(--ink-5);
+  color: var(--ink-2);
+  font: 800 0.85rem/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+.guide-row--provider .guide-row__rank {
+  color: var(--ink-3);
+}
+.guide-row__main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.guide-row__title {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.guide-row__title small {
+  margin-left: 0.35rem;
+  font-weight: 400;
+  color: var(--ink-3);
+  font-size: 0.8rem;
+}
+.guide-row__title .pill {
+  margin-left: 0.35rem;
+  vertical-align: 0.1em;
+}
+.guide-row__url {
+  display: block;
+  margin: 0.2rem 0 0.15rem;
+  padding: 0;
+  background: none;
+  font-size: 0.74rem;
+  color: var(--ink-3);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.guide-row__stat {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.guide-row__stat .icon {
+  margin-right: 0.35rem;
+}
+.guide-row__stat.is-ok::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.45rem;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.guide-row__stat.is-bad {
+  color: var(--warn);
+}
+.guide-row__stat.is-muted {
+  color: var(--ink-3);
+  font-style: italic;
+}
+.guide-row__when {
+  margin-left: 0.35em;
+  color: var(--ink-3);
+}
+.guide-row__actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: 0.6rem;
+}
+.guide-row__actions .iconbtn {
+  width: 2.3rem;
+  height: 2.3rem;
+  font-size: 1.05rem;
+}
+.guide-row__actions .iconbtn[disabled] {
+  opacity: 0.22;
+  cursor: default;
+}
+.guide-row__arrow {
+  font: 800 1.05rem/1 var(--font-body);
+}
+.guide-row__remove:hover {
+  background: rgba(255, 90, 78, 0.15);
+  color: var(--danger);
+}
+.guides__add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 0.7rem;
+}
+.guides__add .field__input {
+  flex: 1;
+  min-width: 16rem;
+  height: 2.6rem;
+  margin: 0 0.6rem 0.4rem 0;
+  font-size: 0.85rem;
+}
+.guides__add .btn {
+  margin: 0 0.5rem 0.4rem 0;
+}
+.guide-picks {
+  margin-top: 0.6rem;
+  padding: 1rem 1rem 0.6rem;
+  border-radius: var(--radius);
+  background: rgba(243, 238, 228, 0.03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  animation: fade-in var(--t) var(--ease-out);
+}
+.guide-picks__lede {
+  margin-bottom: 0.8rem;
+  color: var(--ink-3);
+  font-size: 0.86rem;
+}
+.guide-picks__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr));
+  grid-gap: 0.6rem;
+}
+.guide-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: 5.6rem;
+  padding: 0.65rem 0.75rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+.guide-pick:hover {
+  background: var(--bg-3);
+}
+.guide-pick:focus {
+  background: var(--ink);
+  color: var(--bg);
+}
+html[data-input="pointer"] .guide-pick:focus:not(:hover) {
+  background: var(--bg-2);
+  color: var(--ink);
+}
+.guide-pick__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  width: 100%;
+}
+.guide-pick__top code {
+  padding: 0;
+  background: none;
+  font-size: 0.72rem;
+  color: var(--ink-3);
+}
+.guide-pick__hint {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--ink-3);
+  line-height: 1.3;
+}
+.guide-pick:focus .guide-pick__hint,
+.guide-pick:focus .guide-pick__top code {
+  color: rgba(10, 11, 15, 0.6);
+}
+.guide-pick__size {
+  display: inline-flex;
+  align-items: center;
+  margin-top: auto;
+  padding-top: 0.4rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+.guide-pick__size .icon {
+  margin-right: 0.3rem;
+}
+.guide-pick.is-large .guide-pick__size {
+  color: var(--warn);
+}
+.guide-pick.is-huge {
+  box-shadow: inset 0 0 0 1px rgba(255, 90, 78, 0.35);
+}
+.guide-pick.is-huge .guide-pick__size {
+  color: var(--danger);
+}
+.guide-pick.is-added {
+  opacity: 0.6;
+  cursor: default;
+}
+.guide-pick.is-added .guide-pick__size {
+  color: var(--accent);
+}
+
+/* Guide panel on the provider row */
+.guidepanel {
+  margin: 0.9rem 0 0.3rem 3.6rem;
+  padding: 0.85rem 1rem 0.85rem;
+  border-radius: var(--radius);
+  background: rgba(243, 238, 228, 0.025);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.guidepanel__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.guidepanel__sum {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 16rem;
+}
+.guidepanel__title {
+  display: flex;
+  align-items: center;
+  font: 760 1.02rem/1.2 var(--font-display);
+}
+.guidepanel__title .icon {
+  margin-right: 0.5rem;
+  color: var(--accent);
+}
+.guidepanel__mode {
+  margin-left: 0.6rem;
+}
+.guidepanel__mode--xmltv {
+  color: var(--accent);
+}
+.guidepanel__mode--per_channel {
+  color: var(--warn);
+}
+.guidepanel__mode--none {
+  color: var(--ink-3);
+}
+.guidepanel__totals {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+  font-size: 0.86rem;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.guidepanel__totals > span {
+  margin-right: 1.1rem;
+}
+.guidepanel__totals b {
+  color: var(--ink);
+}
+.guidepanel__actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.guidepanel__actions > * + * {
+  margin-left: 0.5rem;
+}
+.guidepanel__actions .btn > * + * {
+  margin-left: 0.45rem;
+}
+.guidepanel__bad {
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(255, 176, 32, 0.16);
+  color: var(--warn);
+  font-size: 0.75rem;
+}
+.guidepanel__dirty {
+  display: flex;
+  align-items: center;
+  margin-top: 0.7rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--radius-s);
+  background: var(--accent-dim);
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+.guidepanel__dirty .icon {
+  margin-right: 0.5rem;
+  color: var(--accent);
+}
+.guidepanel__dirty strong {
+  margin: 0 0.25rem;
+}
+.guidepanel .testres {
+  align-items: center;
+}
+.guidepanel__tip {
+  margin-top: 0.6rem;
+  color: var(--ink-3);
+  font-size: 0.86rem;
+}
+@media (max-width: 900px) {
+  .guidepanel {
+    margin-left: 0;
+  }
+}

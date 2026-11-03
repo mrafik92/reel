@@ -4,7 +4,7 @@
  */
 import { ApiError } from "../http";
 import type {
-  AdminChannel, ChannelMetrics, EpgGrid, HubStatus, IptvApi, IptvChannel, LiveSession, NowNext, Program,
+  AdminChannel, ChannelMetrics, EpgGrid, EpgSourceStat, HubStatus, IptvApi, IptvChannel, LiveSession, NowNext, Program,
   SourceBody, SourceDto, SourceTest,
 } from "../iptv";
 import { SAMPLE_VIDEO } from "./fixtures";
@@ -212,6 +212,35 @@ export function createMockIptv(): IptvApi {
   };
   const now = nowS();
   let nextSource = 3;
+  const ES = (code: string) => `https://epgshare01.online/epgshare01/epg_ripper_${code}.xml.gz`;
+  // Per-guide import stats, keyed by URL — like the real server after a guide import.
+  const guideStats = new Map<string, Omit<EpgSourceStat, "url" | "provider">>([
+    [ES("AE1"), { channels: 912, programmes: 22049, matched: 386, last_error: null, last_at: now - 2 * 3600 }],
+    [ES("BEIN1"), { channels: 0, programmes: 0, matched: 0, last_error: "parse error: the guide has 2651 programmes but none belong to your channels (386 of your channels matched a guide channel); the playlist has no tvg-ids and names did not match", last_at: now - 2 * 3600 }],
+    [ES("ALJAZEERA1"), { channels: 0, programmes: 0, matched: 0, last_error: "parse error: the guide has 199 programmes but none belong to your channels", last_at: now - 2 * 3600 }],
+    [ES("EG1"), { channels: 0, programmes: 0, matched: 66, last_error: "parse error: the guide has 1279 programmes but none fall inside the 7-day window (check the server clock / guide timestamps)", last_at: now - 2 * 3600 }],
+    [ES("UK1"), { channels: 487, programmes: 11111, matched: 338, last_error: null, last_at: now - 2 * 3600 }],
+    [ES("ZA1"), { channels: 145, programmes: 4103, matched: 187, last_error: null, last_at: now - 2 * 3600 }],
+    [ES("FR1"), { channels: 574, programmes: 14651, matched: 355, last_error: null, last_at: now - 2 * 3600 }],
+  ]);
+  const providerGuide = new Map<number, EpgSourceStat>([
+    [1, { url: "http://line.harbour-iptv.example:8080/xmltv.php?username=***&password=***", provider: true, channels: 0, programmes: 0, matched: 0, last_error: "parse error: the guide contained no channels and no programmes", last_at: now - 2 * 3600 }],
+  ]);
+  /** Rebuild the guide fields of a source from its URL list (positional, provider guide first). */
+  const guides = (s: SourceDto) => {
+    const urls = s.epg_urls ?? [];
+    const rows: EpgSourceStat[] = [];
+    const p = providerGuide.get(s.id);
+    if (p) rows.push(p);
+    urls.forEach((url) => rows.push({ url, provider: false, ...(guideStats.get(url) ?? { channels: 0, programmes: 0, matched: 0, last_error: null, last_at: null }) }));
+    s.epg_sources = rows;
+    s.epg_url = urls[0] ?? null;
+    s.epg_programme_count = rows.reduce((n, r) => n + r.programmes, 0);
+    s.epg_channel_count = rows.reduce((n, r) => n + r.channels, 0);
+    s.epg_matched_channels = Math.min(s.channel_count, rows.reduce((n, r) => n + r.matched, 0));
+    s.epg_mode = s.epg_programme_count ? "xmltv" : s.kind === "xtream" ? "per_channel" : "none";
+    return s;
+  };
   const sources: SourceDto[] = empty
     ? []
     : [
@@ -219,15 +248,18 @@ export function createMockIptv(): IptvApi {
           id: 1, name: "Harbour IPTV", kind: "xtream", url: "http://line.harbour-iptv.example:8080", username: "rafik", password_set: true,
           enabled: true, channel_count: chans.filter((c) => c.admin.source_id === 1).length, refreshing: false, open_connections: 1,
           max_connections: 2, last_refresh_at: now - 3 * 3600, last_epg_at: now - 3 * 3600, last_error: null, epg_url: null,
-          detected_epg_url: "http://line.harbour-iptv.example:8080/xmltv.php", refresh_interval: null, user_agent: null,
+          epg_urls: ["AE1", "BEIN1", "ALJAZEERA1", "EG1", "UK1", "ZA1", "FR1"].map(ES),
+          detected_epg_url: "http://line.harbour-iptv.example:8080/xmltv.php?username=***&password=***", refresh_interval: null, user_agent: null,
         },
         {
           id: 2, name: "Free-to-air M3U", kind: "m3u", url: "https://example.org/playlists/fta.m3u8", username: null, password_set: false,
           enabled: true, channel_count: chans.filter((c) => c.admin.source_id === 2).length, refreshing: false, open_connections: 0,
           max_connections: null, last_refresh_at: now - 26 * 3600, last_epg_at: now - 26 * 3600, last_error: "EPG: 3 channels had no match",
-          epg_url: "https://example.org/epg/fta.xml.gz", detected_epg_url: null, refresh_interval: 720, user_agent: null,
+          epg_url: "https://example.org/epg/fta.xml.gz", epg_urls: ["https://example.org/epg/fta.xml.gz"], detected_epg_url: null, refresh_interval: 720, user_agent: null,
         },
       ];
+  guideStats.set("https://example.org/epg/fta.xml.gz", { channels: 6, programmes: 1840, matched: 3, last_error: null, last_at: now - 26 * 3600 });
+  sources.forEach(guides);
 
   // ---- sessions + hub simulation -------------------------------------------------
   const sessions = new Map<string, LiveSession>();
@@ -375,8 +407,10 @@ export function createMockIptv(): IptvApi {
       const s: SourceDto = {
         id: nextSource++, name: b.name, kind: b.kind, url: b.url, username: b.username ?? null, password_set: !!b.password, enabled: b.enabled ?? true,
         channel_count: 0, refreshing: true, open_connections: 0, max_connections: b.max_connections ?? null, last_refresh_at: null, last_epg_at: null,
-        last_error: null, epg_url: b.epg_url ?? null, detected_epg_url: null, refresh_interval: b.refresh_interval ?? null, user_agent: b.user_agent ?? null,
+        last_error: null, epg_url: null, epg_urls: (b.epg_urls ?? []).filter(Boolean), detected_epg_url: null, refresh_interval: b.refresh_interval ?? null,
+        user_agent: b.user_agent ?? null,
       };
+      guides(s);
       sources.push(s);
       setTimeout(() => {
         s.refreshing = false;
@@ -396,8 +430,9 @@ export function createMockIptv(): IptvApi {
         if (v !== undefined) (s as unknown as Record<string, unknown>)[k] = v;
       }
       if (b.max_connections === 0) s.max_connections = null;
-      if (b.epg_url === "") s.epg_url = null;
+      if (b.epg_urls) s.epg_urls = b.epg_urls.map((u) => u.trim()).filter((u, i, l) => u && l.indexOf(u) === i);
       if (password) s.password_set = true;
+      guides(s);
       return { ...s };
     },
     async deleteSource(id) {
@@ -418,6 +453,24 @@ export function createMockIptv(): IptvApi {
         s.last_epg_at = nowS();
         s.last_error = null;
       }, 3500);
+    },
+    async refreshEpg(id) {
+      await latency();
+      const s = sources.find((x) => x.id === id);
+      if (!s) throw new ApiError(404, "Source not found");
+      if (s.refreshing) throw new ApiError(409, "A refresh is already running");
+      s.refreshing = true;
+      setTimeout(() => {
+        // New guides get imported (stats appear); existing ones refresh their timestamp.
+        (s.epg_urls ?? []).forEach((u, i) => {
+          const cur = guideStats.get(u);
+          if (cur) guideStats.set(u, { ...cur, last_at: nowS() });
+          else guideStats.set(u, { channels: 120 + i * 37, programmes: 3000 + i * 811, matched: 40 + i * 13, last_error: null, last_at: nowS() });
+        });
+        s.refreshing = false;
+        s.last_epg_at = nowS();
+        guides(s);
+      }, 4500);
     },
     async testSource(id) {
       await latency(400, 900);
