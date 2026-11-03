@@ -22,6 +22,9 @@ pub struct SegmentPlan {
     /// Copy-mode only: total number of keyframes (GOPs) in the source.
     #[serde(default)]
     total_kfs: u32,
+    /// Copy-mode only: time of every source keyframe (relative seconds).
+    #[serde(default)]
+    kf_times: Vec<f64>,
 }
 
 impl SegmentPlan {
@@ -33,6 +36,7 @@ impl SegmentPlan {
             duration,
             kf_idx: vec![],
             total_kfs: 0,
+            kf_times: vec![],
         }
     }
 
@@ -60,6 +64,7 @@ impl SegmentPlan {
             duration,
             kf_idx,
             total_kfs: total.max(1),
+            kf_times: keyframes[..total as usize].to_vec(),
         }
     }
 
@@ -77,6 +82,17 @@ impl SegmentPlan {
             .copied()
             .unwrap_or(self.total_kfs);
         (a, b)
+    }
+
+    /// Time of source keyframe / GOP `g` (keyframe plans only).
+    pub fn gop_time(&self, g: u32) -> Option<f64> {
+        self.kf_times.get(g as usize).copied()
+    }
+
+    /// Index of the segment containing `t` seconds.
+    pub fn segment_at(&self, t: f64) -> u32 {
+        let i = self.starts.partition_point(|s| *s <= t + 0.001);
+        (i.max(1) - 1) as u32
     }
 
     /// Index of the first GOP of segment `i` (keyframe plans only).
@@ -332,6 +348,11 @@ mod tests {
         assert_eq!(p.gop_range(1), (2, 4));
         assert_eq!(p.gop_range(3), (6, 8));
         assert!(p.is_keyframe_plan());
+        assert_eq!(p.segment_at(0.0), 0);
+        assert_eq!(p.segment_at(7.3), 0);
+        assert_eq!(p.segment_at(7.4), 1);
+        assert_eq!(p.segment_at(100.0), 3);
+        assert_eq!(p.gop_time(2), Some(kfs[2]));
         assert!((0..p.len()).map(|i| p.seg_len(i)).sum::<f64>() - 26.0 < 1e-9);
         assert_eq!(p.cuts_after(1), &[kfs[4], kfs[6]]);
     }

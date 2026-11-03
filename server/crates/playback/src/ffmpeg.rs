@@ -10,6 +10,9 @@ pub const INIT_NAME: &str = "init.mp4";
 pub const SEGMENT_PATTERN: &str = "seg_%05d.m4s";
 /// Copy-mode output: one file per source GOP, concatenated into playlist segments by the session.
 pub const GOP_PATTERN: &str = "gop_%05d.m4s";
+/// mov muxer options for HLS fMP4 segments: absolute timestamps after restarts, no edit lists
+/// (they differ per run and shift the timeline), negative CTS offsets instead.
+pub const HLS_SEGMENT_OPTIONS: &str = "movflags=+frag_discont+negative_cts_offsets:use_editlist=0";
 pub const FFMPEG_PLAYLIST: &str = "ffmpeg.m3u8";
 
 pub fn segment_name(n: u32) -> String {
@@ -180,6 +183,11 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
             Some(pl) => format!("{:.3}", pl.start(p.start_segment) + KEYFRAME_SEEK_MARGIN),
             None => (p.start_segment * p.segment_secs).to_string(),
         };
+        if matches!(p.decision.video, VideoAction::Copy) {
+            // do not trim decoded audio up to the (margin-shifted) seek time: audio must start
+            // at the same keyframe the copied video starts at
+            push(&["-noaccurate_seek"]);
+        }
         push(&["-ss", &t]);
     }
     push(&["-copyts", "-start_at_zero", "-i", p.input]);
@@ -346,7 +354,7 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
         "independent_segments+temp_file",
         // keep absolute timestamps (tfdt) when ffmpeg is restarted mid-file
         "-hls_segment_options",
-        "movflags=+frag_discont",
+        HLS_SEGMENT_OPTIONS,
         "-start_number",
         &start_number.to_string(),
     ]);
@@ -452,7 +460,7 @@ mod tests {
         }
     }
 
-    const HLS_TAIL: &str = "-f hls -hls_time 4 -hls_playlist_type event -hls_list_size 0 -hls_segment_type fmp4 -hls_fmp4_init_filename init.mp4 -hls_segment_filename /tmp/o/seg_%05d.m4s -hls_flags independent_segments+temp_file -hls_segment_options movflags=+frag_discont";
+    const HLS_TAIL: &str = "-f hls -hls_time 4 -hls_playlist_type event -hls_list_size 0 -hls_segment_type fmp4 -hls_fmp4_init_filename init.mp4 -hls_segment_filename /tmp/o/seg_%05d.m4s -hls_flags independent_segments+temp_file -hls_segment_options movflags=+frag_discont+negative_cts_offsets:use_editlist=0";
     const HEAD: &str = "-hide_banner -nostdin -loglevel warning -y";
     const KF: &str =
         "-force_key_frames expr:if(isnan(prev_forced_t),gte(t,0),gte(t,prev_forced_t+4))";

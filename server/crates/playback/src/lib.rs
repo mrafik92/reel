@@ -16,6 +16,7 @@
 pub mod decision;
 pub mod error;
 pub mod ffmpeg;
+pub mod fmp4;
 pub mod hwaccel;
 pub mod keyindex;
 pub mod langs;

@@ -6,6 +6,7 @@ use crate::decision::{
 };
 use crate::error::PlaybackError;
 use crate::ffmpeg::{self, BuildParams, BurnIn, INIT_NAME};
+use crate::fmp4;
 use crate::hwaccel::HwAccel;
 use crate::hwaccel::HwAccelStatus;
 use crate::model::{FileInfo, Hdr, StreamInfo, StreamKind};
@@ -370,7 +371,10 @@ impl SessionManager {
         }
 
         if let Some(dir) = &dir {
-            let start = ((req.start_position_s.max(0.0) / seg as f64).floor() as u32)
+            // map the resume position through the plan (real keyframe boundaries in copy mode)
+            let start = session
+                .plan
+                .segment_at(req.start_position_s.max(0.0))
                 .min(total_segments.saturating_sub(1));
             session.last_req.store(start, Ordering::Relaxed);
             let res = async {
@@ -696,6 +700,14 @@ impl SessionManager {
                 }
             } else if path.exists() {
                 // segments are written via temp file + rename (or assembled likewise): complete
+                if let (Some(n), false, true) = (
+                    wanted,
+                    s.event_mode,
+                    matches!(s.decision.video, VideoAction::Encode { .. }),
+                ) {
+                    // encoded fixed grid: snap the run-dependent timeline shift to n * segment_secs
+                    normalize_encoded(&dir, &path, s.plan.start(n)).await;
+                }
                 self.touch(&s);
                 return Ok(path);
             }
@@ -993,6 +1005,25 @@ async fn ready_init(dir: &Path) -> Option<PathBuf> {
     Some(ready)
 }
 
+/// Rewrite an encoded segment in place so its first video sample sits exactly at `expected`
+/// seconds (idempotent; leaves the file alone when already aligned or on any error).
+async fn normalize_encoded(dir: &Path, path: &Path, expected: f64) {
+    let Some(init) = ready_init(dir).await else {
+        return;
+    };
+    let (Ok(init), Ok(mut data)) = (tokio::fs::read(init).await, tokio::fs::read(path).await)
+    else {
+        return;
+    };
+    let tracks = fmp4::init_tracks(&init);
+    if matches!(fmp4::retime(&mut data, &tracks, expected), Some(d) if d != 0.0) {
+        let tmp = path.with_extension("m4s.tmp");
+        if tokio::fs::write(&tmp, &data).await.is_ok() {
+            let _ = tokio::fs::rename(&tmp, path).await;
+        }
+    }
+}
+
 /// Concatenate the GOP files of plan segment `n` into `seg_n.m4s` once all exist.
 async fn assemble_segment(dir: &Path, plan: &SegmentPlan, n: u32) -> Result<bool, PlaybackError> {
     let (a, b) = plan.gop_range(n);
@@ -1001,9 +1032,26 @@ async fn assemble_segment(dir: &Path, plan: &SegmentPlan, n: u32) -> Result<bool
             return Ok(false);
         }
     }
+    // the validated init tells us each track's timescale for timeline normalisation
+    let Some(init) = ready_init(dir).await else {
+        return Ok(false);
+    };
+    let tracks = fmp4::init_tracks(&tokio::fs::read(init).await?);
     let mut out = Vec::new();
     for g in a..b {
-        out.extend(tokio::fs::read(dir.join(ffmpeg::gop_name(g))).await?);
+        let mut gop = tokio::fs::read(dir.join(ffmpeg::gop_name(g))).await?;
+        if let Some(t) = plan.gop_time(g) {
+            // a run-dependent timeline shift (B-frame delay, audio priming) would make restarted
+            // segments land off the playlist timeline; snap to the index time
+            if fmp4::retime(&mut gop, &tracks, t).is_none() {
+                tracing::warn!(
+                    segment = n,
+                    gop = g,
+                    "could not normalise fragment timestamps"
+                );
+            }
+        }
+        out.extend(gop);
     }
     let tmp = dir.join(format!("{}.tmp", ffmpeg::segment_name(n)));
     tokio::fs::write(&tmp, out).await?;
