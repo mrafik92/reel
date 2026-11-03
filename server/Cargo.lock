@@ -1806,6 +1806,7 @@ dependencies = [
  "futures-util",
  "http-body-util",
  "quick-xml",
+ "rand 0.8.8",
  "reel-auth",
  "reel-core",
  "reel-iptv",

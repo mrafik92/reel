@@ -87,7 +87,7 @@ impl AppState {
         let (events, _) = broadcast::channel(256);
         let images = ImageCache::new(&config.data_dir);
         let hw = HwAccelStatus::software();
-        let playback = SessionManager::new(session_config(&config), hw.selected.clone());
+        let playback = new_playback(&config, hw.selected.clone());
         let requests = RequestsService::new(db.clone(), None, events.clone());
         let key = match config.signing_secret.as_deref().filter(|s| s.len() >= 16) {
             Some(s) => s.as_bytes().to_vec(),
@@ -188,7 +188,7 @@ impl AppState {
 
     /// Use detected hardware acceleration (rebuilds the session manager).
     pub fn with_hwaccel(mut self, hw: HwAccelStatus) -> Self {
-        self.playback = SessionManager::new(session_config(&self.config), hw.selected.clone());
+        self.playback = new_playback(&self.config, hw.selected.clone());
         // IPTV transcodes (non-H.264 sources, e.g. MPEG-2 SD) use the same hardware encoder.
         self.iptv.live.set_hwaccel(hw.selected.clone());
         self.hwaccel = Arc::new(hw);
@@ -277,6 +277,19 @@ impl AppState {
         self.restart_watcher().await;
         Ok(id)
     }
+}
+
+/// Session manager wired to the upstream proxy: ffmpeg/ffprobe fetch provider URLs only through
+/// a loopback endpoint backed by the SSRF-guarded HTTP client.
+fn new_playback(config: &reel_core::Config, hw: reel_playback::HwAccel) -> Arc<SessionManager> {
+    let m = SessionManager::new(session_config(config), hw);
+    let allow = config.allow_private_fetch;
+    m.media()
+        .set_upstream(reel_playback::upstream::UpstreamProxy::new(
+            reel_iptv::net::client(allow),
+            Arc::new(move |u: &str| reel_iptv::net::check_url(u, allow).map_err(|e| e.to_string())),
+        ));
+    m
 }
 
 fn session_config(config: &reel_core::Config) -> SessionConfig {

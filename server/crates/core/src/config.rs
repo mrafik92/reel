@@ -46,6 +46,8 @@ pub struct Config {
     pub public_url: Option<String>,
     /// Trust `X-Forwarded-For` / `X-Real-IP` for the client IP (set when behind Caddy/nginx).
     pub trust_proxy_headers: bool,
+    /// Seconds between session re-validation of open `/events` sockets (default 30).
+    pub ws_recheck_secs: u64,
     /// Reverse proxies (CIDRs, e.g. `["172.18.0.0/16"]`) whose `X-Forwarded-For` is believed: the
     /// client is the right-most entry that is not itself a trusted proxy. Empty (default) = the
     /// headers are ignored. `trust_proxy_headers` is a deprecated alias meaning "trust private-range
@@ -108,6 +110,7 @@ impl Default for Config {
             cors_origins: Vec::new(),
             public_url: None,
             trust_proxy_headers: false,
+            ws_recheck_secs: 30,
             trusted_proxies: Vec::new(),
             max_body_bytes: 4 * 1024 * 1024,
             iptv_grace_secs: 15,

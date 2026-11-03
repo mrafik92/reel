@@ -32,6 +32,11 @@ function lockoutText(left: number): string {
   return left > 60 ? `Too many attempts. Try again in ${Math.ceil(left / 60)} min.` : `Too many attempts. Try again in ${left}s.`;
 }
 
+/** Post-login redirect target: same-origin paths only (`//host` and `/\host` would leave the site). */
+export function safeNext(next: string | undefined): string {
+  return next && /^\/(?![/\\])/.test(next) ? next : "/";
+}
+
 export function Login(): JSX.Element {
   const navigate = useNavigate();
   const [params] = useSearchParams<{ next?: string }>();
@@ -49,7 +54,7 @@ export function Login(): JSX.Element {
     setError(undefined);
     try {
       await login(username().trim(), password());
-      navigate(params.next && params.next.charAt(0) === "/" ? params.next : "/", { replace: true });
+      navigate(safeNext(params.next), { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.status === 429) {
         startCountdown(err.retryAfter ?? 60);

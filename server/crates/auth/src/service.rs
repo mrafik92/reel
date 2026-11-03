@@ -583,6 +583,23 @@ impl AuthService {
         Ok((user, s))
     }
 
+    /// Is this auth session still usable (not revoked / expired, user not disabled)? Used to cut
+    /// long-lived sockets when access is withdrawn. Does not extend the session.
+    pub async fn session_valid(&self, session_id: i64, user_id: i64) -> bool {
+        let now = now_unix();
+        let row: Option<(Option<i64>, Option<i64>, i64)> = sqlx::query_as(
+            "SELECT s.expires_at, s.abs_expires_at, u.disabled FROM sessions_auth s \
+             JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.user_id = ?",
+        )
+        .bind(session_id)
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten();
+        matches!(row, Some((exp, abs, 0)) if exp.is_none_or(|e| e > now) && abs.is_none_or(|a| a > now))
+    }
+
     pub async fn logout(&self, session_id: i64) -> AuthResult<()> {
         sqlx::query("DELETE FROM sessions_auth WHERE id = ?")
             .bind(session_id)

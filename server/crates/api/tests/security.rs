@@ -897,3 +897,99 @@ fn client_supplied_device_profiles_cannot_force_a_hevc_encode_for_non_admins() {
         "admins are trusted as they are"
     );
 }
+
+// ───────────── websockets ─────────────
+
+async fn serve(e: &Env) -> SocketAddr {
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    let r = e.raw.clone();
+    tokio::spawn(async move { axum::serve(l, r).await.unwrap() });
+    addr
+}
+
+#[tokio::test]
+async fn websockets_use_single_use_tickets_are_capped_and_closed_when_access_is_revoked() {
+    use futures_util::StreamExt;
+    let e = env_with(|c| c.ws_recheck_secs = 1, opts(100, 100), true).await;
+    let addr = serve(&e).await;
+    let login = e
+        .state
+        .auth
+        .login("admin", PW, dev("127.0.0.1"))
+        .await
+        .unwrap();
+    let admin = authed_as(&e, &login.token);
+    let ticket = || {
+        let admin = admin.clone();
+        async move {
+            api(&admin, "POST", "/api/v1/auth/ws-ticket", None).await.1["ticket"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }
+    };
+    assert_eq!(
+        api(&e.raw, "POST", "/api/v1/auth/ws-ticket", None).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let url = |t: &str| format!("ws://{addr}/api/v1/events?ticket={t}");
+    // a ticket opens exactly one socket
+    let t = ticket().await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(url(&t)).await.unwrap();
+    let again = tokio_tungstenite::connect_async(url(&t)).await.unwrap_err();
+    assert!(
+        matches!(again, tokio_tungstenite::tungstenite::Error::Http(ref r) if r.status() == 401),
+        "{again:?}"
+    );
+    let bogus = tokio_tungstenite::connect_async(url("nope"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(bogus, tokio_tungstenite::tungstenite::Error::Http(ref r) if r.status() == 401)
+    );
+    // per-user cap: the 9th concurrent socket is refused
+    let mut open = vec![];
+    for _ in 0..7 {
+        open.push(
+            tokio_tungstenite::connect_async(url(&ticket().await))
+                .await
+                .unwrap()
+                .0,
+        );
+    }
+    let over = tokio_tungstenite::connect_async(url(&ticket().await))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(over, tokio_tungstenite::tungstenite::Error::Http(ref r) if r.status() == 429),
+        "{over:?}"
+    );
+    drop(open);
+    // revoking the session closes the open socket
+    e.state.auth.revoke_all_sessions(1).await.unwrap();
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match ws.next().await {
+                None
+                | Some(Err(_))
+                | Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) => break true,
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await;
+    assert_eq!(closed, Ok(true), "socket closed after revoke");
+    // the deprecated ?token= still works for one release (new session)
+    let l2 = e
+        .state
+        .auth
+        .login("admin", PW, dev("127.0.0.1"))
+        .await
+        .unwrap();
+    assert!(
+        tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/events?token={}", l2.token))
+            .await
+            .is_ok()
+    );
+}
