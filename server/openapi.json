@@ -1651,6 +1651,24 @@
         }
       }
     },
+    "/api/v1/auth/ws-ticket": {
+      "post": {
+        "summary": "A 60-second, single-use ticket for opening the `/events` WebSocket without putting the session\ntoken in the URL.",
+        "operationId": "ws_ticket",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WsTicket"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/browse/lanes": {
       "get": {
         "summary": "Personalised browse lanes (per user: watch state; cached TMDB recommendations).",
@@ -2300,13 +2318,25 @@
     },
     "/api/v1/events": {
       "get": {
-        "summary": "WebSocket stream of [`ServerEvent`]s as JSON text frames. Authenticate with\n`Authorization: Bearer` or `?token=`. `request_progress` is delivered to the requester (and\nadmins); `scan_progress` to admins only.",
+        "summary": "WebSocket stream of [`ServerEvent`]s as JSON text frames. Authenticate with `?ticket=` (from\n`POST /auth/ws-ticket`), `Authorization: Bearer`, or the deprecated `?token=`. The socket is\nclosed when the session is revoked or the user disabled; at most 8 sockets per user. `request_progress` is delivered to the requester (and\nadmins); `scan_progress` to admins only.",
         "operationId": "events",
         "parameters": [
           {
+            "name": "ticket",
+            "in": "query",
+            "description": "Single-use ticket from `POST /auth/ws-ticket` (preferred; browsers cannot set headers on\nWebSocket upgrades).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "token",
             "in": "query",
-            "description": "Session token (browsers cannot set headers on WebSocket upgrades).",
+            "description": "Deprecated: the session token in the URL (ends up in logs). Still accepted for one release.",
             "required": false,
             "schema": {
               "type": [
@@ -2322,6 +2352,16 @@
           },
           "401": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many open sockets",
             "content": {
               "application/json": {
                 "schema": {
@@ -5564,7 +5604,7 @@
           {
             "name": "token",
             "in": "query",
-            "description": "Shared secret (`webhook_secret` in the config).",
+            "description": "Deprecated: shared secret in the URL (leaks into logs). Send it as the `X-Reel-Token`\nheader, a Bearer token or the HTTP Basic password instead. Must be at least 32 characters.",
             "required": false,
             "schema": {
               "type": [
@@ -6870,7 +6910,18 @@
               },
               {
                 "$ref": "#/components/schemas/LimitsDto",
-                "description": "Limits preset for the new user."
+                "description": "Limits preset for the new user (default: 2 streams, 1 transcode, 8 Mbit/s, 3 movie + 3 show\nrequests per 7 days)."
+              }
+            ]
+          },
+          "permissions": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PermissionsDto",
+                "description": "Feature permissions of the new user (default: none - live TV, VOD, requests and casting\nare granted explicitly)."
               }
             ]
           }
@@ -6994,6 +7045,17 @@
           },
           "password": {
             "type": "string"
+          },
+          "permissions": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PermissionsDto",
+                "description": "Feature permissions (default: all on for accounts an admin creates directly)."
+              }
+            ]
           },
           "role": {
             "oneOf": [
@@ -8001,6 +8063,7 @@
           "url",
           "library_ids",
           "limits",
+          "permissions",
           "status"
         ],
         "properties": {
@@ -8027,6 +8090,10 @@
           },
           "limits": {
             "$ref": "#/components/schemas/LimitsDto"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/PermissionsDto",
+            "description": "Permissions of the account the invite creates."
           },
           "status": {
             "type": "string",
@@ -8686,7 +8753,8 @@
           "id",
           "username",
           "role",
-          "limits"
+          "limits",
+          "permissions"
         ],
         "properties": {
           "id": {
@@ -8706,6 +8774,10 @@
           },
           "limits": {
             "$ref": "#/components/schemas/LimitsDto"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/PermissionsDto",
+            "description": "Effective permissions (all true for admins)."
           },
           "role": {
             "$ref": "#/components/schemas/RoleDto"
@@ -8902,6 +8974,17 @@
             ],
             "description": "Admin password reset; signs the user out everywhere."
           },
+          "permissions": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PermissionsDto",
+                "description": "Replaces the feature permissions."
+              }
+            ]
+          },
           "role": {
             "oneOf": [
               {
@@ -8917,6 +9000,34 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PermissionsDto": {
+        "type": "object",
+        "description": "What a user may use. Admins can do everything regardless.",
+        "required": [
+          "iptv_access",
+          "vod_access",
+          "can_request",
+          "can_cast"
+        ],
+        "properties": {
+          "can_cast": {
+            "type": "boolean",
+            "description": "Play on TVs (DLNA devices)."
+          },
+          "can_request": {
+            "type": "boolean",
+            "description": "Request movies / shows (and see requests)."
+          },
+          "iptv_access": {
+            "type": "boolean",
+            "description": "Live TV (IPTV channels, guide)."
+          },
+          "vod_access": {
+            "type": "boolean",
+            "description": "Provider VOD catalog."
           }
         }
       },
@@ -9925,6 +10036,13 @@
             "type": "string",
             "description": "At least 8 characters."
           },
+          "setup_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One-time token printed in the server log at first boot (needed when not on the LAN)."
+          },
           "username": {
             "type": "string"
           }
@@ -10655,6 +10773,7 @@
           "disabled",
           "created_at",
           "limits",
+          "permissions",
           "library_ids"
         ],
         "properties": {
@@ -10679,6 +10798,9 @@
           },
           "limits": {
             "$ref": "#/components/schemas/LimitsDto"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/PermissionsDto"
           },
           "role": {
             "$ref": "#/components/schemas/RoleDto"
@@ -11343,6 +11465,24 @@
               "type": "string"
             },
             "description": "Paths that were re-scanned into the library."
+          }
+        }
+      },
+      "WsTicket": {
+        "type": "object",
+        "required": [
+          "ticket",
+          "expires_in_s"
+        ],
+        "properties": {
+          "expires_in_s": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "ticket": {
+            "type": "string",
+            "description": "Pass as `/events?ticket=…` within `expires_in_s`; valid once."
           }
         }
       }
