@@ -7601,6 +7601,54 @@
           }
         }
       },
+      "EpgSourceDto": {
+        "type": "object",
+        "required": [
+          "url",
+          "provider",
+          "channels",
+          "programmes",
+          "matched"
+        ],
+        "properties": {
+          "channels": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Guide channels this import delivered (channels already carried by an earlier guide excluded)."
+          },
+          "last_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "matched": {
+            "type": "integer",
+            "format": "int64",
+            "description": "This source's channels linked to a channel of this guide."
+          },
+          "programmes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Programmes stored from this guide."
+          },
+          "provider": {
+            "type": "boolean",
+            "description": "The provider's own XMLTV (Xtream `xmltv.php` / playlist `x-tvg-url`) rather than an added URL."
+          },
+          "url": {
+            "type": "string",
+            "description": "Guide URL (credentials masked)."
+          }
+        }
+      },
       "ErrorBody": {
         "type": "object",
         "required": [
@@ -9826,7 +9874,18 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Deprecated: same as `epg_urls: [epg_url]`."
+          },
+          "epg_urls": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "External guide (XMLTV, optionally .gz) URLs in precedence order."
           },
           "kind": {
             "type": "string",
@@ -9882,6 +9941,8 @@
           "kind",
           "url",
           "password_set",
+          "epg_urls",
+          "epg_sources",
           "enabled",
           "channel_count",
           "epg_channel_count",
@@ -9933,11 +9994,26 @@
             "format": "int64",
             "description": "Programmes stored for this source's channels."
           },
+          "epg_sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EpgSourceDto"
+            },
+            "description": "Import result per guide (provider guide first, then `epg_urls` in order)."
+          },
           "epg_url": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Deprecated: first entry of `epg_urls`."
+          },
+          "epg_urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "External guide (XMLTV) URLs in precedence order. The provider's own guide (when it has one)\nis imported first, then each of these; for a channel carried by several guides the earlier\none wins."
           },
           "id": {
             "type": "integer",
@@ -10038,7 +10114,17 @@
               "string",
               "null"
             ],
-            "description": "Empty string clears."
+            "description": "Deprecated: replaces the list with this single URL (empty string clears)."
+          },
+          "epg_urls": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replace the external guide URL list (empty list clears). Omit to keep it."
           },
           "max_connections": {
             "type": [
