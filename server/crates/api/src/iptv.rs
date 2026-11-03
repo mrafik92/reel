@@ -769,7 +769,14 @@ pub struct SourceDto {
     pub password_set: bool,
     /// Provider connection limit (`null` = unlimited / unknown).
     pub max_connections: Option<u32>,
+    /// Deprecated: first entry of `epg_urls`.
     pub epg_url: Option<String>,
+    /// External guide (XMLTV) URLs in precedence order. The provider's own guide (when it has one)
+    /// is imported first, then each of these; for a channel carried by several guides the earlier
+    /// one wins.
+    pub epg_urls: Vec<String>,
+    /// Import result per guide (provider guide first, then `epg_urls` in order).
+    pub epg_sources: Vec<EpgSourceDto>,
     pub detected_epg_url: Option<String>,
     /// Minutes between refreshes; `null` = default (12 h); 0 = manual only.
     pub refresh_interval: Option<i64>,
@@ -798,8 +805,64 @@ pub struct SourceDto {
     pub open_connections: usize,
 }
 
-fn source_dto(st: &AppState, s: &Source) -> SourceDto {
+#[derive(Debug, Serialize, ToSchema)]
+pub struct EpgSourceDto {
+    /// Guide URL (credentials masked).
+    pub url: String,
+    /// The provider's own XMLTV (Xtream `xmltv.php` / playlist `x-tvg-url`) rather than an added URL.
+    pub provider: bool,
+    /// Guide channels this import delivered (channels already carried by an earlier guide excluded).
+    pub channels: i64,
+    /// Programmes stored from this guide.
+    pub programmes: i64,
+    /// This source's channels linked to a channel of this guide.
+    pub matched: i64,
+    pub last_error: Option<String>,
+    pub last_at: Option<i64>,
+}
+
+async fn epg_sources(st: &AppState, s: &Source) -> Vec<EpgSourceDto> {
+    let rows = store::guide_stats(&st.db, s.id).await.unwrap_or_default();
+    let mut out: Vec<EpgSourceDto> = vec![];
+    let dto = |r: &store::GuideStat| EpgSourceDto {
+        url: r.url.clone(),
+        provider: r.provider,
+        channels: r.channels,
+        programmes: r.programmes,
+        matched: r.matched,
+        last_error: r.last_error.as_deref().map(reel_iptv::net::redact_text),
+        last_at: r.last_at,
+    };
+    if let Some(p) = rows.iter().find(|r| r.provider) {
+        out.push(dto(p));
+    }
+    // external guides: positional (rank = index + 1), listed even before their first import
+    let ext: Vec<&store::GuideStat> = rows.iter().filter(|r| !r.provider).collect();
+    for (i, u) in s.epg_urls.iter().enumerate() {
+        let shown = reel_iptv::net::redact_url(u);
+        match ext.iter().find(|r| r.url == shown) {
+            Some(r) => out.push(dto(r)),
+            None => {
+                let _ = i;
+                out.push(EpgSourceDto {
+                    url: shown,
+                    provider: false,
+                    channels: 0,
+                    programmes: 0,
+                    matched: 0,
+                    last_error: None,
+                    last_at: None,
+                })
+            }
+        }
+    }
+    out
+}
+
+async fn source_dto(st: &AppState, s: &Source) -> SourceDto {
     SourceDto {
+        epg_urls: s.epg_urls.clone(),
+        epg_sources: epg_sources(st, s).await,
         id: s.id,
         name: s.name.clone(),
         kind: s.kind.as_str().into(),
@@ -807,7 +870,7 @@ fn source_dto(st: &AppState, s: &Source) -> SourceDto {
         username: s.username.clone(),
         password_set: s.password.as_deref().is_some_and(|p| !p.is_empty()),
         max_connections: s.max_connections,
-        epg_url: s.epg_url.clone(),
+        epg_url: s.epg_urls.first().cloned(),
         // credentials in the guide URL (Xtream `xmltv.php?username=…&password=…`) are masked
         detected_epg_url: s
             .detected_epg_url
@@ -845,7 +908,11 @@ pub async fn list_sources(
     _a: AdminUser,
 ) -> ApiResult<Json<Vec<SourceDto>>> {
     let s = store::list_sources(&st.db).await?;
-    Ok(Json(s.iter().map(|s| source_dto(&st, s)).collect()))
+    let mut out = Vec::with_capacity(s.len());
+    for x in &s {
+        out.push(source_dto(&st, x).await);
+    }
+    Ok(Json(out))
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -858,7 +925,10 @@ pub struct SourceBody {
     pub username: Option<String>,
     pub password: Option<String>,
     pub max_connections: Option<u32>,
+    /// Deprecated: same as `epg_urls: [epg_url]`.
     pub epg_url: Option<String>,
+    /// External guide (XMLTV, optionally .gz) URLs in precedence order.
+    pub epg_urls: Option<Vec<String>>,
     pub refresh_interval: Option<i64>,
     pub user_agent: Option<String>,
     #[serde(default = "yes")]
@@ -879,6 +949,34 @@ fn validate_url(st: &AppState, u: &str) -> ApiResult<()> {
     Ok(())
 }
 
+/// New guide list from `epg_urls` (preferred) or the deprecated `epg_url` (empty string clears);
+/// neither given keeps `current`. Trimmed, de-duplicated, each validated like any fetched URL.
+fn resolve_urls(
+    st: &AppState,
+    urls: Option<Vec<String>>,
+    legacy: Option<String>,
+    current: &[String],
+) -> ApiResult<Vec<String>> {
+    let Some(list) = urls.or_else(|| legacy.map(|u| vec![u])) else {
+        return Ok(current.to_vec());
+    };
+    let mut out: Vec<String> = vec![];
+    for u in list.iter().map(|u| u.trim()).filter(|u| !u.is_empty()) {
+        validate_url(st, u)?;
+        if !out.iter().any(|x| x == u) {
+            out.push(u.to_string());
+        }
+    }
+    if out.len() > 20 {
+        return Err(ApiError::BadRequest("at most 20 guide URLs".into()));
+    }
+    Ok(out)
+}
+
+fn urls_json(urls: &[String]) -> Option<String> {
+    (!urls.is_empty()).then(|| serde_json::to_string(urls).unwrap_or_default())
+}
+
 fn validate_source(st: &AppState, b: &SourceBody) -> ApiResult<SourceKind> {
     let kind = SourceKind::parse(&b.kind)
         .ok_or_else(|| ApiError::BadRequest("kind must be m3u or xtream".into()))?;
@@ -886,9 +984,7 @@ fn validate_source(st: &AppState, b: &SourceBody) -> ApiResult<SourceKind> {
         return Err(ApiError::BadRequest("name must not be empty".into()));
     }
     validate_url(st, b.url.trim())?;
-    if let Some(e) = b.epg_url.as_deref().filter(|e| !e.is_empty()) {
-        validate_url(st, e)?;
-    }
+    resolve_urls(st, b.epg_urls.clone(), b.epg_url.clone(), &[])?;
     if kind == SourceKind::Xtream
         && (b.username.as_deref().is_none_or(str::is_empty)
             || b.password.as_deref().is_none_or(str::is_empty))
@@ -913,9 +1009,10 @@ pub async fn create_source(
     Json(b): Json<SourceBody>,
 ) -> ApiResult<(StatusCode, Json<SourceDto>)> {
     let kind = validate_source(&st, &b)?;
+    let urls = resolve_urls(&st, b.epg_urls.clone(), b.epg_url.clone(), &[])?;
     let id = sqlx::query(
         "INSERT INTO iptv_sources (name, kind, url, username, password, max_connections, epg_url, \
-         refresh_interval, user_agent, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         epg_urls, refresh_interval, user_agent, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(b.name.trim())
     .bind(kind.as_str())
@@ -923,7 +1020,8 @@ pub async fn create_source(
     .bind(&b.username)
     .bind(&b.password)
     .bind(b.max_connections.map(i64::from))
-    .bind(b.epg_url.as_deref().filter(|e| !e.is_empty()))
+    .bind(urls.first())
+    .bind(urls_json(&urls))
     .bind(b.refresh_interval)
     .bind(b.user_agent.as_deref().filter(|e| !e.is_empty()))
     .bind(i64::from(b.enabled))
@@ -941,7 +1039,7 @@ pub async fn create_source(
         st.iptv.spawn_refresh(id);
     }
     let s = store::get_source(&st.db, id).await?;
-    Ok((StatusCode::CREATED, Json(source_dto(&st, &s))))
+    Ok((StatusCode::CREATED, Json(source_dto(&st, &s).await)))
 }
 
 /// One source.
@@ -956,7 +1054,9 @@ pub async fn get_source(
     _a: AdminUser,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<SourceDto>> {
-    Ok(Json(source_dto(&st, &store::get_source(&st.db, id).await?)))
+    Ok(Json(
+        source_dto(&st, &store::get_source(&st.db, id).await?).await,
+    ))
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -968,8 +1068,10 @@ pub struct SourcePatch {
     pub password: Option<String>,
     /// Use `0` for "unlimited".
     pub max_connections: Option<u32>,
-    /// Empty string clears.
+    /// Deprecated: replaces the list with this single URL (empty string clears).
     pub epg_url: Option<String>,
+    /// Replace the external guide URL list (empty list clears). Omit to keep it.
+    pub epg_urls: Option<Vec<String>>,
     pub refresh_interval: Option<i64>,
     pub user_agent: Option<String>,
     pub enabled: Option<bool>,
@@ -993,9 +1095,7 @@ pub async fn update_source(
     if let Some(u) = p.url.as_deref() {
         validate_url(&st, u.trim())?;
     }
-    if let Some(u) = p.epg_url.as_deref().filter(|e| !e.is_empty()) {
-        validate_url(&st, u)?;
-    }
+    let urls = resolve_urls(&st, p.epg_urls.clone(), p.epg_url.clone(), &cur.epg_urls)?;
     let empty_to_none = |s: Option<String>, cur: Option<String>| match s {
         Some(v) if v.is_empty() => None,
         Some(v) => Some(v),
@@ -1003,7 +1103,7 @@ pub async fn update_source(
     };
     sqlx::query(
         "UPDATE iptv_sources SET name = ?, url = ?, username = ?, password = ?, max_connections = ?, \
-         epg_url = ?, refresh_interval = ?, user_agent = ?, enabled = ? WHERE id = ?",
+         epg_url = ?, epg_urls = ?, refresh_interval = ?, user_agent = ?, enabled = ? WHERE id = ?",
     )
     .bind(p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(&cur.name))
     .bind(p.url.as_deref().map(str::trim).unwrap_or(&cur.url))
@@ -1014,7 +1114,8 @@ pub async fn update_source(
         Some(n) => Some(i64::from(n)),
         None => cur.max_connections.map(i64::from),
     })
-    .bind(empty_to_none(p.epg_url, cur.epg_url))
+    .bind(urls.first())
+    .bind(urls_json(&urls))
     .bind(p.refresh_interval.or(cur.refresh_interval))
     .bind(empty_to_none(p.user_agent, cur.user_agent))
     .bind(i64::from(p.enabled.unwrap_or(cur.enabled)))
@@ -1028,7 +1129,9 @@ pub async fn update_source(
         Value::Null,
     )
     .await;
-    Ok(Json(source_dto(&st, &store::get_source(&st.db, id).await?)))
+    Ok(Json(
+        source_dto(&st, &store::get_source(&st.db, id).await?).await,
+    ))
 }
 
 /// Delete a source and all its channels.

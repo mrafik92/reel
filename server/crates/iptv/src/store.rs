@@ -43,7 +43,10 @@ pub struct Source {
     pub username: Option<String>,
     pub password: Option<String>,
     pub max_connections: Option<u32>,
+    /// Deprecated alias of the first entry of `epg_urls`.
     pub epg_url: Option<String>,
+    /// External guide URLs in precedence order.
+    pub epg_urls: Vec<String>,
     /// Minutes; `None` = default (12 h), `0` = manual only.
     pub refresh_interval: Option<i64>,
     pub user_agent: Option<String>,
@@ -67,10 +70,55 @@ pub struct Source {
     pub vod_series_count: i64,
 }
 
-pub const SOURCE_COLS: &str = "id, name, kind, url, username, password, max_connections, epg_url, \
+pub const SOURCE_COLS: &str = "id, name, kind, url, username, password, max_connections, epg_url, epg_urls, \
     refresh_interval, user_agent, enabled, detected_epg_url, last_refresh_at, last_epg_at, \
     last_error, channel_count, epg_channel_count, epg_programme_count, epg_matched_channels, \
     epg_mode, epg_note, vod_movie_count, vod_series_count";
+
+/// `epg_urls` JSON column, falling back to the legacy single `epg_url`.
+pub fn parse_urls(json: Option<String>, legacy: Option<String>) -> Vec<String> {
+    let v: Vec<String> = json
+        .and_then(|j| serde_json::from_str(&j).ok())
+        .unwrap_or_default();
+    if v.is_empty() {
+        return legacy.filter(|u| !u.is_empty()).into_iter().collect();
+    }
+    v
+}
+
+/// One guide of a source with its last import statistics.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GuideStat {
+    pub url: String,
+    pub provider: bool,
+    pub channels: i64,
+    pub programmes: i64,
+    pub matched: i64,
+    pub last_error: Option<String>,
+    pub last_at: Option<i64>,
+}
+
+pub async fn guide_stats(pool: &SqlitePool, source_id: i64) -> Result<Vec<GuideStat>> {
+    let rows = sqlx::query(
+        "SELECT url, provider, channels, programmes, matched, last_error, last_at \
+         FROM iptv_epg_sources WHERE source_id = ? ORDER BY rank",
+    )
+    .bind(source_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| GuideStat {
+            url: r.get("url"),
+            provider: r.get::<i64, _>("provider") != 0,
+            channels: r.get("channels"),
+            programmes: r.get("programmes"),
+            matched: r.get("matched"),
+            last_error: r.get("last_error"),
+            last_at: r.get("last_at"),
+        })
+        .collect())
+}
 
 fn source_from_row(r: &SqliteRow) -> Source {
     Source {
@@ -84,6 +132,7 @@ fn source_from_row(r: &SqliteRow) -> Source {
             .get::<Option<i64>, _>("max_connections")
             .map(|n| n.max(0) as u32),
         epg_url: r.get("epg_url"),
+        epg_urls: parse_urls(r.get("epg_urls"), r.get("epg_url")),
         refresh_interval: r.get("refresh_interval"),
         user_agent: r.get("user_agent"),
         enabled: r.get::<i64, _>("enabled") != 0,

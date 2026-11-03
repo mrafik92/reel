@@ -336,17 +336,33 @@ impl Ingest {
 
     // ───────────── EPG ─────────────
 
-    async fn epg_file(&self, url: &str, ua: Option<&str>, id: i64) -> Result<(PathBuf, bool)> {
+    /// Fetch a guide to a temp file. Only the provider's own guide goes through the provider's
+    /// politeness gate and User-Agent; external hosts get one plain download per refresh.
+    async fn epg_file(
+        &self,
+        url: &str,
+        ua: Option<&str>,
+        id: i64,
+        rank: i64,
+        provider: bool,
+    ) -> Result<(PathBuf, bool)> {
         if let Some(p) = local_path(url) {
             return Ok((p, false));
         }
         tokio::fs::create_dir_all(&self.work_dir).await?;
-        let dest = self.work_dir.join(format!("epg-{id}.tmp"));
+        let dest = self.work_dir.join(format!("epg-{id}-{rank}.tmp"));
         let gate = self.gates.get(id);
-        gate.acquire(std::time::Duration::from_secs(120), true)
+        if provider {
+            gate.acquire(std::time::Duration::from_secs(120), true)
+                .await?;
+        }
+        let resp = self
+            .request(url, if provider { ua } else { None })?
+            .send()
             .await?;
-        let resp = self.request(url, ua)?.send().await?;
-        gate.report(resp.status().as_u16(), crate::gate::retry_after(&resp));
+        if provider {
+            gate.report(resp.status().as_u16(), crate::gate::retry_after(&resp));
+        }
         if !resp.status().is_success() {
             return Err(Error::Unavailable(format!(
                 "EPG download failed: HTTP {}",
@@ -362,7 +378,12 @@ impl Ingest {
         Ok((dest, true))
     }
 
-    async fn flush_epg_channels(&self, chans: &mut Vec<XmlChannel>) -> Result<usize> {
+    async fn flush_epg_channels(
+        &self,
+        chans: &mut Vec<XmlChannel>,
+        source_id: i64,
+        rank: i64,
+    ) -> Result<usize> {
         if chans.is_empty() {
             return Ok(0);
         }
@@ -371,18 +392,27 @@ impl Ingest {
         for c in chans.drain(..) {
             let first = c.names.first().cloned().unwrap_or_else(|| c.id.clone());
             sqlx::query(
-                "INSERT INTO epg_channels (id, name, norm_name, icon) VALUES (?, ?, ?, ?) \
+                "INSERT INTO epg_channels (id, name, norm_name, icon, guide_source, rank) \
+                 VALUES (?, ?, ?, ?, ?, ?) \
                  ON CONFLICT(id) DO UPDATE SET name = excluded.name, \
-                 norm_name = excluded.norm_name, icon = COALESCE(excluded.icon, icon)",
+                 norm_name = excluded.norm_name, icon = COALESCE(excluded.icon, icon), \
+                 guide_source = excluded.guide_source, rank = excluded.rank",
             )
             .bind(&c.id)
             .bind(&first)
             .bind(norm_name(&first))
             .bind(&c.icon)
+            .bind(source_id)
+            .bind(rank)
             .execute(&mut *tx)
             .await?;
-            for name in c.names.iter().chain(std::iter::once(&c.id)) {
-                let k = norm_name(name);
+            let id_key = epg::norm_id(&c.id);
+            for k in c
+                .names
+                .iter()
+                .map(|n| norm_name(n))
+                .chain(std::iter::once(id_key))
+            {
                 if !k.is_empty() {
                     sqlx::query(
                         "INSERT OR IGNORE INTO epg_channel_names (epg_id, norm_name) VALUES (?, ?)",
@@ -424,20 +454,176 @@ impl Ingest {
         Ok(inserted)
     }
 
-    /// Download + stream-parse the guide, map channels, keep only wanted channels inside the window.
+    /// Guides of a source in precedence order: the provider's own XMLTV first (Xtream `xmltv.php`,
+    /// or the playlist's `x-tvg-url`), then each external URL. `(url, is_provider)`.
+    fn guide_list(&self, src: &Source) -> Vec<(String, bool)> {
+        let mut v: Vec<(String, bool)> = vec![];
+        let provider = src.detected_epg_url.clone().or_else(|| {
+            (src.kind == SourceKind::Xtream)
+                .then(|| self.xtream(src).ok().map(|x| x.xmltv_url()))
+                .flatten()
+        });
+        if let Some(p) = provider {
+            v.push((p, true));
+        }
+        for u in &src.epg_urls {
+            if !v.iter().any(|(x, _)| x == u) {
+                v.push((u.clone(), false));
+            }
+        }
+        v
+    }
+
+    /// Import every guide of the source in order. An earlier guide wins when several carry the same
+    /// channel. A failing guide is recorded on its own row (`iptv_epg_sources.last_error`) and the
+    /// next one still runs; the call fails only when no guide delivered anything.
     pub async fn refresh_epg(&self, src: &Source) -> Result<EpgReport> {
-        let url = src
-            .epg_url
-            .clone()
-            .or_else(|| src.detected_epg_url.clone())
-            .or_else(|| {
-                (src.kind == SourceKind::Xtream)
-                    .then(|| self.xtream(src).ok().map(|x| x.xmltv_url()))
-                    .flatten()
-            })
-            .ok_or_else(|| Error::Invalid("this source has no EPG URL".into()))?;
+        let mut guides = self.guide_list(src);
+        if guides.is_empty() {
+            return Err(Error::Invalid("this source has no EPG URL".into()));
+        }
+        // a provider guide that was empty recently is not worth another heavy call while external
+        // guides exist (it stays listed with its last result)
+        let has_external = guides.iter().any(|(_, p)| !*p);
+        let mut skipped_provider = false;
+        if has_external {
+            let row: Option<(i64, Option<i64>)> = sqlx::query_as(
+                "SELECT programmes, last_at FROM iptv_epg_sources WHERE source_id = ? AND rank = 0 AND provider = 1",
+            )
+            .bind(src.id)
+            .fetch_optional(&self.pool)
+            .await?;
+            if let Some((0, Some(at))) = row {
+                if now_unix() - at < 24 * 3600 {
+                    guides.retain(|(_, p)| !*p);
+                    skipped_provider = true;
+                }
+            }
+        }
+        // every guide re-claims its channels with its current rank (the list may have been reordered)
+        sqlx::query("UPDATE epg_channels SET rank = 1000 WHERE guide_source = ?")
+            .bind(src.id)
+            .execute(&self.pool)
+            .await?;
+        let mut claimed: HashSet<String> = HashSet::new();
+        let mut total = EpgReport::default();
+        let mut errors: Vec<String> = vec![];
+        let mut ok = 0usize;
+        let _ = skipped_provider;
+        for (i, (url, provider)) in guides.iter().enumerate() {
+            // rank 0 is reserved for the provider guide, external URLs are 1.. in list order
+            let rank = if *provider {
+                0
+            } else {
+                1 + src.epg_urls.iter().position(|u| u == url).unwrap_or(i)
+            } as i64;
+            let shown = crate::net::redact_url(url);
+            let _ = sqlx::query(
+                "INSERT INTO iptv_epg_sources (source_id, rank, url, provider) VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT(source_id, rank) DO UPDATE SET url = ?3, provider = ?4",
+            )
+            .bind(src.id)
+            .bind(rank)
+            .bind(&shown)
+            .bind(i64::from(*provider))
+            .execute(&self.pool)
+            .await;
+            match self
+                .ingest_guide(src, url, *provider, rank, &mut claimed)
+                .await
+            {
+                Ok((r, own)) => {
+                    ok += 1;
+                    claimed.extend(own);
+                    let _ = sqlx::query(
+                        "UPDATE iptv_epg_sources SET channels = ?3, programmes = ?4, last_error = NULL, \
+                         last_at = ?5 WHERE source_id = ?1 AND rank = ?2",
+                    )
+                    .bind(src.id)
+                    .bind(rank)
+                    .bind(r.epg_channels as i64)
+                    .bind(r.programmes_inserted as i64)
+                    .bind(now_unix())
+                    .execute(&self.pool)
+                    .await;
+                    total.epg_channels += r.epg_channels;
+                    total.programmes_seen += r.programmes_seen;
+                    total.programmes_kept += r.programmes_kept;
+                    total.programmes_inserted += r.programmes_inserted;
+                }
+                Err(e) => {
+                    let msg = crate::net::redact_text(&e.to_string());
+                    warn!(source = src.id, guide = %shown, "guide failed: {msg}");
+                    let _ = sqlx::query(
+                        "UPDATE iptv_epg_sources SET channels = 0, programmes = 0, last_error = ?3, \
+                         last_at = ?4 WHERE source_id = ?1 AND rank = ?2",
+                    )
+                    .bind(src.id)
+                    .bind(rank)
+                    .bind(&msg)
+                    .bind(now_unix())
+                    .execute(&self.pool)
+                    .await;
+                    errors.push(msg);
+                }
+            }
+        }
+        // drop rows of URLs that were removed from the list
+        let keep: Vec<i64> = (0..=src.epg_urls.len() as i64).collect();
+        let _ = sqlx::query(&format!(
+            "DELETE FROM iptv_epg_sources WHERE source_id = ? AND rank NOT IN ({})",
+            keep.iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        ))
+        .bind(src.id)
+        .execute(&self.pool)
+        .await;
+        total.channels_mapped = epg::map_channels(&self.pool).await?;
+        // per-guide matches + source totals
+        let _ = sqlx::query(
+            "UPDATE iptv_epg_sources SET matched = (SELECT count(*) FROM channels c WHERE \
+             c.source_id = iptv_epg_sources.source_id AND c.missing = 0 AND c.epg_channel_id IN \
+             (SELECT id FROM epg_channels WHERE guide_source = iptv_epg_sources.source_id \
+              AND rank = iptv_epg_sources.rank)) WHERE source_id = ?",
+        )
+        .bind(src.id)
+        .execute(&self.pool)
+        .await;
+        self.store_epg_stats(src.id).await?;
+        if ok == 0 {
+            return Err(Error::Parse(match errors.len() {
+                1 => errors.remove(0),
+                _ => format!("no guide delivered data: {}", errors.join(" | ")),
+            }));
+        }
+        let now = now_unix();
+        sqlx::query(
+            "UPDATE iptv_sources SET last_epg_at = ?, epg_mode = 'xmltv', epg_note = NULL, \
+             last_error = CASE WHEN last_error LIKE 'EPG:%' THEN NULL ELSE last_error END \
+             WHERE id = ?",
+        )
+        .bind(now)
+        .bind(src.id)
+        .execute(&self.pool)
+        .await?;
+        info!(source = src.id, ?total, "EPG refreshed");
+        Ok(total)
+    }
+
+    /// Download + stream-parse one guide, map channels, keep only wanted channels inside the window.
+    /// Returns the report and the guide channel ids this guide owns (for precedence).
+    async fn ingest_guide(
+        &self,
+        src: &Source,
+        url: &str,
+        provider: bool,
+        rank: i64,
+        claimed: &mut HashSet<String>,
+    ) -> Result<(EpgReport, HashSet<String>)> {
         let (path, temp) = self
-            .epg_file(&url, src.user_agent.as_deref(), src.id)
+            .epg_file(url, src.user_agent.as_deref(), src.id, rank, provider)
             .await?;
         let sniff_path = path.clone();
         let verdict = tokio::task::spawn_blocking(move || xmltv::sniff_guide(&sniff_path))
@@ -463,21 +649,28 @@ impl Ingest {
         });
 
         let mut report = EpgReport::default();
+        let mut own: HashSet<String> = HashSet::new();
         let mut pending_channels: Vec<XmlChannel> = Vec::new();
         let mut wanted: Option<HashSet<String>> = None;
         while let Some(msg) = rx.recv().await {
             match msg {
                 XmlMsg::Channel(c) => {
+                    if claimed.contains(&c.id) {
+                        continue;
+                    }
+                    own.insert(c.id.clone());
                     pending_channels.push(c);
                     if pending_channels.len() >= 500 {
-                        report.epg_channels +=
-                            self.flush_epg_channels(&mut pending_channels).await?;
+                        report.epg_channels += self
+                            .flush_epg_channels(&mut pending_channels, src.id, rank)
+                            .await?;
                     }
                 }
                 XmlMsg::Programmes(batch) => {
                     if wanted.is_none() {
-                        report.epg_channels +=
-                            self.flush_epg_channels(&mut pending_channels).await?;
+                        report.epg_channels += self
+                            .flush_epg_channels(&mut pending_channels, src.id, rank)
+                            .await?;
                         report.channels_mapped = epg::map_channels(&self.pool).await?;
                         wanted = Some(
                             sqlx::query_scalar::<_, String>(
@@ -494,13 +687,15 @@ impl Ingest {
                     let w = wanted.as_ref().expect("set above");
                     let keep: Vec<Programme> = batch
                         .into_iter()
-                        .filter(|p| w.contains(&p.channel))
+                        .filter(|p| w.contains(&p.channel) && !claimed.contains(&p.channel))
                         .collect();
                     report.programmes_inserted += self.insert_programmes(keep).await?;
                 }
             }
         }
-        report.epg_channels += self.flush_epg_channels(&mut pending_channels).await?;
+        report.epg_channels += self
+            .flush_epg_channels(&mut pending_channels, src.id, rank)
+            .await?;
         let stats = parser
             .await
             .map_err(|e| Error::Unavailable(format!("EPG parser crashed: {e}")))??;
@@ -524,7 +719,6 @@ impl Ingest {
             .bind(now - self.epg_back_secs)
             .execute(&self.pool)
             .await?;
-        self.store_epg_stats(src.id).await?;
         // Never report success without data.
         if report.programmes_seen == 0 {
             return Err(Error::Parse(if report.epg_channels == 0 {
@@ -553,17 +747,7 @@ impl Ingest {
                 )
             }));
         }
-        sqlx::query(
-            "UPDATE iptv_sources SET last_epg_at = ?, epg_mode = 'xmltv', epg_note = NULL, \
-             last_error = CASE WHEN last_error LIKE 'EPG:%' THEN NULL ELSE last_error END \
-             WHERE id = ?",
-        )
-        .bind(now)
-        .bind(src.id)
-        .execute(&self.pool)
-        .await?;
-        info!(source = src.id, ?report, "EPG refreshed");
-        Ok(report)
+        Ok((report, own))
     }
 
     /// Persist guide statistics for the admin UI.
@@ -617,7 +801,7 @@ impl Ingest {
             }
         };
         let fresh = crate::store::get_source(&self.pool, src.id).await?;
-        let (epg, epg_error) = if fresh.epg_url.is_some()
+        let (epg, epg_error) = if !fresh.epg_urls.is_empty()
             || fresh.detected_epg_url.is_some()
             || fresh.kind == SourceKind::Xtream
         {

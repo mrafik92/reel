@@ -458,8 +458,8 @@ async fn xtream_source_with_gzipped_http_guide() {
     assert_eq!(r.channels.total, 2);
     let epg = r.epg.expect("xmltv.php used automatically");
     assert_eq!(
-        epg.programmes_inserted, 3,
-        "BBC x3 (CNN has no tvg-id and no name match)"
+        epg.programmes_inserted, 4,
+        "BBC x3 + CNN (no tvg-id, but the guide id `cnn.us` matches by name once the country TLD is dropped)"
     );
     let src = store::get_source(&pool, sid).await.unwrap();
     assert_eq!(src.max_connections, Some(2), "taken from the account info");

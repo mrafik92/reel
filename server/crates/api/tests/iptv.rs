@@ -1489,3 +1489,84 @@ async fn one_slot_provider_budget_policy_same_user_newest_wins_others_429_admin_
     assert_eq!(s, 200, "{v}");
     e.state.iptv.shutdown().await;
 }
+
+#[tokio::test]
+async fn sources_take_a_list_of_guide_urls_with_per_guide_stats_and_a_legacy_alias() {
+    let e = env(|_| {}).await;
+    let guide = |n: &str| format!("http://127.0.0.1:9/{n}.xml.gz"); // never reachable: imports fail per guide
+    let (s, v) = send(
+        &e.admin,
+        "POST",
+        "/api/v1/admin/iptv/sources",
+        Some(
+            json!({"name":"S","kind":"m3u","url":"http://127.0.0.1:9/l.m3u","enabled":false,
+            "epg_urls":[guide("AE1"), format!("  {}  ", guide("UK1")), guide("AE1")]}),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["id"].as_i64().unwrap();
+    // trimmed + de-duplicated, order kept; legacy field = first entry; stats listed before any import
+    assert_eq!(v["epg_urls"], json!([guide("AE1"), guide("UK1")]));
+    assert_eq!(v["epg_url"], guide("AE1"));
+    let es = v["epg_sources"].as_array().unwrap();
+    assert_eq!(es.len(), 2);
+    assert_eq!(es[1]["url"], guide("UK1"));
+    assert_eq!(
+        (
+            es[0]["channels"].as_i64(),
+            es[0]["programmes"].as_i64(),
+            es[0]["matched"].as_i64(),
+            es[0]["provider"].as_bool()
+        ),
+        (Some(0), Some(0), Some(0), Some(false))
+    );
+    let uri = format!("/api/v1/admin/iptv/sources/{id}");
+    // PATCH: epg_urls replaces; omitted keeps
+    let (s, v) = send(&e.admin, "PATCH", &uri, Some(json!({"name":"S2"}))).await;
+    assert_eq!(
+        (s, v["epg_urls"].as_array().unwrap().len()),
+        (StatusCode::OK, 2)
+    );
+    let (_, v) = send(
+        &e.admin,
+        "PATCH",
+        &uri,
+        Some(json!({"epg_urls":[guide("BEIN1"), guide("AE1"), guide("US")]})),
+    )
+    .await;
+    assert_eq!(
+        v["epg_urls"],
+        json!([guide("BEIN1"), guide("AE1"), guide("US")])
+    );
+    // legacy alias: a single epg_url replaces the list; empty clears
+    let (_, v) = send(
+        &e.admin,
+        "PATCH",
+        &uri,
+        Some(json!({"epg_url": guide("ONLY")})),
+    )
+    .await;
+    assert_eq!(
+        (v["epg_urls"].clone(), v["epg_url"].clone()),
+        (json!([guide("ONLY")]), json!(guide("ONLY")))
+    );
+    let (_, v) = send(&e.admin, "PATCH", &uri, Some(json!({"epg_url": ""}))).await;
+    assert_eq!(
+        (v["epg_urls"].clone(), v["epg_url"].clone()),
+        (json!([]), Value::Null)
+    );
+    assert_eq!(v["epg_sources"], json!([]));
+    // validation applies to every entry
+    let (s, _) = send(
+        &e.admin,
+        "PATCH",
+        &uri,
+        Some(json!({"epg_urls":[guide("A"), "ftp://x/y.xml"]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // list endpoint carries the same fields
+    let (_, l) = get(&e.admin, "/api/v1/admin/iptv/sources").await;
+    assert!(l[0]["epg_urls"].is_array() && l[0]["epg_sources"].is_array());
+}

@@ -27,6 +27,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "process", "io-util", "fs", "macros", "net"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing.workspace = true
+unicode-normalization = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
