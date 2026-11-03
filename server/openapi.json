@@ -7608,9 +7608,15 @@
           "provider",
           "channels",
           "programmes",
-          "matched"
+          "matched",
+          "available"
         ],
         "properties": {
+          "available": {
+            "type": "integer",
+            "format": "int64",
+            "description": "This source's channels that have a name/id match in this guide, even if an earlier guide\nsupplies them."
+          },
           "channels": {
             "type": "integer",
             "format": "int64",
@@ -7632,7 +7638,7 @@
           "matched": {
             "type": "integer",
             "format": "int64",
-            "description": "This source's channels linked to a channel of this guide."
+            "description": "This source's channels that end up using a channel of this guide (the earliest guide that\nhas programmes for a channel supplies it)."
           },
           "programmes": {
             "type": "integer",
