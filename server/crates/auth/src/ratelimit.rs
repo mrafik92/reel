@@ -32,6 +32,9 @@ impl Default for LimiterConfig {
     }
 }
 
+/// Hard bound of tracked keys.
+const MAX_ENTRIES: usize = 20_000;
+
 struct Entry {
     failures: u32,
     locked_until: Option<Instant>,
@@ -41,6 +44,7 @@ struct Entry {
 pub struct RateLimiter {
     cfg: LimiterConfig,
     map: Mutex<HashMap<String, Entry>>,
+    last_sweep: Mutex<Instant>,
 }
 
 impl RateLimiter {
@@ -48,6 +52,7 @@ impl RateLimiter {
         Self {
             cfg,
             map: Mutex::default(),
+            last_sweep: Mutex::new(Instant::now()),
         }
     }
 
@@ -65,13 +70,79 @@ impl RateLimiter {
         }
     }
 
+    /// Atomically check the key and count an attempt *before* it is verified (so parallel guesses
+    /// cannot exceed the window). Give the attempt back with [`refund`](Self::refund) if it
+    /// turns out to be legitimate. `Err(retry_after)` while locked (nothing is counted).
+    pub fn reserve(&self, key: &str, threshold: u32) -> Result<(), Duration> {
+        let now = Instant::now();
+        {
+            let map = self.map.lock().unwrap();
+            if let Some(until) = map.get(key).and_then(|e| e.locked_until) {
+                if until > now {
+                    return Err(until - now);
+                }
+            }
+        }
+        self.fail(key, threshold);
+        Ok(())
+    }
+
+    /// Undo one [`reserve`](Self::reserve) (successful login).
+    pub fn refund(&self, key: &str, threshold: u32) {
+        let mut map = self.map.lock().unwrap();
+        if let Some(e) = map.get_mut(key) {
+            e.failures = e.failures.saturating_sub(1);
+            if e.failures < threshold {
+                e.locked_until = None;
+            }
+            if e.failures == 0 {
+                map.remove(key);
+            }
+        }
+    }
+
+    /// Failures currently counted for `key`.
+    pub fn failures(&self, key: &str) -> u32 {
+        self.map.lock().unwrap().get(key).map_or(0, |e| e.failures)
+    }
+
+    /// Count a failure without ever locking (soft, global per-username pressure).
+    pub fn soft_fail(&self, key: &str) -> u32 {
+        self.fail(key, u32::MAX);
+        self.failures(key)
+    }
+
+    /// Entries held (bounded by `MAX_ENTRIES`).
+    pub fn len(&self) -> usize {
+        self.map.lock().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Record a failure; locks once `failures >= threshold`.
     pub fn fail(&self, key: &str, threshold: u32) {
         let now = Instant::now();
         let mut map = self.map.lock().unwrap();
-        if map.len() > 10_000 {
-            let decay = self.cfg.decay;
-            map.retain(|_, e| now.duration_since(e.last) < decay);
+        if map.len() >= MAX_ENTRIES / 2 {
+            // decay sweep at most once a second (it is O(n))
+            let mut sw = self.last_sweep.lock().unwrap();
+            if now.duration_since(*sw) >= Duration::from_secs(1) {
+                *sw = now;
+                let decay = self.cfg.decay;
+                map.retain(|_, e| now.duration_since(e.last) < decay);
+            }
+        }
+        if map.len() >= MAX_ENTRIES && !map.contains_key(key) {
+            // still full of live entries: drop the oldest tenth (attackers rotating keys cannot
+            // grow memory without bound)
+            let mut by_age: Vec<(String, Instant)> =
+                map.iter().map(|(k, e)| (k.clone(), e.last)).collect();
+            by_age.sort_by_key(|(_, t)| *t);
+            for (k, _) in by_age.into_iter().take(MAX_ENTRIES / 10) {
+                map.remove(&k);
+            }
         }
         let e = map.entry(key.to_string()).or_insert(Entry {
             failures: 0,

@@ -10,8 +10,9 @@ pub mod signing;
 
 pub use error::{AuthError, AuthResult};
 pub use model::{
-    AuditEntry, Device, Invite, InviteInfo, Limits, NewUser, Role, SessionInfo, User, UserPatch,
+    AuditEntry, Device, Invite, InviteInfo, Limits, NewUser, Permissions, Role, SessionInfo, User,
+    UserPatch,
 };
 pub use ratelimit::{LimiterConfig, RateLimiter};
-pub use service::{AuthOptions, AuthService, LoginOutcome, load_or_create_signing_key};
+pub use service::{AuthOptions, AuthService, LoginOutcome, ip_bucket, load_or_create_signing_key};
 pub use signing::UrlSigner;

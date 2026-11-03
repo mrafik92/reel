@@ -71,34 +71,84 @@ impl FromRequestParts<AppState> for AdminUser {
     }
 }
 
-/// Client IP for rate limiting / audit: proxy headers only when `trust_proxy_headers`.
+/// Client IP for rate limiting / audit.
+///
+/// `X-Forwarded-For` / `X-Real-IP` are believed only when the socket peer is a trusted proxy
+/// (`trusted_proxies` CIDRs; the deprecated `trust_proxy_headers` means "private-range peers").
+/// The client is then the right-most XFF entry that is not itself a trusted proxy, so a client
+/// cannot pick its own address by prepending entries.
 pub struct ClientIp(pub Option<String>);
+
+/// Resolve the client address from the socket peer and the proxy headers.
+pub fn resolve_client_ip(
+    cfg: &reel_core::Config,
+    peer: Option<std::net::IpAddr>,
+    headers: &HeaderMap,
+) -> Option<std::net::IpAddr> {
+    use crate::netutil::{is_private, normalize, parse_cidrs};
+    let cidrs = parse_cidrs(&cfg.trusted_proxies);
+    let alias = cfg.trust_proxy_headers;
+    let trusted =
+        |ip: std::net::IpAddr| cidrs.iter().any(|c| c.contains(ip)) || (alias && is_private(ip));
+    // no socket info (in-process tests): only the deprecated blanket switch believes headers
+    let peer_trusted = match peer {
+        Some(p) => trusted(p),
+        None => alias,
+    };
+    if !peer_trusted {
+        return peer.map(normalize);
+    }
+    let h = |k: &str| headers.get(k).and_then(|v| v.to_str().ok());
+    let mut chain: Vec<std::net::IpAddr> = h("x-forwarded-for")
+        .map(|v| {
+            v.split(',')
+                .filter_map(|p| p.trim().parse::<std::net::IpAddr>().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    if chain.is_empty() {
+        if let Some(r) = h("x-real-ip").and_then(|v| v.trim().parse().ok()) {
+            chain.push(r);
+        }
+    }
+    chain.extend(peer);
+    // right-most entry that is not a trusted proxy
+    chain
+        .iter()
+        .rev()
+        .find(|ip| !trusted(**ip))
+        .or_else(|| chain.first())
+        .copied()
+        .map(normalize)
+}
+
+/// The socket peer (`None` without connection info, i.e. in-process tests).
+pub struct Peer(pub Option<std::net::IpAddr>);
+
+impl FromRequestParts<AppState> for Peer {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &AppState) -> Result<Self, Self::Rejection> {
+        Ok(Peer(
+            parts
+                .extensions
+                .get::<ConnectInfo<std::net::SocketAddr>>()
+                .map(|c| c.0.ip()),
+        ))
+    }
+}
 
 impl FromRequestParts<AppState> for ClientIp {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, Self::Rejection> {
-        let from_headers = || {
-            let h = &parts.headers;
-            h.get("x-forwarded-for")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.split(',').next())
-                .or_else(|| h.get("x-real-ip").and_then(|v| v.to_str().ok()))
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        };
-        let ip = if st.config.trust_proxy_headers {
-            from_headers()
-        } else {
-            None
-        }
-        .or_else(|| {
-            parts
-                .extensions
-                .get::<ConnectInfo<std::net::SocketAddr>>()
-                .map(|c| c.0.ip().to_string())
-        });
-        Ok(ClientIp(ip))
+        let peer = parts
+            .extensions
+            .get::<ConnectInfo<std::net::SocketAddr>>()
+            .map(|c| c.0.ip());
+        Ok(ClientIp(
+            resolve_client_ip(&st.config, peer, &parts.headers).map(|i| i.to_string()),
+        ))
     }
 }
 
@@ -288,6 +338,49 @@ impl From<LimitsDto> for Limits {
     }
 }
 
+/// What a user may use. Admins can do everything regardless.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+pub struct PermissionsDto {
+    /// Live TV (IPTV channels, guide).
+    pub iptv_access: bool,
+    /// Provider VOD catalog.
+    pub vod_access: bool,
+    /// Request movies / shows (and see requests).
+    pub can_request: bool,
+    /// Play on TVs (DLNA devices).
+    pub can_cast: bool,
+}
+
+impl From<reel_auth::Permissions> for PermissionsDto {
+    fn from(p: reel_auth::Permissions) -> Self {
+        Self {
+            iptv_access: p.iptv_access,
+            vod_access: p.vod_access,
+            can_request: p.can_request,
+            can_cast: p.can_cast,
+        }
+    }
+}
+
+impl From<PermissionsDto> for reel_auth::Permissions {
+    fn from(p: PermissionsDto) -> Self {
+        Self {
+            iptv_access: p.iptv_access,
+            vod_access: p.vod_access,
+            can_request: p.can_request,
+            can_cast: p.can_cast,
+        }
+    }
+}
+
+fn effective(u: &User) -> PermissionsDto {
+    if u.is_admin() {
+        reel_auth::Permissions::all().into()
+    } else {
+        u.perms.into()
+    }
+}
+
 /// The signed-in user.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Me {
@@ -295,6 +388,8 @@ pub struct Me {
     pub username: String,
     pub role: RoleDto,
     pub limits: LimitsDto,
+    /// Effective permissions (all true for admins).
+    pub permissions: PermissionsDto,
     /// Visible library ids; absent = all libraries (admin).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub library_ids: Option<Vec<i64>>,
@@ -306,6 +401,7 @@ async fn me_dto(st: &AppState, u: &User) -> ApiResult<Me> {
         username: u.username.clone(),
         role: u.role.into(),
         limits: u.limits.clone().into(),
+        permissions: effective(u),
         library_ids: st.visible(u).await?,
     })
 }
@@ -352,6 +448,8 @@ pub struct SetupBody {
     pub device_id: Option<String>,
     pub device_name: Option<String>,
     pub client: Option<String>,
+    /// One-time token printed in the server log at first boot (needed when not on the LAN).
+    pub setup_token: Option<String>,
 }
 
 /// Create the first admin account (only while `needs_setup`); returns a signed-in session.
@@ -369,9 +467,47 @@ pub struct SetupBody {
 pub async fn setup(
     State(st): State<AppState>,
     ClientIp(ip): ClientIp,
+    Peer(peer): Peer,
+    headers: HeaderMap,
     Json(b): Json<SetupBody>,
 ) -> ApiResult<(StatusCode, Json<LoginResponse>)> {
+    // cheapest refusals first: nothing to claim, or too many tries from this address
+    if !st.auth.needs_setup().await? {
+        return Err(reel_auth::AuthError::Conflict("setup was already completed".into()).into());
+    }
+    let bucket = format!("setup:{}", reel_auth::ip_bucket(ip.as_deref()));
+    st.auth
+        .limiter()
+        .reserve(&bucket, 10)
+        .map_err(ApiError::Locked)?;
+    // Only the LAN may claim a fresh server, or whoever has the one-time token from the server log.
+    let presented = headers
+        .get("x-setup-token")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| b.setup_token.clone());
+    let token_ok = st.auth.setup_token_ok(presented.as_deref());
+    let client = ip
+        .as_deref()
+        .and_then(|i| i.parse::<std::net::IpAddr>().ok());
+    let forwarded = ["x-forwarded-for", "x-real-ip", "forwarded"]
+        .iter()
+        .any(|h| headers.contains_key(*h));
+    // proxy headers that were not believed: the peer is a proxy, not the client
+    let unbelieved = forwarded && peer.map(crate::netutil::normalize) == client;
+    let on_lan = match client {
+        Some(c) => crate::netutil::is_private(c) && !unbelieved,
+        None => peer.is_none(), // in-process (tests)
+    };
+    if !(token_ok || on_lan) {
+        return Err(ApiError::Forbidden(
+            "first-run setup is only accepted from the local network, or with the one-time setup \
+             token printed in the server log (send it as `setup_token` or `X-Setup-Token`)"
+                .into(),
+        ));
+    }
     st.auth.setup(&b.username, &b.password).await?;
+    st.auth.limiter().clear(&bucket);
     let out = st
         .auth
         .login(
@@ -644,6 +780,7 @@ pub struct UserDto {
     pub disabled: bool,
     pub created_at: i64,
     pub limits: LimitsDto,
+    pub permissions: PermissionsDto,
     /// Libraries the user may access (ignored for admins, who see everything).
     pub library_ids: Vec<i64>,
 }
@@ -656,6 +793,7 @@ async fn user_dto(st: &AppState, u: User) -> ApiResult<UserDto> {
         role: u.role.into(),
         disabled: u.disabled,
         created_at: u.created_at,
+        permissions: u.perms.into(),
         limits: u.limits.into(),
     })
 }
@@ -681,6 +819,8 @@ pub struct CreateUserBody {
     pub limits: Option<LimitsDto>,
     #[serde(default)]
     pub library_ids: Vec<i64>,
+    /// Feature permissions (default: all on for accounts an admin creates directly).
+    pub permissions: Option<PermissionsDto>,
 }
 
 /// Create an account directly (without an invite).
@@ -705,6 +845,20 @@ pub async fn create_user(
             library_ids: b.library_ids,
         })
         .await?;
+    let u = match b.permissions {
+        Some(p) => {
+            st.auth
+                .update_user(
+                    u.id,
+                    UserPatch {
+                        perms: Some(p.into()),
+                        ..Default::default()
+                    },
+                )
+                .await?
+        }
+        None => u,
+    };
     st.audit(
         &a.user,
         "user_create",
@@ -743,6 +897,8 @@ pub struct PatchUserBody {
     pub limits: Option<LimitsDto>,
     /// Replaces the set of accessible libraries.
     pub library_ids: Option<Vec<i64>>,
+    /// Replaces the feature permissions.
+    pub permissions: Option<PermissionsDto>,
 }
 
 /// Update an account: rename, reset password, set role, disable, set limits, set library access.
@@ -775,6 +931,7 @@ pub async fn patch_user(
                 disabled: b.disabled,
                 limits: b.limits.map(Into::into),
                 library_ids: b.library_ids,
+                perms: b.permissions.map(Into::into),
             },
         )
         .await?;
@@ -835,6 +992,8 @@ pub struct InviteDto {
     pub url: String,
     pub library_ids: Vec<i64>,
     pub limits: LimitsDto,
+    /// Permissions of the account the invite creates.
+    pub permissions: PermissionsDto,
     pub expires_at: Option<i64>,
     pub used_by: Option<i64>,
     pub used_at: Option<i64>,
@@ -870,6 +1029,7 @@ fn invite_dto(base: &str, i: reel_auth::Invite) -> InviteDto {
         code: i.code,
         library_ids: i.library_ids,
         limits: i.limits.into(),
+        permissions: i.perms.into(),
         expires_at: i.expires_at,
         used_by: i.used_by,
         used_at: i.used_at,
@@ -900,8 +1060,12 @@ pub struct CreateInviteBody {
     /// Libraries the new user may access.
     #[serde(default)]
     pub library_ids: Vec<i64>,
-    /// Limits preset for the new user.
+    /// Limits preset for the new user (default: 2 streams, 1 transcode, 8 Mbit/s, 3 movie + 3 show
+    /// requests per 7 days).
     pub limits: Option<LimitsDto>,
+    /// Feature permissions of the new user (default: none - live TV, VOD, requests and casting
+    /// are granted explicitly).
+    pub permissions: Option<PermissionsDto>,
     /// Validity in days (default 7; 0 = never expires).
     pub expires_in_days: Option<u32>,
 }
@@ -923,10 +1087,13 @@ pub async fn create_invite(
     let ttl = (days > 0).then(|| std::time::Duration::from_secs(u64::from(days) * 86_400));
     let inv = st
         .auth
-        .create_invite(
+        .create_invite_with(
             a.id(),
             b.library_ids,
-            b.limits.map(Into::into).unwrap_or_default(),
+            b.limits
+                .map(Into::into)
+                .unwrap_or_else(reel_auth::Limits::invite_default),
+            b.permissions.map(Into::into).unwrap_or_default(),
             ttl,
         )
         .await?;

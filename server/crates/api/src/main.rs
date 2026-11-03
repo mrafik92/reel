@@ -23,6 +23,15 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(selected = hw.selected.name(), "hardware acceleration");
     let mut state = AppState::new(pool.clone(), config.clone()).with_hwaccel(hw);
     state.playback.spawn_reaper();
+    // signed-URL revocation epochs survive restarts
+    state.auth.load_epochs().await?;
+    // first boot: only the LAN (or whoever has this token) may claim the server
+    if let Some(t) = state.auth.ensure_setup_token().await? {
+        tracing::warn!(
+            "FIRST-RUN SETUP is open. Create the admin account from the local network, or from \
+             anywhere with this one-time token: {t}"
+        );
+    }
     state.cast.spawn_discovery(state.config.data_dir.clone());
     // Stale rows from a previous run (sessions don't survive restarts).
     sqlx::query("DELETE FROM playback_sessions")

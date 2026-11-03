@@ -23,9 +23,9 @@ pub struct Config {
     pub tmdb_api_key: Option<String>,
     /// Directory with the built web client; served with SPA fallback when set.
     pub web_dir: Option<PathBuf>,
-    /// Max concurrent transcode sessions overall (0 = unlimited).
+    /// Max concurrent transcode sessions overall (default 3; 0 = unlimited).
     pub max_transcodes: usize,
-    /// Max concurrent transcode sessions per user (0 = unlimited).
+    /// Max concurrent transcode sessions per user (default 2; 0 = unlimited).
     pub max_user_transcodes: usize,
     /// ffmpeg binary used for transcoding/subtitles (default `ffmpeg`).
     pub ffmpeg_path: Option<String>,
@@ -46,6 +46,12 @@ pub struct Config {
     pub public_url: Option<String>,
     /// Trust `X-Forwarded-For` / `X-Real-IP` for the client IP (set when behind Caddy/nginx).
     pub trust_proxy_headers: bool,
+    /// Reverse proxies (CIDRs, e.g. `["172.18.0.0/16"]`) whose `X-Forwarded-For` is believed: the
+    /// client is the right-most entry that is not itself a trusted proxy. Empty (default) = the
+    /// headers are ignored. `trust_proxy_headers` is a deprecated alias meaning "trust private-range
+    /// peers".
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
     /// Maximum request body size in bytes (default 4 MiB).
     pub max_body_bytes: usize,
     /// Keep a live channel's upstream open this many seconds after the last viewer leaves.
@@ -92,8 +98,8 @@ impl Default for Config {
             database_path: None,
             tmdb_api_key: None,
             web_dir: None,
-            max_transcodes: 0,
-            max_user_transcodes: 0,
+            max_transcodes: 3,
+            max_user_transcodes: 2,
             ffmpeg_path: None,
             webhook_secret: None,
             signing_secret: None,
@@ -102,6 +108,7 @@ impl Default for Config {
             cors_origins: Vec::new(),
             public_url: None,
             trust_proxy_headers: false,
+            trusted_proxies: Vec::new(),
             max_body_bytes: 4 * 1024 * 1024,
             iptv_grace_secs: 15,
             iptv_stall_secs: 8,

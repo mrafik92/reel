@@ -418,8 +418,8 @@ async fn rate_limit_lockout_per_user_and_per_ip() {
     assert_eq!(s, 429, "{v}");
     let retry: u64 = h[header::RETRY_AFTER].to_str().unwrap().parse().unwrap();
     assert!((1..=2).contains(&retry));
-    // another IP is also refused for that username
-    assert_eq!(login("admin", PW, "2.2.2.2").await.0, 429);
+    // the lock is keyed on (username, ip): attackers elsewhere cannot lock the real admin out
+    assert_eq!(login("admin", PW, "2.2.2.2").await.0, 200);
     tokio::time::sleep(Duration::from_millis(600)).await;
     assert_eq!(login("admin", PW, "1.1.1.1").await.0, 200);
 
@@ -442,7 +442,7 @@ async fn rate_limit_lockout_per_user_and_per_ip() {
         .iter()
         .map(|a| a["action"].as_str().unwrap())
         .collect();
-    assert!(actions.iter().filter(|a| **a == "login_failure").count() >= 7);
+    assert!(actions.iter().filter(|a| **a == "login_failure").count() >= 5);
     assert!(actions.contains(&"login_locked"));
     assert!(actions.contains(&"setup"));
     let failure = audit
@@ -935,6 +935,7 @@ async fn signed_urls_valid_expired_tampered() {
         e.state.auth.signing_key(),
         &format!("direct:{file}"),
         1,
+        0,
         now - 10,
     );
     assert_eq!(

@@ -8,7 +8,7 @@ use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 
 use crate::{
     AuditEntry, AuthError, AuthResult, Device, Invite, InviteInfo, LimiterConfig, Limits, NewUser,
-    RateLimiter, Role, SessionInfo, User, UserPatch,
+    Permissions, RateLimiter, Role, SessionInfo, User, UserPatch,
     password::{self, HashParams},
     signing::{UrlSigner, now_unix},
 };
@@ -22,6 +22,10 @@ pub struct AuthOptions {
     pub session_ttl: Duration,
     pub hash: HashParams,
     pub limiter: LimiterConfig,
+    /// Argon2 hashes/verifications running at once; more are refused (429) instead of queued.
+    pub max_concurrent_hashes: usize,
+    /// Sessions end this long after login no matter how often they are used.
+    pub absolute_session_ttl: Duration,
 }
 
 impl Default for AuthOptions {
@@ -30,6 +34,8 @@ impl Default for AuthOptions {
             session_ttl: Duration::from_secs(30 * 24 * 3600),
             hash: HashParams::default(),
             limiter: LimiterConfig::default(),
+            max_concurrent_hashes: 4,
+            absolute_session_ttl: Duration::from_secs(90 * 24 * 3600),
         }
     }
 }
@@ -49,6 +55,27 @@ pub struct AuthService {
     limiter: Arc<RateLimiter>,
     opts: Arc<AuthOptions>,
     dummy: Arc<std::sync::OnceLock<String>>,
+    hash_slots: Arc<tokio::sync::Semaphore>,
+    /// Per-user signed-URL epochs (bumped to revoke every URL signed before).
+    epochs: Arc<std::sync::RwLock<std::collections::HashMap<i64, i64>>>,
+    /// One-time token printed at first boot: required for `/setup` from non-LAN clients.
+    setup_token: Arc<std::sync::Mutex<Option<String>>>,
+    audit_seen: Arc<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>>,
+}
+
+/// Rate-limit bucket of a client address: IPv6 clients share a /64.
+pub fn ip_bucket(ip: Option<&str>) -> String {
+    let Some(raw) = ip else {
+        return "unknown".into();
+    };
+    match raw.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V6(v6)) => {
+            let s = v6.segments();
+            format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+        }
+        Ok(a) => a.to_string(),
+        Err(_) => raw.chars().take(64).collect(),
+    }
 }
 
 fn random_b64(n: usize) -> String {
@@ -124,7 +151,8 @@ fn validate_password(p: &str) -> AuthResult<()> {
 
 const USER_SELECT: &str = "SELECT u.id, u.username, u.role, u.disabled, u.created_at, \
     l.max_streams, l.max_transcodes, l.max_bitrate_kbps, l.request_quota_movies, \
-    l.request_quota_tv, l.quota_window_days, l.auto_approve \
+    l.request_quota_tv, l.quota_window_days, l.auto_approve, \
+    u.iptv_access, u.vod_access, u.can_request, u.can_cast \
     FROM users u LEFT JOIN user_limits l ON l.user_id = u.id";
 
 fn user_from_row(r: &SqliteRow) -> User {
@@ -142,6 +170,12 @@ fn user_from_row(r: &SqliteRow) -> User {
             request_quota_tv: r.get("request_quota_tv"),
             quota_window_days: r.get::<Option<i64>, _>("quota_window_days").unwrap_or(7),
             auto_approve: r.get::<Option<i64>, _>("auto_approve").unwrap_or(0) != 0,
+        },
+        perms: Permissions {
+            iptv_access: r.get::<i64, _>("iptv_access") != 0,
+            vod_access: r.get::<i64, _>("vod_access") != 0,
+            can_request: r.get::<i64, _>("can_request") != 0,
+            can_cast: r.get::<i64, _>("can_cast") != 0,
         },
     }
 }
@@ -169,8 +203,14 @@ impl AuthService {
             pool,
             key: signing_key.into(),
             limiter: Arc::new(RateLimiter::new(opts.limiter.clone())),
+            hash_slots: Arc::new(tokio::sync::Semaphore::new(
+                opts.max_concurrent_hashes.max(1),
+            )),
             opts: Arc::new(opts),
             dummy: Arc::default(),
+            epochs: Arc::default(),
+            setup_token: Arc::default(),
+            audit_seen: Arc::default(),
         }
     }
 
@@ -182,8 +222,38 @@ impl AuthService {
         &self.key
     }
 
+    /// Current signed-URL epoch of a user (0 until it was ever bumped).
+    pub fn epoch(&self, user_id: i64) -> i64 {
+        self.epochs
+            .read()
+            .unwrap()
+            .get(&user_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Load the persisted epochs (call once at startup).
+    pub async fn load_epochs(&self) -> AuthResult<()> {
+        let rows: Vec<(i64, i64)> =
+            sqlx::query_as("SELECT id, sign_epoch FROM users WHERE sign_epoch != 0")
+                .fetch_all(&self.pool)
+                .await?;
+        self.epochs.write().unwrap().extend(rows);
+        Ok(())
+    }
+
+    /// Invalidate every signed URL issued to `user_id` so far.
+    pub async fn bump_epoch(&self, user_id: i64) -> AuthResult<()> {
+        sqlx::query("UPDATE users SET sign_epoch = sign_epoch + 1 WHERE id = ?")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        *self.epochs.write().unwrap().entry(user_id).or_insert(0) += 1;
+        Ok(())
+    }
+
     pub fn signer(&self, user_id: i64) -> UrlSigner {
-        UrlSigner::new(self.key.clone(), user_id)
+        UrlSigner::new(self.key.clone(), user_id, self.epoch(user_id))
     }
 
     /// Verify a `(scope, user, exp, sig)` capability and return the (enabled) user it names.
@@ -194,7 +264,8 @@ impl AuthService {
         exp: i64,
         sig: &str,
     ) -> AuthResult<User> {
-        if !crate::signing::verify(&self.key, scope, user_id, exp, sig, now_unix()) {
+        let epoch = self.epoch(user_id);
+        if !crate::signing::verify(&self.key, scope, user_id, epoch, exp, sig, now_unix()) {
             return Err(AuthError::Unauthorized);
         }
         match self.get_user(user_id).await? {
@@ -203,18 +274,33 @@ impl AuthService {
         }
     }
 
-    async fn hash_pw(&self, password: &str) -> AuthResult<String> {
-        let (p, params) = (password.to_string(), self.opts.hash);
-        tokio::task::spawn_blocking(move || password::hash(&p, params))
-            .await
-            .map_err(|e| AuthError::Internal(e.to_string()))?
+    /// Take a hashing slot or fail at once (429): a flood of logins must not queue up memory-hard
+    /// Argon2 work.
+    fn hash_slot(&self) -> AuthResult<tokio::sync::OwnedSemaphorePermit> {
+        self.hash_slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| AuthError::Locked(Duration::from_secs(2)))
     }
 
-    async fn verify_pw(&self, password: &str, phc: &str) -> bool {
-        let (p, h) = (password.to_string(), phc.to_string());
-        tokio::task::spawn_blocking(move || password::verify(&p, &h))
+    async fn hash_pw(&self, password: &str) -> AuthResult<String> {
+        let slot = self.hash_slot()?;
+        let (p, params) = (password.to_string(), self.opts.hash);
+        let r = tokio::task::spawn_blocking(move || password::hash(&p, params))
             .await
-            .unwrap_or(false)
+            .map_err(|e| AuthError::Internal(e.to_string()))?;
+        drop(slot);
+        r
+    }
+
+    async fn verify_pw(&self, password: &str, phc: &str) -> AuthResult<bool> {
+        let slot = self.hash_slot()?;
+        let (p, h) = (password.to_string(), phc.to_string());
+        let r = tokio::task::spawn_blocking(move || password::verify(&p, &h))
+            .await
+            .unwrap_or(false);
+        drop(slot);
+        Ok(r)
     }
 
     /// Hash verified for unknown usernames (same cost as real ones).
@@ -222,9 +308,11 @@ impl AuthService {
         if let Some(h) = self.dummy.get() {
             return h.clone();
         }
-        let h = self
-            .hash_pw("reel-dummy-password")
+        let params = self.opts.hash;
+        let h = tokio::task::spawn_blocking(move || password::hash("reel-dummy-password", params))
             .await
+            .ok()
+            .and_then(Result::ok)
             .unwrap_or_default();
         self.dummy.get_or_init(|| h).clone()
     }
@@ -240,7 +328,35 @@ impl AuthService {
     }
 
     /// Claim the seeded admin account. Fails with `Conflict` once any password account exists.
+    /// Generate (once) the setup token while setup is still pending; the caller logs it.
+    pub async fn ensure_setup_token(&self) -> AuthResult<Option<String>> {
+        if !self.needs_setup().await? {
+            return Ok(None);
+        }
+        let mut g = self.setup_token.lock().unwrap();
+        Ok(Some(g.get_or_insert_with(|| random_b64(18)).clone()))
+    }
+
+    /// Constant-time check of a presented setup token.
+    pub fn setup_token_ok(&self, presented: Option<&str>) -> bool {
+        let g = self.setup_token.lock().unwrap();
+        match (g.as_deref(), presented) {
+            (Some(t), Some(p)) => {
+                let (a, b) = (Sha256::digest(t.as_bytes()), Sha256::digest(p.as_bytes()));
+                a.iter()
+                    .zip(b.iter())
+                    .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+                    == 0
+            }
+            _ => false,
+        }
+    }
+
     pub async fn setup(&self, username: &str, password: &str) -> AuthResult<User> {
+        // cheapest checks first: no Argon2 work once setup is done or for bad input
+        if !self.needs_setup().await? {
+            return Err(AuthError::Conflict("setup was already completed".into()));
+        }
         let username = validate_username(username)?;
         validate_password(password)?;
         let hash = self.hash_pw(password).await?;
@@ -267,6 +383,7 @@ impl AuthService {
         } else {
             return Err(AuthError::Conflict("setup was already completed".into()));
         };
+        *self.setup_token.lock().unwrap() = None;
         self.audit(Some(id), Some(&username), "setup", None, Value::Null, None)
             .await;
         self.get_user(id).await?.ok_or(AuthError::NotFound)
@@ -277,7 +394,8 @@ impl AuthService {
     async fn create_session(&self, user_id: i64, dev: &Device) -> AuthResult<(String, i64)> {
         let token = random_b64(32);
         let now = now_unix();
-        let expires = now + self.opts.session_ttl.as_secs() as i64;
+        let abs = now + self.opts.absolute_session_ttl.as_secs() as i64;
+        let expires = (now + self.opts.session_ttl.as_secs() as i64).min(abs);
         if let Some(d) = &dev.device_id {
             // One session per device: re-login replaces the previous token.
             sqlx::query("DELETE FROM sessions_auth WHERE user_id = ? AND device_id = ?")
@@ -288,7 +406,7 @@ impl AuthService {
         }
         sqlx::query(
             "INSERT INTO sessions_auth (user_id, token_hash, device_id, device_name, client, ip, \
-             last_seen, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             last_seen, expires_at, abs_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(user_id)
         .bind(hash_token(&token))
@@ -298,9 +416,34 @@ impl AuthService {
         .bind(&dev.ip)
         .bind(now)
         .bind(expires)
+        .bind(abs)
         .execute(&self.pool)
         .await?;
         Ok((token, expires))
+    }
+
+    /// Audit a failed login at most once a minute per (username, ip): a guessing run must not
+    /// flood the audit table.
+    async fn audit_failure(&self, name: &str, ip: Option<&str>) {
+        let key = format!("{name}|{}", ip_bucket(ip));
+        {
+            let mut m = self.audit_seen.lock().unwrap();
+            let now = std::time::Instant::now();
+            if m.len() > 5_000 {
+                m.retain(|_, t| now.duration_since(*t) < Duration::from_secs(60));
+            }
+            if m.len() > 20_000 {
+                m.clear();
+            }
+            if m.get(&key)
+                .is_some_and(|t| now.duration_since(*t) < Duration::from_secs(60))
+            {
+                return;
+            }
+            m.insert(key, now);
+        }
+        self.audit(None, Some(name), "login_failure", None, Value::Null, ip)
+            .await;
     }
 
     pub async fn login(
@@ -309,13 +452,31 @@ impl AuthService {
         password: &str,
         dev: Device,
     ) -> AuthResult<LoginOutcome> {
-        let ip_key = format!("ip:{}", dev.ip.as_deref().unwrap_or("unknown"));
-        let user_key = format!("user:{}", username.trim().to_lowercase());
-        for k in [&ip_key, &user_key] {
-            if let Err(wait) = self.limiter.check(k) {
+        let bucket = ip_bucket(dev.ip.as_deref());
+        let ip_key = format!("ip:{bucket}");
+        let ip_max = self.opts.limiter.ip_max_failures;
+        let user_max = self.opts.limiter.user_max_failures;
+        // bounded inputs before anything is keyed, hashed or audited
+        let name: String = username.trim().chars().take(32).collect();
+        let lname = name.to_lowercase();
+        if username.trim().chars().count() > 32 || password.len() > 256 {
+            if let Err(wait) = self.limiter.reserve(&ip_key, ip_max) {
+                return Err(AuthError::Locked(wait));
+            }
+            return Err(AuthError::InvalidCredentials);
+        }
+        // lock key = (username, ip): someone on the internet cannot keep the admin locked out
+        let user_key = format!("user:{lname}|{bucket}");
+        let global_key = format!("uname:{lname}");
+        // check + count atomically BEFORE verifying: parallel guesses cannot exceed the window
+        for (k, max) in [(&ip_key, ip_max), (&user_key, user_max)] {
+            if let Err(wait) = self.limiter.reserve(k, max) {
+                if k == &user_key {
+                    self.limiter.refund(&ip_key, ip_max);
+                }
                 self.audit(
                     None,
-                    Some(username),
+                    Some(&name),
                     "login_locked",
                     None,
                     json!({"retry_after_s": wait.as_secs()}),
@@ -325,8 +486,20 @@ impl AuthService {
                 return Err(AuthError::Locked(wait));
             }
         }
+        let give_back = || {
+            self.limiter.refund(&ip_key, ip_max);
+            self.limiter.refund(&user_key, user_max);
+        };
+        // soft global pressure on a username: a short delay, never a lock
+        let pressure = self.limiter.failures(&global_key);
+        if pressure >= 10 {
+            tokio::time::sleep(Duration::from_millis(
+                250 * u64::from((pressure - 9).min(8)),
+            ))
+            .await;
+        }
         let row = sqlx::query(&format!("{USER_SELECT} WHERE u.username = ?"))
-            .bind(username.trim())
+            .bind(name.as_str())
             .fetch_optional(&self.pool)
             .await?;
         let (user, phc) = match &row {
@@ -340,10 +513,19 @@ impl AuthService {
             None => (None, self.dummy_hash().await),
         };
         // Always verify (against a dummy hash for unknown users) to equalize timing.
-        let ok = self.verify_pw(password, &phc).await;
+        let ok = match self.verify_pw(password, &phc).await {
+            Ok(v) => v,
+            Err(e) => {
+                // saturated: nothing was guessed
+                give_back();
+                return Err(e);
+            }
+        };
         match user {
             Some(u) if ok && !u.disabled => {
+                give_back();
                 self.limiter.clear(&user_key);
+                self.limiter.clear(&global_key);
                 let (token, expires_at) = self.create_session(u.id, &dev).await?;
                 Ok(LoginOutcome {
                     token,
@@ -352,17 +534,9 @@ impl AuthService {
                 })
             }
             _ => {
-                self.limiter.fail_user(&user_key);
-                self.limiter.fail_ip(&ip_key);
-                self.audit(
-                    None,
-                    Some(username),
-                    "login_failure",
-                    None,
-                    Value::Null,
-                    dev.ip.as_deref(),
-                )
-                .await;
+                // the attempt was already counted
+                self.limiter.soft_fail(&global_key);
+                self.audit_failure(&name, dev.ip.as_deref()).await;
                 Err(AuthError::InvalidCredentials)
             }
         }
@@ -371,8 +545,8 @@ impl AuthService {
     /// Resolve a bearer token; extends the session (sliding expiry).
     pub async fn authenticate(&self, token: &str) -> AuthResult<(User, SessionInfo)> {
         let row = sqlx::query(
-            "SELECT id, user_id, device_id, device_name, client, ip, last_seen, expires_at \
-             FROM sessions_auth WHERE token_hash = ?",
+            "SELECT id, user_id, device_id, device_name, client, ip, last_seen, expires_at, \
+             abs_expires_at FROM sessions_auth WHERE token_hash = ?",
         )
         .bind(hash_token(token))
         .fetch_optional(&self.pool)
@@ -380,7 +554,8 @@ impl AuthService {
         .ok_or(AuthError::Unauthorized)?;
         let mut s = session_from_row(&row);
         let now = now_unix();
-        if s.expires_at.is_some_and(|e| e <= now) {
+        let abs: Option<i64> = row.get("abs_expires_at");
+        if s.expires_at.is_some_and(|e| e <= now) || abs.is_some_and(|a| a <= now) {
             let _ = sqlx::query("DELETE FROM sessions_auth WHERE id = ?")
                 .bind(s.id)
                 .execute(&self.pool)
@@ -392,7 +567,10 @@ impl AuthService {
             _ => return Err(AuthError::Unauthorized),
         };
         if now - s.last_seen >= TOUCH_INTERVAL {
-            let expires = now + self.opts.session_ttl.as_secs() as i64;
+            let mut expires = now + self.opts.session_ttl.as_secs() as i64;
+            if let Some(a) = abs {
+                expires = expires.min(a);
+            }
             sqlx::query("UPDATE sessions_auth SET last_seen = ?, expires_at = ? WHERE id = ?")
                 .bind(now)
                 .bind(expires)
@@ -437,11 +615,13 @@ impl AuthService {
 
     /// Revoke every session of a user; returns how many.
     pub async fn revoke_all_sessions(&self, user_id: i64) -> AuthResult<u64> {
-        Ok(sqlx::query("DELETE FROM sessions_auth WHERE user_id = ?")
+        let n = sqlx::query("DELETE FROM sessions_auth WHERE user_id = ?")
             .bind(user_id)
             .execute(&self.pool)
             .await?
-            .rows_affected())
+            .rows_affected();
+        self.bump_epoch(user_id).await?;
+        Ok(n)
     }
 
     pub async fn change_password(
@@ -457,7 +637,7 @@ impl AuthService {
             .fetch_optional(&self.pool)
             .await?
             .ok_or(AuthError::NotFound)?;
-        if !self.verify_pw(current, &phc).await {
+        if !self.verify_pw(current, &phc).await? {
             return Err(AuthError::InvalidCredentials);
         }
         let hash = self.hash_pw(new).await?;
@@ -471,6 +651,7 @@ impl AuthService {
             .bind(keep_session.unwrap_or(-1))
             .execute(&self.pool)
             .await?;
+        self.bump_epoch(user_id).await?;
         Ok(())
     }
 
@@ -671,6 +852,19 @@ impl AuthService {
         if let Some(libs) = &p.library_ids {
             Self::set_access(&mut tx, id, libs).await?;
         }
+        if let Some(pm) = &p.perms {
+            sqlx::query(
+                "UPDATE users SET iptv_access = ?, vod_access = ?, can_request = ?, can_cast = ? \
+                 WHERE id = ?",
+            )
+            .bind(i64::from(pm.iptv_access))
+            .bind(i64::from(pm.vod_access))
+            .bind(i64::from(pm.can_request))
+            .bind(i64::from(pm.can_cast))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
         if hash.is_some() || p.disabled == Some(true) {
             sqlx::query("DELETE FROM sessions_auth WHERE user_id = ?")
                 .bind(id)
@@ -678,6 +872,9 @@ impl AuthService {
                 .await?;
         }
         tx.commit().await?;
+        if hash.is_some() || p.disabled == Some(true) {
+            self.bump_epoch(id).await?;
+        }
         self.get_user(id).await?.ok_or(AuthError::NotFound)
     }
 
@@ -703,6 +900,10 @@ impl AuthService {
             library_ids: serde_json::from_str(&r.get::<String, _>("library_ids"))
                 .unwrap_or_default(),
             limits: serde_json::from_str(&r.get::<String, _>("limits_json")).unwrap_or_default(),
+            perms: r
+                .get::<Option<String>, _>("perms_json")
+                .and_then(|j| serde_json::from_str(&j).ok())
+                .unwrap_or_default(),
             expires_at: r.get("expires_at"),
             used_by: r.get("used_by"),
             used_at: r.get("used_at"),
@@ -714,6 +915,18 @@ impl AuthService {
         created_by: i64,
         library_ids: Vec<i64>,
         limits: Limits,
+        ttl: Option<Duration>,
+    ) -> AuthResult<Invite> {
+        self.create_invite_with(created_by, library_ids, limits, Permissions::default(), ttl)
+            .await
+    }
+
+    pub async fn create_invite_with(
+        &self,
+        created_by: i64,
+        library_ids: Vec<i64>,
+        limits: Limits,
+        perms: Permissions,
         ttl: Option<Duration>,
     ) -> AuthResult<Invite> {
         if !library_ids.is_empty() {
@@ -736,14 +949,15 @@ impl AuthService {
         let code = random_b64(18);
         let expires = ttl.map(|t| now_unix() + t.as_secs() as i64);
         let id = sqlx::query(
-            "INSERT INTO invites (code, created_by, library_ids, limits_json, expires_at) \
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO invites (code, created_by, library_ids, limits_json, expires_at, perms_json) \
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&code)
         .bind(created_by)
         .bind(serde_json::to_string(&library_ids).unwrap_or_default())
         .bind(serde_json::to_string(&limits).unwrap_or_default())
         .bind(expires)
+        .bind(serde_json::to_string(&perms).unwrap_or_default())
         .execute(&self.pool)
         .await?
         .last_insert_rowid();
@@ -814,9 +1028,13 @@ impl AuthService {
         password: &str,
         dev: Device,
     ) -> AuthResult<LoginOutcome> {
-        let ip_key = format!("ip:{}", dev.ip.as_deref().unwrap_or("unknown"));
+        let ip_key = format!("ip:{}", ip_bucket(dev.ip.as_deref()));
         if let Err(wait) = self.limiter.check(&ip_key) {
             return Err(AuthError::Locked(wait));
+        }
+        if code.len() > 128 {
+            self.limiter.fail_ip(&ip_key);
+            return Err(AuthError::NotFound);
         }
         let username = validate_username(username)?;
         validate_password(password)?;
@@ -843,6 +1061,16 @@ impl AuthService {
                 &inv.library_ids,
             )
             .await?;
+        sqlx::query(
+            "UPDATE users SET iptv_access = ?, vod_access = ?, can_request = ?, can_cast = ? WHERE id = ?",
+        )
+        .bind(i64::from(inv.perms.iptv_access))
+        .bind(i64::from(inv.perms.vod_access))
+        .bind(i64::from(inv.perms.can_request))
+        .bind(i64::from(inv.perms.can_cast))
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
         // Single use: only one concurrent accept can flip `used_by`.
         let claimed = sqlx::query(
             "UPDATE invites SET used_by = ?, used_at = ? WHERE id = ? AND used_by IS NULL \

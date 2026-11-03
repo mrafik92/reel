@@ -37,6 +37,21 @@ pub struct Limits {
     pub auto_approve: bool,
 }
 
+impl Limits {
+    /// Conservative preset for accounts created from an invite without explicit limits.
+    pub fn invite_default() -> Self {
+        Self {
+            max_streams: Some(2),
+            max_transcodes: Some(1),
+            max_bitrate_kbps: Some(8000),
+            request_quota_movies: Some(3),
+            request_quota_tv: Some(3),
+            quota_window_days: 7,
+            auto_approve: false,
+        }
+    }
+}
+
 impl Default for Limits {
     fn default() -> Self {
         Self {
@@ -51,6 +66,28 @@ impl Default for Limits {
     }
 }
 
+/// Per-user feature permissions. `Default` = nothing allowed; [`Permissions::all`] = everything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Permissions {
+    pub iptv_access: bool,
+    pub vod_access: bool,
+    pub can_request: bool,
+    /// Play on TVs (DLNA). Admins always can.
+    pub can_cast: bool,
+}
+
+impl Permissions {
+    pub fn all() -> Self {
+        Self {
+            iptv_access: true,
+            vod_access: true,
+            can_request: true,
+            can_cast: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct User {
     pub id: i64,
@@ -59,11 +96,24 @@ pub struct User {
     pub disabled: bool,
     pub created_at: i64,
     pub limits: Limits,
+    pub perms: Permissions,
 }
 
 impl User {
     pub fn is_admin(&self) -> bool {
         self.role == Role::Admin
+    }
+    pub fn can_iptv(&self) -> bool {
+        self.is_admin() || self.perms.iptv_access
+    }
+    pub fn can_vod(&self) -> bool {
+        self.is_admin() || self.perms.vod_access
+    }
+    pub fn can_request(&self) -> bool {
+        self.is_admin() || self.perms.can_request
+    }
+    pub fn can_cast(&self) -> bool {
+        self.is_admin() || self.perms.can_cast
     }
 }
 
@@ -105,6 +155,7 @@ pub struct UserPatch {
     pub disabled: Option<bool>,
     pub limits: Option<Limits>,
     pub library_ids: Option<Vec<i64>>,
+    pub perms: Option<Permissions>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -114,6 +165,8 @@ pub struct Invite {
     pub created_by: i64,
     pub library_ids: Vec<i64>,
     pub limits: Limits,
+    /// Permissions of the account the invite creates (default: none).
+    pub perms: Permissions,
     pub expires_at: Option<i64>,
     pub used_by: Option<i64>,
     pub used_at: Option<i64>,

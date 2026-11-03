@@ -8,6 +8,7 @@ pub mod enrich;
 pub mod error;
 mod extras;
 mod iptv;
+pub mod netutil;
 mod playback;
 pub mod prefs;
 mod requests;
