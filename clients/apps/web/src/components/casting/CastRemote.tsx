@@ -1,5 +1,6 @@
-import { createSignal, onCleanup, Show, type JSX } from "solid-js";
-import { formatClock, Icon, mediaUrl, Sheet, type IconName } from "@reel/ui";
+import { createSignal, Show, type JSX } from "solid-js";
+import { Icon, iso1, mediaUrl, Sheet, type IconName } from "@reel/ui";
+import { CtlButton, Scrubber, Transport, Volume, type ScrubberApi } from "../player/Controls";
 import "../../styles/casting.css";
 import { castAudio, castRetry, castSubtitle, type ActiveCast, type CastTrack } from "../../lib/casting";
 
@@ -22,77 +23,29 @@ export function CastRemote(props: {
   const r = () => props.cast.remote;
   const meta = () => props.cast.source.meta;
   const live = () => !!meta().live;
-  const [scrub, setScrub] = createSignal<number | null>(null);
   const [picker, setPicker] = createSignal<"audio" | "sub" | null>(null);
   const [stopping, setStopping] = createSignal(false);
-  let bar!: HTMLDivElement;
-  let commit: ReturnType<typeof setTimeout> | undefined;
-  onCleanup(() => commit && clearTimeout(commit));
+  const [preview, setPreview] = createSignal<number | null>(null);
+  let scrubApi: ScrubberApi | undefined;
 
   const audioList = () => r().stream()?.audio ?? props.audio ?? props.cast.source.audio ?? [];
   const subList = () => r().stream()?.subtitles ?? props.subtitles ?? props.cast.source.subtitles ?? [];
   const audioText = () => audioList().find((a) => a.index === props.cast.audio())?.title ?? "Default";
   const subText = () => subList().find((s) => s.index === props.cast.sub())?.title ?? "Off";
+  /** Compact: "EN", "EN SDH", "Off". */
+  const short = (t: CastTrack | undefined, none: string) =>
+    t ? (iso1(t.language).toUpperCase() || t.title.slice(0, 3).toUpperCase()) + (/\bSDH\b/.test(t.title) ? " SDH" : "") : none;
 
   const dur = () => r().duration() || meta().duration || 0;
-  const shown = () => scrub() ?? r().position();
-  const pct = () => (dur() ? Math.min(100, (shown() / dur()) * 100) : 0);
   const playing = () => r().state() === "playing";
   const waiting = () => r().state() === "connecting" || r().state() === "buffering" || props.cast.busy();
-
-  const seekBy = (d: number) => {
-    if (live()) return;
-    const base = scrub() ?? r().position();
-    setScrub(Math.max(0, Math.min((dur() || base + d) - 1, base + d)));
-    commitLater();
-  };
-  const commitLater = () => {
-    if (commit) clearTimeout(commit);
-    commit = setTimeout(() => {
-      const s = scrub();
-      if (s != null) r().seek(s);
-      setScrub(null);
-    }, 450);
-  };
+  const seekBy = (d: number) => !live() && scrubApi?.nudge(d, true);
   const toggle = () => (playing() ? r().pause() : r().play());
-
-  let held = 0;
-  const onBarKey = (e: KeyboardEvent) => {
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-      e.preventDefault();
-      held = e.repeat ? held + 1 : 0;
-      const step = held > 20 ? 60 : held > 8 ? 30 : 10;
-      seekBy(e.key === "ArrowLeft" ? -step : step);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      toggle();
-    }
-  };
-  const onBarPointer = (e: PointerEvent) => {
-    const b = bar.getBoundingClientRect();
-    const p = Math.max(0, Math.min(1, (e.clientX - b.left) / b.width));
-    setScrub(p * dur());
-    if (e.type === "pointerup") commitLater();
-  };
-
-  // Volume: 0..1 in 5 % steps; unknown until the receiver reports (or we set) it.
-  const vol = () => r().volume();
+  // Volume remembers the last level so Mute toggles back to it.
   let lastVol = 0.5;
   const setVol = (v: number) => {
-    const n = Math.max(0, Math.min(1, Math.round(v * 20) / 20));
-    if (n > 0) lastVol = n;
-    r().setVolume(n);
-  };
-  const onVolKey = (e: KeyboardEvent) => {
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-      e.preventDefault();
-      setVol((vol() ?? 0.5) + (e.key === "ArrowLeft" ? -0.05 : 0.05));
-    }
-  };
-  let volBar!: HTMLDivElement;
-  const onVolPointer = (e: PointerEvent) => {
-    const b = volBar.getBoundingClientRect();
-    setVol((e.clientX - b.left) / b.width);
+    if (v > 0) lastVol = v;
+    r().setVolume(v);
   };
 
   const status = (): string => {
@@ -157,122 +110,62 @@ export function CastRemote(props: {
               </div>
             }
           >
-            <div class="scrub castview__scrub">
-              <span class="scrub__time">{formatClock(shown())}</span>
-              <div
-                ref={bar}
-                class="scrub__bar"
-                role="slider"
-                tabindex="0"
-                data-focusable
-                data-nav-capture="left right"
-                aria-label="Seek on the TV"
-                aria-valuemin={0}
-                aria-valuemax={Math.round(dur())}
-                aria-valuenow={Math.round(shown())}
-                aria-valuetext={formatClock(shown())}
-                onKeyDown={onBarKey}
-                onPointerDown={(e) => {
-                  bar.setPointerCapture?.(e.pointerId);
-                  onBarPointer(e);
-                }}
-                onPointerMove={(e) => e.buttons && onBarPointer(e)}
-                onPointerUp={onBarPointer}
-              >
-                <div class="scrub__track">
-                  <i class="scrub__fill" style={{ width: `${pct()}%` }} />
-                </div>
-                <span class="scrub__thumb" style={{ left: `${pct()}%` }} />
-                <Show when={scrub() != null}>
-                  <span class="scrub__bubble" style={{ left: `${pct()}%` }}>{formatClock(scrub()!)}</span>
-                </Show>
-              </div>
-              <span class="scrub__time scrub__time--end">-{formatClock(Math.max(0, dur() - shown()))}</span>
+            <div class="castview__scrub" classList={{ "is-seeking": preview() != null }}>
+              <Scrubber
+                position={r().position()}
+                duration={dur()}
+                onSeek={(t) => r().seek(t)}
+                onPreview={setPreview}
+                label="Seek on the TV"
+                api={(a) => (scrubApi = a)}
+              />
             </div>
           </Show>
 
-          <div class="castview__transport" data-nav-group>
-            <Show when={!live()}>
-              <button type="button" class="iconbtn" aria-label="Back 10 seconds" onClick={() => seekBy(-10)}>
-                <Icon name="replay" />
-                <small>10</small>
-              </button>
-            </Show>
-            <button
-              type="button"
-              class="iconbtn iconbtn--xl castview__play"
-              aria-label={playing() ? "Pause" : "Play"}
-              data-autofocus
-              onClick={toggle}
-            >
-              <Icon name={playing() ? "pause" : "play"} />
-            </button>
-            <Show when={!live()}>
-              <button type="button" class="iconbtn" aria-label="Forward 30 seconds" onClick={() => seekBy(30)}>
-                <Icon name="skip" />
-                <small>30</small>
-              </button>
-            </Show>
-          </div>
-
-          <div class="castview__opts" data-nav-group>
-            <Show when={audioList().length > 1}>
-              <button type="button" class="btn btn--ghost btn--select" onClick={() => setPicker("audio")}>
-                <Icon name="audio" /> <span class="btn__value">{audioText()}</span>
-              </button>
-            </Show>
-            <Show when={subList().length}>
-              <button type="button" class="btn btn--ghost btn--select" onClick={() => setPicker("sub")}>
-                <Icon name="cc" /> <span class="btn__value">{subText()}</span>
-              </button>
-            </Show>
-            <Show when={r().canVolume}>
-            <div class="castvol">
-              <button
-                type="button"
-                class="iconbtn"
-                aria-label={vol() === 0 ? "Unmute" : "Mute"}
-                onClick={() => setVol(vol() === 0 ? lastVol : 0)}
-              >
-                <Icon name={vol() === 0 ? "mute" : "volume"} />
-              </button>
-              <div
-                ref={volBar}
-                class="castvol__bar"
-                role="slider"
-                tabindex="0"
-                data-focusable
-                data-nav-capture="left right"
-                aria-label="TV volume"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={vol() == null ? undefined : Math.round(vol()! * 100)}
-                aria-valuetext={vol() == null ? "Unknown" : `${Math.round(vol()! * 100)}%`}
-                onKeyDown={onVolKey}
-                onPointerDown={(e) => {
-                  volBar.setPointerCapture?.(e.pointerId);
-                  onVolPointer(e);
-                }}
-                onPointerMove={(e) => e.buttons && onVolPointer(e)}
-              >
-                <div class="castvol__track">
-                  <i style={{ width: `${(vol() ?? 0) * 100}%` }} classList={{ "is-unknown": vol() == null }} />
+          <div class="castview__controls">
+            <Transport
+              playing={playing()}
+              onToggle={toggle}
+              onBack={live() ? undefined : () => seekBy(-10)}
+              onForward={live() ? undefined : () => seekBy(30)}
+              autofocus
+            />
+            <div class="castview__opts" data-nav-group>
+              <Show when={audioList().length > 1}>
+                <CtlButton
+                  icon="audio"
+                  label={`Audio on the TV · ${audioText()}`}
+                  value={short(audioList().find((a) => a.index === props.cast.audio()), "Default")}
+                  onClick={() => setPicker("audio")}
+                />
+              </Show>
+              <Show when={subList().length}>
+                <CtlButton
+                  icon="cc"
+                  label={`Subtitles on the TV · ${subText()}`}
+                  value={short(subList().find((x) => x.index === props.cast.sub()), "Off")}
+                  active={props.cast.sub() >= 0}
+                  onClick={() => setPicker("sub")}
+                />
+              </Show>
+              <Show when={r().canVolume}>
+                <div class="pvol is-open">
+                  <Volume value={r().volume()} onChange={setVol} onMute={() => setVol((r().volume() ?? 0) === 0 ? lastVol : 0)} label="TV volume" />
                 </div>
-              </div>
+              </Show>
             </div>
-            </Show>
-            <button
-              type="button"
-              class="btn castview__stop"
-              aria-busy={stopping()}
-              onClick={() => {
-                setStopping(true);
-                props.onStop();
-              }}
-            >
-              <Icon name="stop" /> <span>{stopping() ? "Stopping…" : "Stop casting"}</span>
-            </button>
           </div>
+          <button
+            type="button"
+            class="btn btn--sm castview__stop"
+            aria-busy={stopping()}
+            onClick={() => {
+              setStopping(true);
+              props.onStop();
+            }}
+          >
+            <Icon name="stop" /> <span>{stopping() ? "Stopping…" : "Stop casting"}</span>
+          </button>
 
           <Show when={props.cast.error()}>
             <p class="castview__error" role="alert">

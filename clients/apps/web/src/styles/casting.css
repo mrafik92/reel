@@ -214,10 +214,13 @@
 }
 
 .castview__scrub {
-  margin: 0 -1rem 0.6rem 0;
+  margin: 0 0 0.4rem -0.2rem;
 }
-.castview__scrub .scrub__time {
-  width: 5rem;
+.castview__scrub .pscrub__time {
+  width: 4.8rem;
+}
+.castview__scrub .pscrub__time:first-child {
+  text-align: left;
 }
 .castview__live {
   display: flex;
@@ -237,86 +240,34 @@
   text-transform: uppercase;
 }
 
-.castview__transport {
-  display: flex;
-  align-items: center;
-  margin: 0.4rem 0 1.6rem -0.6rem;
-}
-.castview__transport > * + * {
-  margin-left: 1.1rem;
-}
-.castview__play {
-  background: var(--ink);
-  color: var(--bg);
-}
-.castview__play:hover {
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-
-.castview__opts {
+.castview__controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  margin-left: -0.6rem;
+  margin: 0.8rem 0 1.4rem;
 }
-.castview__opts > * {
-  margin: 0 0.6rem 0.6rem 0;
+.castview__controls .ptx {
+  margin: 0 2rem 0.6rem -0.3rem;
+}
+.castview__opts {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.6rem;
+}
+.castview__opts > * + * {
+  margin-left: 0.4rem;
+}
+.castview__opts .ctl.has-value {
+  background: rgba(243, 238, 228, 0.07);
 }
 .castview__stop {
-  margin-left: auto !important;
+  margin-top: 0.2rem;
+  background: rgba(243, 238, 228, 0.07);
 }
 .castview__stop:hover,
 .castview__stop:focus {
   background: var(--danger);
   color: #fff;
-}
-
-/* TV volume: mute + a short slider (arrows step 5 %) */
-.castvol {
-  display: inline-flex;
-  align-items: center;
-  padding-right: 0.8rem;
-}
-.castvol__bar {
-  position: relative;
-  display: flex;
-  align-items: center;
-  width: 8.5rem;
-  height: 2.6rem;
-  margin-left: 0.3rem;
-  cursor: pointer;
-  touch-action: none;
-}
-.castvol__track {
-  position: relative;
-  width: 100%;
-  height: 0.32rem;
-  border-radius: 1rem;
-  background: rgba(243, 238, 228, 0.18);
-  overflow: hidden;
-}
-.castvol__track i {
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  border-radius: 1rem;
-  background: var(--ink);
-  transition: width var(--t-fast) var(--ease);
-}
-.castvol__track i.is-unknown {
-  width: 100% !important;
-  background: repeating-linear-gradient(90deg, rgba(243, 238, 228, 0.22) 0, rgba(243, 238, 228, 0.22) 0.3rem, transparent 0.3rem, transparent 0.6rem);
-}
-.castvol__bar:focus {
-  outline: none;
-}
-html[data-input="key"] .castvol__bar:focus .castvol__track {
-  box-shadow: var(--focus-ring);
-}
-.castvol__bar:focus .castvol__track i:not(.is-unknown) {
-  background: var(--accent);
 }
 
 .castview__error {
@@ -347,16 +298,16 @@ html[data-input="key"] .castvol__bar:focus .castvol__track {
   }
   .castview__on,
   .castview__status,
-  .castview__transport,
+  .castview__controls,
   .castview__opts,
   .castview__live {
     justify-content: center;
   }
+  .castview__controls .ptx {
+    margin: 0 0 0.8rem;
+  }
   .castview__title {
     font-size: 2.2rem;
-  }
-  .castview__stop {
-    margin-left: 0 !important;
   }
 }
 

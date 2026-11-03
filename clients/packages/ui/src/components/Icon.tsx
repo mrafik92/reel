@@ -53,6 +53,8 @@ const PATHS = {
   stop: "M6.5 6.5h11v11h-11z",
   minus: "M5 12h14",
   up: "M5 15l7-7 7 7",
+  pip: "M3 6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM12.5 12.5h6v4h-6z",
+  speed: "M4.6 17.5A8.5 8.5 0 1 1 19.4 17.5M12 13.2l4-4.2M12 14.2a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
 } as const;
 
 export type IconName = keyof typeof PATHS;

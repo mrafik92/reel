@@ -1,0 +1,739 @@
+/* Player controls — "cinematic console". Dark scrims (gradients only: no backdrop-filter on
+   webOS / Tizen), cream glyphs, lime for progress and focus. Chromium 68 safe: no gap /
+   inset / clamp / aspect-ratio; flex spacing via margins. */
+
+/* ---------- Chrome shell + show / hide ---------------------------------------------- */
+.pc {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.pc__scrim {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  transition: opacity 420ms var(--ease);
+}
+.pc__scrim--top {
+  top: 0;
+  height: 12rem;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.74) 0%, rgba(0, 0, 0, 0.46) 42%, rgba(0, 0, 0, 0.14) 78%, rgba(0, 0, 0, 0) 100%);
+}
+.pc__scrim--bottom {
+  bottom: 0;
+  height: 22rem;
+  background:
+    radial-gradient(ellipse 34% 55% at 50% 100%, rgba(198, 244, 50, 0.07) 0%, rgba(198, 244, 50, 0) 70%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.74) 26%, rgba(0, 0, 0, 0.42) 56%, rgba(0, 0, 0, 0.14) 82%, rgba(0, 0, 0, 0) 100%);
+}
+.pc__top,
+.pc__bottom {
+  position: relative;
+  pointer-events: auto;
+  transition: opacity 300ms var(--ease), transform 420ms var(--ease-out);
+}
+.player__stage:not(.is-chrome) .pc__scrim,
+.player__stage:not(.is-chrome) .pc__top,
+.player__stage:not(.is-chrome) .pc__bottom {
+  opacity: 0;
+  pointer-events: none;
+}
+.player__stage:not(.is-chrome) .pc__top {
+  transform: translateY(-1rem);
+}
+.player__stage:not(.is-chrome) .pc__bottom {
+  transform: translateY(1.2rem);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pc__top,
+  .pc__bottom {
+    transition: opacity 200ms linear;
+  }
+  .player__stage:not(.is-chrome) .pc__top,
+  .player__stage:not(.is-chrome) .pc__bottom {
+    transform: none;
+  }
+}
+/* Old chrome rules (app.css) must not dim the new one */
+.player__stage .pc {
+  opacity: 1;
+}
+
+/* ---------- Top bar ------------------------------------------------------------------ */
+.pc__top {
+  display: flex;
+  align-items: center;
+  padding: 1.9rem var(--gutter) 0;
+}
+.pc__titles {
+  flex: 1;
+  min-width: 0;
+  margin-left: 1rem;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.5);
+}
+.pc__eyebrow {
+  margin: 0 0 0.3rem;
+  font: 700 0.74rem/1.2 var(--font-body);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pc__title {
+  margin: 0;
+  font: 760 1.9rem/1.08 var(--font-display);
+  letter-spacing: -0.025em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pc__meta {
+  display: flex;
+  align-items: center;
+  margin-left: 1.5rem;
+}
+.pc__ends {
+  margin-right: 1rem;
+  font: 600 0.88rem/1 var(--font-body);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.pc__badge {
+  display: inline-flex;
+  align-items: center;
+  height: 2rem;
+  padding: 0 0.8rem 0 0.7rem;
+  border: 1px solid rgba(243, 238, 228, 0.16);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--ink-3);
+  font: 700 0.68rem/1 var(--font-body);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
+}
+.pc__badge i {
+  width: 0.42rem;
+  height: 0.42rem;
+  margin-right: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(198, 244, 50, 0.6);
+}
+.pc__badge.is-transcode i {
+  background: var(--warn);
+  box-shadow: 0 0 8px rgba(255, 176, 32, 0.55);
+}
+.pc__badge:hover,
+.pc__badge[aria-pressed="true"] {
+  color: var(--ink);
+  border-color: rgba(243, 238, 228, 0.4);
+}
+.pc__badge:focus {
+  outline: none;
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
+
+/* ---------- Bottom panel ------------------------------------------------------------- */
+.pc__bottom {
+  padding: 0 var(--gutter) 2rem;
+}
+.pc__row {
+  display: flex;
+  align-items: center;
+  margin-top: 0.7rem;
+}
+.pc__side {
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.pc__side--end {
+  justify-content: flex-end;
+}
+.pc__side > * + * {
+  margin-left: 0.2rem;
+}
+.pc__sep {
+  width: 1px;
+  height: 1.6rem;
+  margin: 0 0.45rem !important;
+  background: rgba(243, 238, 228, 0.16);
+}
+
+/* ---------- Scrubber ----------------------------------------------------------------- */
+.pscrub {
+  display: flex;
+  align-items: center;
+}
+.pscrub__time {
+  flex: none;
+  width: 5.2rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: 700 0.95rem/1 var(--font-body);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6);
+}
+.pscrub__time--end {
+  text-align: right;
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease);
+}
+.pscrub__time--end:hover {
+  color: var(--ink);
+}
+.pscrub__bar {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  height: 2.4rem;
+  margin: 0 1rem;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+}
+.pscrub__track {
+  position: relative;
+  width: 100%;
+  height: 0.3rem;
+  border-radius: 1rem;
+  background: rgba(243, 238, 228, 0.2);
+  overflow: hidden;
+  transition: height 180ms var(--ease);
+}
+.pscrub__buf,
+.pscrub__ghost,
+.pscrub__fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  border-radius: 1rem;
+}
+.pscrub__buf {
+  background: rgba(243, 238, 228, 0.3);
+}
+.pscrub__ghost {
+  background: rgba(243, 238, 228, 0.42);
+}
+.pscrub__fill {
+  background: var(--accent);
+}
+.pscrub__thumb {
+  position: absolute;
+  top: 50%;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: -0.525rem 0 0 -0.525rem;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 0 0 0.18rem rgba(0, 0, 0, 0.35), 0 2px 10px rgba(0, 0, 0, 0.5);
+  transform: scale(0);
+  transition: transform 200ms var(--ease-out), background-color var(--t-fast) var(--ease);
+  pointer-events: none;
+}
+.pscrub__bar:hover .pscrub__track,
+.pscrub__bar:focus .pscrub__track,
+.pscrub.is-seeking .pscrub__track {
+  height: 0.55rem;
+}
+.pscrub__bar:hover .pscrub__thumb,
+.pscrub__bar:focus .pscrub__thumb,
+.pscrub.is-seeking .pscrub__thumb {
+  transform: scale(1);
+}
+html[data-input="key"] .pscrub__bar:focus .pscrub__thumb,
+.pscrub.is-seeking .pscrub__thumb {
+  background: var(--accent);
+  box-shadow: 0 0 0 0.22rem rgba(0, 0, 0, 0.45), 0 0 0 0.42rem var(--accent), 0 0 18px rgba(198, 244, 50, 0.5);
+  transform: scale(1.2);
+}
+html[data-input="key"] .pscrub__bar:focus .pscrub__track {
+  box-shadow: 0 0 0 1px rgba(198, 244, 50, 0.35);
+}
+/* Time tooltip (+ trickplay frame when the server has one) */
+.pscrub__tip {
+  position: absolute;
+  bottom: 100%;
+  margin-bottom: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.4rem;
+  border-radius: 0.7rem;
+  background: rgba(12, 13, 18, 0.94);
+  box-shadow: 0 0 0 1px rgba(243, 238, 228, 0.12), 0 0.8rem 2rem rgba(0, 0, 0, 0.55);
+  transform: translateX(-50%);
+  pointer-events: none;
+  white-space: nowrap;
+  animation: pscrub-tip 160ms var(--ease-out) both;
+}
+.pscrub__tip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -0.35rem;
+  border: 0.35rem solid transparent;
+  border-top-color: rgba(12, 13, 18, 0.94);
+}
+.pscrub__frame {
+  position: relative;
+  display: block;
+  width: 13rem;
+  height: 7.3rem;
+  margin-bottom: 0.4rem;
+  border-radius: 0.45rem;
+  overflow: hidden;
+  background: #000;
+}
+.pscrub__frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pscrub__tipline {
+  display: flex;
+  align-items: baseline;
+  padding: 0.12rem 0.4rem;
+}
+.pscrub__tipline strong {
+  font: 750 1.1rem/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.pscrub__tipline small {
+  margin-left: 0.5rem;
+  color: var(--accent);
+  font: 800 0.8rem/1 var(--font-body);
+  font-variant-numeric: tabular-nums;
+}
+@keyframes pscrub-tip {
+  from { opacity: 0; margin-bottom: 0.1rem; }
+}
+
+/* ---------- Transport ---------------------------------------------------------------- */
+.ptx {
+  display: flex;
+  align-items: center;
+  flex: none;
+  margin: 0 1.5rem;
+}
+.ptx > * + * {
+  margin-left: 1.1rem;
+}
+.ptx__skip,
+.ptx__play,
+.ctl {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  color: var(--ink);
+  cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform 220ms var(--ease-out), box-shadow var(--t-fast) var(--ease);
+}
+.ptx__skip {
+  width: 3.4rem;
+  height: 3.4rem;
+  border-radius: 50%;
+  background: rgba(243, 238, 228, 0.06);
+  font-size: 1.85rem;
+}
+.ptx__secs {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  margin-top: -0.3rem;
+  font: 800 0.58rem/0.6rem var(--font-body);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.ptx__play {
+  width: 4.6rem;
+  height: 4.6rem;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 1.9rem;
+  box-shadow: 0 0.6rem 1.8rem rgba(0, 0, 0, 0.45);
+}
+.ptx__play .icon {
+  margin-left: 0.14em; /* optical centre of ▶ */
+}
+.ptx__play.is-playing .icon {
+  margin-left: 0;
+}
+.ptx__play:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+  transform: scale(1.04);
+}
+.ptx__skip:hover,
+.ctl:hover {
+  background: rgba(243, 238, 228, 0.14);
+}
+.ptx__skip:active,
+.ptx__play:active,
+.ctl:active {
+  transform: scale(0.94);
+}
+
+/* ---------- Secondary icon buttons ------------------------------------------------- */
+.ctl {
+  flex: none;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 1.35rem;
+}
+.ctl[disabled] {
+  opacity: 0.35;
+  cursor: default;
+}
+.ctl[disabled]:hover {
+  background: transparent;
+}
+.ctl.has-value {
+  width: auto;
+  padding: 0 0.8rem 0 0.7rem;
+}
+.ctl__val {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.5rem;
+  font: 750 0.82rem/1 var(--font-body);
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ctl__tag {
+  margin-left: 0.4rem;
+  padding: 0.14rem 0.32rem;
+  border-radius: 0.3rem;
+  background: rgba(198, 244, 50, 0.16);
+  color: var(--accent);
+  font: 800 0.56rem/1 var(--font-body);
+  font-style: normal;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.ctl.is-active,
+.ctl[aria-pressed="true"] {
+  color: var(--accent);
+}
+/* Labels: slide up on hover / focus */
+.ctl__tip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  margin-bottom: 0.65rem;
+  padding: 0.38rem 0.6rem;
+  border-radius: 0.45rem;
+  background: var(--ink);
+  color: var(--bg);
+  font: 750 0.75rem/1 var(--font-body);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, 0.35rem);
+  transition: opacity 160ms var(--ease), transform 220ms var(--ease-out);
+  pointer-events: none;
+}
+.ctl:hover .ctl__tip,
+.ctl:focus .ctl__tip,
+.ptx__skip:hover .ctl__tip,
+.ptx__skip:focus .ctl__tip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+html[data-input="pointer"] .ctl:focus:not(:hover) .ctl__tip,
+html[data-input="pointer"] .ptx__skip:focus:not(:hover) .ctl__tip {
+  opacity: 0;
+}
+.pc__side--end > .ctl:last-child .ctl__tip {
+  left: auto;
+  right: 0;
+  transform: translate(0, 0.35rem);
+}
+.pc__side--end > .ctl:last-child:hover .ctl__tip,
+.pc__side--end > .ctl:last-child:focus .ctl__tip {
+  transform: none;
+}
+.pc__side:not(.pc__side--end) > .ctl:first-child .ctl__tip,
+.pc__top .ctl .ctl__tip,
+.pvol .ctl .ctl__tip {
+  left: 0;
+  transform: translate(0, 0.35rem);
+}
+.pc__side:not(.pc__side--end) > .ctl:first-child:hover .ctl__tip,
+.pc__side:not(.pc__side--end) > .ctl:first-child:focus .ctl__tip,
+.pvol .ctl:hover .ctl__tip,
+.pvol .ctl:focus .ctl__tip {
+  transform: none;
+}
+.pc__top .ctl .ctl__tip {
+  top: 100%;
+  bottom: auto;
+  margin: 0.65rem 0 0;
+}
+.pc__top .ctl:hover .ctl__tip,
+.pc__top .ctl:focus .ctl__tip {
+  transform: none;
+}
+
+/* Keyboard / remote focus: cream fill, lime halo — unmistakable over any picture */
+html[data-input="key"] .ctl:focus,
+html[data-input="key"] .ptx__skip:focus {
+  background: var(--ink);
+  color: var(--bg);
+  box-shadow: 0 0 0 0.2rem rgba(0, 0, 0, 0.5), 0 0 0 0.4rem var(--accent);
+}
+html[data-input="key"] .ctl:focus .ctl__tag {
+  background: rgba(0, 0, 0, 0.12);
+  color: var(--bg);
+}
+html[data-input="key"] .ptx__play:focus {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 0 0 0.25rem rgba(0, 0, 0, 0.5), 0 0 0 0.5rem var(--accent), 0 0 2.4rem rgba(198, 244, 50, 0.45);
+  transform: scale(1.06);
+}
+html.tv .ctl:focus,
+html.tv .ptx__skip:focus {
+  transform: scale(1.1);
+}
+html[data-input="pointer"] .ctl:focus:not(:hover),
+html[data-input="pointer"] .ptx__skip:focus:not(:hover) {
+  background: transparent;
+}
+html[data-input="pointer"] .ptx__skip:focus:not(:hover) {
+  background: rgba(243, 238, 228, 0.06);
+}
+
+/* ---------- Volume ------------------------------------------------------------------- */
+.pvol {
+  display: inline-flex;
+  align-items: center;
+}
+.pvol__bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 0;
+  height: 2.4rem;
+  margin-left: 0.2rem;
+  overflow: hidden;
+  opacity: 0;
+  cursor: pointer;
+  outline: none;
+  touch-action: none;
+  transition: width 260ms var(--ease-out), opacity 200ms var(--ease);
+}
+.pvol:hover .pvol__bar,
+.pvol__bar:focus,
+.pvol.is-open .pvol__bar {
+  width: 6.8rem;
+  opacity: 1;
+}
+.pvol__track {
+  position: relative;
+  width: 6rem;
+  height: 0.26rem;
+  margin: 0 0.4rem;
+  border-radius: 1rem;
+  background: rgba(243, 238, 228, 0.22);
+}
+.pvol__track i {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  border-radius: 1rem;
+  background: var(--ink);
+}
+.pvol__knob {
+  position: absolute;
+  top: 50%;
+  width: 0.8rem;
+  height: 0.8rem;
+  margin: -0.4rem 0 0 -0.4rem;
+  border-radius: 50%;
+  background: var(--ink);
+}
+html[data-input="key"] .pvol__bar:focus .pvol__track i,
+html[data-input="key"] .pvol__bar:focus .pvol__knob {
+  background: var(--accent);
+}
+html[data-input="key"] .pvol__bar:focus .pvol__knob {
+  box-shadow: 0 0 0 0.25rem rgba(198, 244, 50, 0.35);
+}
+.pvol.is-unknown .pvol__track i {
+  width: 100% !important;
+  background: repeating-linear-gradient(90deg, rgba(243, 238, 228, 0.25) 0, rgba(243, 238, 228, 0.25) 0.3rem, transparent 0.3rem, transparent 0.6rem);
+}
+.pvol.is-unknown .pvol__knob {
+  display: none;
+}
+
+/* ---------- Centre flash (feedback for keys / clicks) -------------------------------- */
+.posd {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 5.2rem;
+  height: 5.2rem;
+  margin: -2.6rem 0 0;
+  padding: 0 1.2rem;
+  border-radius: 999px;
+  background: rgba(10, 11, 15, 0.72);
+  color: var(--ink);
+  font-size: 2.1rem;
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: posd 750ms var(--ease-out) both;
+}
+.posd.has-text {
+  height: 3.6rem;
+  margin-top: -1.8rem;
+  font-size: 1.4rem;
+}
+.posd span {
+  font: 750 1.1rem/1 var(--font-body);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.posd .icon + span {
+  margin-left: 0.6rem;
+}
+@keyframes posd {
+  0% { opacity: 0; transform: translateX(-50%) scale(0.86); }
+  18% { opacity: 1; transform: translateX(-50%) scale(1); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(-50%) scale(1.04); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .posd {
+    animation-name: posd-fade;
+  }
+  @keyframes posd-fade {
+    0%, 70% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+}
+
+/* ---------- Seek mode (TV): dim the picture a touch so the timeline reads ---------- */
+.player__stage.is-seekmode .pc__scrim--bottom {
+  opacity: 1;
+}
+.player__stage.is-seekmode .pscrub__time:first-child {
+  color: var(--accent);
+}
+
+/* ---------- Sizes ------------------------------------------------------------------- */
+/* Narrower desktops: the transport stays centred — the speed value and divider go first */
+@media (max-width: 1360px) {
+  html:not(.tv) .pc__speed .ctl__val,
+  html:not(.tv) .pc__sep {
+    display: none;
+  }
+  html:not(.tv) .pc__speed.has-value {
+    width: 2.75rem;
+    padding: 0;
+  }
+}
+@media (max-width: 1140px) {
+  html:not(.tv) .pc__audio .ctl__val {
+    display: none;
+  }
+  html:not(.tv) .pc__audio.has-value {
+    width: 2.75rem;
+    padding: 0;
+  }
+}
+html.tv .pc__bottom {
+  padding-bottom: 2.4rem;
+}
+html.tv .pc__title {
+  font-size: 1.75rem;
+}
+@media (max-width: 760px) {
+  html:not(.tv) .pc__top {
+    padding-top: 1rem;
+  }
+  html:not(.tv) .pc__title {
+    font-size: 1.3rem;
+  }
+  html:not(.tv) .pc__ends {
+    display: none;
+  }
+  html:not(.tv) .pc__bottom {
+    padding-bottom: 1rem;
+  }
+  html:not(.tv) .pc__row {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  html:not(.tv) .ptx {
+    order: -1;
+    width: 100%;
+    justify-content: center;
+    margin: 0 0 0.6rem;
+  }
+  html:not(.tv) .pc__side--start {
+    display: none;
+  }
+  html:not(.tv) .pc__side--end {
+    flex: none;
+    justify-content: center;
+  }
+  html:not(.tv) .pscrub__time {
+    width: 3.8rem;
+    font-size: 0.82rem;
+  }
+  html:not(.tv) .ctl__val {
+    display: none;
+  }
+  html:not(.tv) .ctl.has-value {
+    width: 2.9rem;
+    padding: 0;
+  }
+}
+
+/* The timeline and volume draw their own focus (thumb halo), not the generic box ring */
+html[data-input="key"] .pscrub__bar:focus,
+html[data-input="key"] .pvol__bar:focus {
+  outline: none;
+  box-shadow: none;
+}

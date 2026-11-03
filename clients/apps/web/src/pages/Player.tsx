@@ -1,7 +1,7 @@
 import { createEffect, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
-  Icon, Sheet, audioLabel, createPlayerAdapter, episodeCode, focusElement, formatClock, iso1,
+  Icon, Sheet, audioLabel, codecShort, createPlayerAdapter, episodeCode, focusElement, iso1, isSdh,
   AvPlayAdapter, mediaUrl, onBack, onRemoteKey, subtitleLabel,
   type ItemDetail, type MediaFile, type PlayerAdapter, type PlayerTracks,
 } from "@reel/ui";
@@ -18,6 +18,8 @@ import { CastCancelled } from "../lib/casting/chromecast";
 import { TV, href } from "../lib/mode";
 import { toast } from "../lib/toast";
 import { ErrorState } from "../components/States";
+import { CtlButton, Osd, Scrubber, Transport, Volume, useOsd, type ScrubberApi } from "../components/player/Controls";
+import { playHref, toPath } from "../lib/links";
 import { CastSheet } from "../components/casting/CastSheet";
 import { CastRemote } from "../components/casting/CastRemote";
 import { getServerUrl } from "@reel/ui";
@@ -28,15 +30,19 @@ export default function Player(): JSX.Element {
   return (
     <div class="player">
       <Show when={!item.error} fallback={<ErrorState error={item.error} onRetry={refetch} />}>
-        <Show when={item()} fallback={<div class="player__loading"><span class="spinner" /></div>}>
-          {(it) => <PlayerView item={it()} />}
+        {/* keyed: "Next episode" swaps the item under the same route → fresh player */}
+        <Show when={item()} keyed fallback={<div class="player__loading"><span class="spinner" /></div>}>
+          {(it) => <PlayerView item={it} />}
         </Show>
       </Show>
     </div>
   );
 }
 
-const HIDE_AFTER = 4000;
+/** Controls fade after this long without input (a little longer on TV: remotes are slower). */
+const HIDE_AFTER = TV ? 5000 : 3500;
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+const VOL_KEY = "reel.player.volume";
 const TICK_MS = 10_000;
 
 export interface PlayError {
@@ -127,7 +133,12 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   let video!: HTMLVideoElement;
   let root!: HTMLDivElement;
   let playBtn!: HTMLButtonElement;
-  let bar!: HTMLDivElement;
+  let scrubApi: ScrubberApi | undefined;
+  const [osd, flash] = useOsd();
+  const [speed, setSpeed] = createSignal(1);
+  const [volume, setVolume] = createSignal(readVolume());
+  const [muted, setMuted] = createSignal(false);
+  const [pipOk, setPipOk] = createSignal(false);
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
   let tickTimer: ReturnType<typeof setInterval> | undefined;
   let adapter: PlayerAdapter | undefined;
@@ -138,7 +149,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     setVisible(true);
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
-      if (playing() && !picker() && scrub() == null && !info() && !quick() && !castSheet()) setVisible(false);
+      if (playing() && !picker() && scrub() == null && !info() && !quick() && !castSheet() && !speedSheet()) setVisible(false);
     }, HIDE_AFTER);
   };
 
@@ -180,6 +191,8 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   const start = async (at: number, forCast?: "airplay") => {
     if (!file) return;
     setError(undefined);
+    // The clock shows the start point until the first timeupdate (slow starts, remote seek).
+    setPos(at);
     setBuffering(true);
     endSession();
     let d: DecideResponse;
@@ -394,9 +407,10 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
 
   /** Keep subtitles above the control bar while it's up (measured, not guessed). */
   const measureLift = () => {
+    const bar = scrubApi?.el();
     if (!root || !bar) return;
     const top = bar.getBoundingClientRect().top - root.getBoundingClientRect().top;
-    setSubLift(Math.max(0, root.clientHeight - top + root.clientHeight * 0.025));
+    setSubLift(Math.max(0, root.clientHeight - top + root.clientHeight * 0.045));
   };
   createEffect(() => {
     visible();
@@ -429,13 +443,13 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   };
   const audioLang = () => iso1(audioList().find((a) => a.index === audio())?.language);
 
-  const chooseSub = (v: number) => {
+  const chooseSub = (v: number, quiet = false) => {
     if (v === sub()) return;
     setSub(v);
     setSubAuto(false);
     subChosen = true;
     const p = playbackPrefs();
-    if (p) {
+    if (p && !quiet) {
       const s = v >= 0 ? subList().find((x) => x.index === v) : null;
       const cur = audioList().find((a) => a.index === audio());
       const isDefault = !!cur && (cur.default || audioList()[0] === cur) && !audioList().some((a) => a.default && a !== cur);
@@ -624,24 +638,90 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     else adapter.pause();
     poke();
   };
-  let commitTimer: ReturnType<typeof setTimeout> | undefined;
+  /** ±seconds from buttons / remote keys: previewed on the scrubber, committed shortly after. */
   const seekBy = (delta: number) => {
-    const base = scrub() ?? pos();
-    const d = dur() || file?.duration_s || 0;
-    setScrub(Math.max(0, Math.min(d - 1, base + delta)));
+    scrubApi?.nudge(delta, true);
     poke();
-    commitLater();
   };
-  const commitLater = () => {
-    if (commitTimer) clearTimeout(commitTimer);
-    commitTimer = setTimeout(() => {
-      const s = scrub();
-      if (s != null && adapter) {
-        adapter.seek(s);
-        setPos(s);
-      }
-      setScrub(null);
-    }, 450);
+  const seekTo = (t: number) => {
+    if (adapter) {
+      adapter.seek(t);
+      setPos(t);
+    }
+    poke();
+  };
+
+  // ---- volume / speed / picture-in-picture (HTML <video> players; AVPlay has its own) ----
+  const htmlVideo = () => !nativePlane();
+  const applyVolume = (v: number, m = muted()) => {
+    if (!video) return;
+    video.volume = Math.max(0, Math.min(1, v));
+    video.muted = m;
+  };
+  const changeVolume = (v: number) => {
+    const n = Math.max(0, Math.min(1, v));
+    setVolume(n);
+    setMuted(n === 0);
+    applyVolume(n, n === 0);
+    try {
+      localStorage.setItem(VOL_KEY, String(n));
+    } catch {
+      /* ignore */
+    }
+  };
+  const toggleMute = () => {
+    const m = !muted() && volume() > 0;
+    setMuted(m);
+    if (!m && volume() === 0) changeVolume(0.5);
+    else applyVolume(volume(), m);
+    flash({ icon: m ? "mute" : "volume", text: m ? "Muted" : `Volume ${Math.round(volume() * 100)}%` });
+  };
+  const changeSpeed = (v: number) => {
+    setSpeed(v);
+    if (video) {
+      video.defaultPlaybackRate = v;
+      video.playbackRate = v;
+    }
+    flash({ icon: "speed", text: v === 1 ? "Normal speed" : `${v}×` });
+  };
+  const [speedSheet, setSpeedSheet] = createSignal(false);
+  const togglePip = () => {
+    const v = video as HTMLVideoElement & { webkitSetPresentationMode?: (m: string) => void; webkitPresentationMode?: string };
+    if (document.pictureInPictureElement) void document.exitPictureInPicture().catch(() => undefined);
+    else if (document.pictureInPictureEnabled && v.requestPictureInPicture) void v.requestPictureInPicture().catch(() => undefined);
+    else if (v.webkitSetPresentationMode) v.webkitSetPresentationMode(v.webkitPresentationMode === "picture-in-picture" ? "inline" : "picture-in-picture");
+  };
+
+  // ---- next episode (same season) ----
+  const [nextEp] = createResource(
+    () => (props.item.kind === "episode" && props.item.parent_id != null && !props.source ? props.item.parent_id : undefined),
+    async (season) => {
+      const eps = await api.children(season);
+      const cur = props.item.episode_no ?? -1;
+      return eps
+        .filter((e) => e.kind === "episode" && (e.episode_no ?? -1) > cur)
+        .sort((a, b) => (a.episode_no ?? 0) - (b.episode_no ?? 0))[0];
+    },
+  );
+  const playNext = () => {
+    const n = nextEp();
+    if (n) navigate(toPath(playHref(n, { fromStart: !n.progress })), { replace: true });
+  };
+
+  /** "C": subtitles off ↔ back on (last choice, else the first text track). */
+  let lastSub = -1;
+  const toggleCaptions = () => {
+    const list = subList();
+    if (sub() >= 0) {
+      lastSub = sub();
+      chooseSub(-1, true);
+      flash({ icon: "cc", text: "Subtitles off" });
+      return;
+    }
+    const pick = list.find((x) => x.index === lastSub) ?? list.find((x) => x.url && !x.forced) ?? list[0];
+    if (!pick) return flash({ icon: "cc", text: "No subtitles" });
+    chooseSub(pick.index, true);
+    flash({ icon: "cc", text: subLabel(pick).short });
   };
 
   const exit = () => {
@@ -718,13 +798,34 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     });
     focusElement(playBtn, { smooth: false });
     poke();
+    // Volume survives sessions on this device; the element reports changes from anywhere.
+    applyVolume(volume(), false);
+    const onVol = () => {
+      setMuted(video.muted || video.volume === 0);
+      if (video.volume > 0) setVolume(video.volume);
+    };
+    // A new source resets the rate: keep the chosen speed.
+    const onRate = () => {
+      if (htmlVideo() && video.playbackRate !== speed()) {
+        video.defaultPlaybackRate = speed();
+        video.playbackRate = speed();
+      }
+    };
+    video.addEventListener("volumechange", onVol);
+    video.addEventListener("loadedmetadata", onRate);
+    const pv = video as HTMLVideoElement & { webkitSupportsPresentationMode?: (m: string) => boolean };
+    setPipOk(!TV && (!!document.pictureInPictureEnabled || !!pv.webkitSupportsPresentationMode?.("picture-in-picture")));
+    onCleanup(() => {
+      video.removeEventListener("volumechange", onVol);
+      video.removeEventListener("loadedmetadata", onRate);
+    });
 
     tickTimer = setInterval(() => {
       if (playing()) report(false);
     }, TICK_MS);
 
     const onKey = (e: KeyboardEvent) => {
-      if (picker() || castSheet()) return;
+      if (picker() || castSheet() || speedSheet()) return;
       const k = e.key;
       const c = cast();
       if (c) {
@@ -738,33 +839,66 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       }
       // Back is handled by onBack below; don't let it re-show the controls first.
       if (k === "Escape" || k === "Backspace" || k === "GoBack" || e.keyCode === 461 || e.keyCode === 10009) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       const hidden = !visible();
+      const inSlider = !!(document.activeElement as HTMLElement | null)?.closest?.(".pscrub__bar, .pvol__bar");
+      const take = () => {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      };
       if (k === " " || k === "k") {
-        e.preventDefault();
+        // Space on a focused button presses it; anywhere else it's play/pause.
+        if (k === " " && !hidden && (document.activeElement as HTMLElement | null)?.tagName === "BUTTON") return poke();
+        take();
+        const was = playing();
         toggle();
+        flash({ icon: was ? "pause" : "play" });
         return;
       }
-      if (k === "i" && !e.ctrlKey && !e.metaKey) {
+      if (k === "i") {
         setInfo((v) => !v);
-        poke();
-        return;
+        return poke();
       }
-      if (k === "f" && !e.ctrlKey && !e.metaKey) {
-        fullscreen();
-        return;
+      if (k === "f" && !TV) return fullscreen();
+      if (k === "m" && htmlVideo()) return toggleMute();
+      if (k === "c") {
+        toggleCaptions();
+        return poke();
       }
-      if (hidden && (k === "ArrowLeft" || k === "ArrowRight")) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        seekBy(k === "ArrowLeft" ? -10 : 10);
-        focusElement(bar, { smooth: false });
-        return;
+      if ((k === "j" || k === "l") && !TV) {
+        seekBy(k === "j" ? -10 : 10);
+        return flash({ icon: k === "j" ? "replay" : "skip", text: k === "j" ? "−10s" : "+10s" });
       }
-      if (hidden && /^(ArrowUp|ArrowDown|Enter)$/.test(k)) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        poke();
-        return;
+      if (k === "ArrowLeft" || k === "ArrowRight") {
+        const dir = k === "ArrowLeft" ? -1 : 1;
+        if (!TV && !inSlider) {
+          // Desktop: arrows always seek (Shift = 30 s); Tab moves focus.
+          take();
+          const d = dir * (e.shiftKey ? 30 : 10);
+          seekBy(d);
+          flash({ icon: dir < 0 ? "replay" : "skip", text: `${d < 0 ? "−" : "+"}${Math.abs(d)}s` });
+          return;
+        }
+        if (TV && hidden) {
+          // Remote with the controls hidden: straight into seek mode on the timeline.
+          take();
+          scrubApi?.nudge(dir * 10);
+          poke();
+          const bar = scrubApi?.el();
+          if (bar) focusElement(bar, { smooth: false });
+          return;
+        }
+      }
+      if ((k === "ArrowUp" || k === "ArrowDown") && !TV && htmlVideo()) {
+        take();
+        changeVolume(volume() * (muted() ? 0 : 1) + (k === "ArrowUp" ? 0.05 : -0.05));
+        flash({ icon: volume() === 0 ? "mute" : "volume", text: `Volume ${Math.round(volume() * 100)}%` });
+        return poke();
+      }
+      if (hidden && /^(ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Enter)$/.test(k)) {
+        // First press only wakes the controls (focus stays where it was).
+        take();
+        return poke();
       }
       poke();
     };
@@ -797,7 +931,12 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       return true;
     });
     const offBack = onBack(() => {
-      if (picker() || castSheet()) return false;
+      if (picker() || castSheet() || speedSheet()) return false;
+      // Back peels one layer at a time: seek preview → info → controls → leave.
+      if (scrubApi?.cancel()) {
+        poke();
+        return true;
+      }
       if (cast()) {
         // Leave the remote view; the TV keeps playing (come back to this title to control it).
         exit();
@@ -825,7 +964,6 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       offMedia();
       offBack();
       if (hideTimer) clearTimeout(hideTimer);
-      if (commitTimer) clearTimeout(commitTimer);
       if (tickTimer) clearInterval(tickTimer);
       endSession(true);
       offs.forEach((f) => f());
@@ -837,49 +975,65 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     });
   });
 
-  // Scrubber: arrows seek with acceleration on hold.
-  let held = 0;
-  const onBarKey = (e: KeyboardEvent) => {
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-      e.preventDefault();
-      held = e.repeat ? held + 1 : 0;
-      const step = held > 20 ? 60 : held > 8 ? 30 : 10;
-      seekBy(e.key === "ArrowLeft" ? -step : step);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      toggle();
-    }
-  };
-  const onBarPointer = (e: PointerEvent) => {
-    const r = bar.getBoundingClientRect();
-    const p = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-    setScrub(p * (dur() || 0));
-    if (e.type === "pointerup") commitLater();
-  };
-
-  const shown = () => scrub() ?? pos();
-  const pct = () => (dur() ? (shown() / dur()) * 100 : 0);
-  const bufPct = () => (dur() ? Math.min(100, (buffered() / dur()) * 100) : 0);
+  const bufferedEnd = () => buffered();
   const audioList = () => session()?.audio ?? file?.audio ?? [];
   /** Session list (has VTT urls); falls back to the file's streams while (re)deciding. */
   const subList = (): { index: number; language?: string | null; title?: string | null; forced: boolean; external: boolean; url?: string | null }[] =>
     session()?.subtitles ?? file?.subtitles ?? [];
+  /** Compact choices for the control bar: "EN · 5.1", "EN SDH", "Off". */
+  const CH: Record<number, string> = { 1: "1.0", 2: "2.0", 6: "5.1", 8: "7.1" };
+  const audioShort = () => {
+    const a = audioList().find((x) => x.index === audio());
+    if (!a) return "Default";
+    const lang = iso1(a.language).toUpperCase() || codecShort(a.codec);
+    return `${lang} · ${CH[a.channels] ?? `${a.channels}ch`}`;
+  };
   const audioText = () => {
     const a = audioList().find((x) => x.index === audio());
     return a ? audioLabel(a).short : "Default";
   };
+  const subShort = () => {
+    const x = subList().find((y) => y.index === sub());
+    if (!x) return "Off";
+    const lang = iso1(x.language).toUpperCase() || subLabel(x).short.slice(0, 2).toUpperCase();
+    return `${lang}${isSdh(x) ? " SDH" : ""}${x.forced ? " Forced" : ""}`;
+  };
   const subText = () => {
-    const s = subList().find((x) => x.index === sub());
-    return s ? subLabel(s).short : "Off";
+    const x = subList().find((y) => y.index === sub());
+    return x ? subLabel(x).short : "Off";
   };
   const mode = () => session()?.mode;
+  const transcoding = () => mode() === "transcode" || mode() === "audio_transcode";
+  const shownPos = () => scrub() ?? pos();
+  /** "Ends at 22:41" — when this would finish at the current speed. */
+  const endsAt = () => {
+    const d = dur();
+    if (!d || !session()) return "";
+    const t = new Date(Date.now() + (Math.max(0, d - shownPos()) * 1000) / speed());
+    return t.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  };
+  const topEyebrow = () =>
+    props.source?.eyebrow ??
+    (props.item.kind === "episode"
+      ? `${series() ?? ""}${series() ? " · " : ""}${episodeCode(props.item)}`
+      : [props.item.kind === "movie" ? "Film" : "", props.item.year ? String(props.item.year) : ""].filter(Boolean).join(" · "));
 
   return (
     <div
       ref={root}
       class="player__stage"
-      classList={{ "is-chrome": visible() || !playing(), "is-paused": !playing(), "is-native-plane": nativePlane() }}
+      classList={{
+        "is-chrome": visible() || !playing() || scrub() != null,
+        "is-paused": !playing(),
+        "is-native-plane": nativePlane(),
+        "is-seekmode": scrub() != null,
+      }}
       onMouseMove={poke}
+      onMouseLeave={() => {
+        if (!playing() || picker() || castSheet() || speedSheet()) return;
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => playing() && scrub() == null && setVisible(false), 700);
+      }}
     >
       <video
         ref={video}
@@ -887,9 +1041,15 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
         playsinline
         preload="auto"
         crossorigin={getServerUrl() ? "anonymous" : undefined}
-        onClick={toggle}
+        onClick={() => {
+          const was = playing();
+          toggle();
+          flash({ icon: was ? "pause" : "play" });
+        }}
         onDblClick={fullscreen}
       />
+
+      <Osd osd={osd()} />
 
       <Show when={cueHtml()}>
         <div
@@ -959,115 +1119,116 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
         )}
       </Show>
 
-      <div class="player__chrome" data-nav-fixed aria-hidden={!visible() && playing() ? "true" : undefined}>
-        <div class="player__top">
-          <button type="button" class="iconbtn" aria-label="Back" onClick={exit}>
-            <Icon name="back" />
-          </button>
-          <div class="player__titles">
-            <Show when={props.item.kind === "episode" || props.source?.eyebrow} fallback={<h1>{props.item.title}</h1>}>
-              <p class="eyebrow">{props.source?.eyebrow ?? `${series() ?? ""}${series() ? " · " : ""}${episodeCode(props.item)}`}</p>
-              <h1>{props.item.title}</h1>
+      <div class="pc" data-nav-fixed aria-hidden={!visible() && playing() && scrub() == null ? "true" : undefined}>
+        <div class="pc__scrim pc__scrim--top" />
+        <div class="pc__scrim pc__scrim--bottom" />
+
+        <header class="pc__top">
+          <CtlButton icon="back" label="Back" onClick={exit} />
+          <div class="pc__titles">
+            <Show when={topEyebrow()}>
+              <p class="pc__eyebrow">{topEyebrow()}</p>
             </Show>
+            <h1 class="pc__title">{props.item.title}</h1>
           </div>
-          <Show when={mode()}>
-            <button
-              type="button"
-              class="player__mode"
-              classList={{ "is-transcode": mode() === "transcode" || mode() === "audio_transcode" }}
-              aria-pressed={info()}
-              onClick={() => setInfo((v) => !v)}
-            >
-              {MODE_LABEL[mode()!] ?? mode()}
-            </button>
-          </Show>
-        </div>
-
-        <div class="player__bottom">
-          <div class="scrub">
-            <span class="scrub__time">{formatClock(shown())}</span>
-            <div
-              ref={bar}
-              class="scrub__bar"
-              role="slider"
-              tabindex="0"
-              data-focusable
-              data-nav-capture="left right"
-              aria-label="Seek"
-              aria-valuemin={0}
-              aria-valuemax={Math.round(dur())}
-              aria-valuenow={Math.round(shown())}
-              aria-valuetext={formatClock(shown())}
-              onKeyDown={onBarKey}
-              onPointerDown={(e) => {
-                bar.setPointerCapture?.(e.pointerId);
-                onBarPointer(e);
-              }}
-              onPointerMove={(e) => e.buttons && onBarPointer(e)}
-              onPointerUp={onBarPointer}
-            >
-              <div class="scrub__track">
-                <i class="scrub__buf" style={{ width: `${bufPct()}%` }} />
-                <i class="scrub__fill" style={{ width: `${pct()}%` }} />
-              </div>
-              <span class="scrub__thumb" style={{ left: `${pct()}%` }} />
-              <Show when={scrub() != null}>
-                <span class="scrub__bubble" style={{ left: `${pct()}%` }}>{formatClock(scrub()!)}</span>
-              </Show>
-            </div>
-            <span class="scrub__time scrub__time--end">-{formatClock(Math.max(0, dur() - shown()))}</span>
-          </div>
-
-          <div class="player__controls">
-            <div class="player__cluster">
-              <button type="button" class="iconbtn" aria-label="Back 10 seconds" onClick={() => seekBy(-10)}>
-                <Icon name="replay" />
-                <small>10</small>
-              </button>
-              <button type="button" class="iconbtn iconbtn--xl" ref={playBtn} aria-label={playing() ? "Pause" : "Play"} onClick={toggle}>
-                <Icon name={playing() ? "pause" : "play"} />
-              </button>
-              <button type="button" class="iconbtn" aria-label="Forward 30 seconds" onClick={() => seekBy(30)}>
-                <Icon name="skip" />
-                <small>30</small>
-              </button>
-            </div>
-            <div class="player__opts">
-              <button type="button" class="btn btn--ghost btn--select" onClick={() => setPicker("audio")} disabled={audioList().length < 2}>
-                <Icon name="audio" /> <span class="btn__value">{audioText()}</span>
-              </button>
+          <div class="pc__meta">
+            <Show when={endsAt()}>
+              <span class="pc__ends">Ends at {endsAt()}</span>
+            </Show>
+            <Show when={mode()}>
               <button
                 type="button"
-                class="btn btn--ghost btn--select"
-                onClick={() => setPicker("sub")}
-                disabled={!subList().length}
-                title={subAuto() ? "Picked automatically from your playback settings" : undefined}
+                class="pc__badge"
+                classList={{ "is-transcode": transcoding() }}
+                aria-pressed={info()}
+                title="Stream info (I)"
+                onClick={() => setInfo((v) => !v)}
               >
-                <Icon name="cc" /> <span class="btn__value">{subText()}</span>
-                <Show when={subAuto()}><small class="btn__tag">Auto</small></Show>
+                <i aria-hidden="true" />
+                {transcoding() ? (mode() === "audio_transcode" ? "Audio transcode" : "Transcoding") : MODE_LABEL[mode()!] ?? mode()}
               </button>
-              <Show when={!TV}>
-                <button
-                  type="button"
-                  class="iconbtn"
-                  classList={{ "is-casting": !!cast() }}
-                  aria-label={cast() ? `Playing on ${cast()!.remote.device()}` : "Play on TV"}
-                  title="Play on TV"
-                  onClick={() => setCastSheet(true)}
-                >
-                  <Icon name={airplaying() ? "airplay" : "cast"} />
-                </button>
+            </Show>
+          </div>
+        </header>
+
+        <div class="pc__bottom">
+          <Scrubber
+            position={pos()}
+            duration={dur()}
+            buffered={bufferedEnd()}
+            onSeek={seekTo}
+            onPreview={(t) => {
+              setScrub(t);
+              poke();
+            }}
+            onActivity={poke}
+            api={(a) => (scrubApi = a)}
+          />
+
+          {/* One group: coming down from the timeline lands on Play (or where you were). */}
+          <div class="pc__row" data-nav-group>
+            <div class="pc__side pc__side--start">
+              <Show when={!TV && htmlVideo()}>
+                <Volume value={volume()} muted={muted()} onChange={changeVolume} onMute={toggleMute} />
               </Show>
-              <button type="button" class="iconbtn" aria-label="Stream info" aria-pressed={info()} onClick={() => setInfo((v) => !v)}>
-                <Icon name="info" />
-              </button>
-              <button type="button" class="iconbtn player__fs" aria-label="Full screen" onClick={fullscreen}>
-                <Icon name="fullscreen" />
-              </button>
+            </div>
+
+            <Transport
+              playing={playing()}
+              onToggle={toggle}
+              onBack={() => seekBy(-10)}
+              onForward={() => seekBy(30)}
+              next={nextEp() ? { label: `Next: ${episodeCode(nextEp()!)}`, onClick: playNext } : undefined}
+              playRef={(el) => (playBtn = el)}
+            />
+
+            <div class="pc__side pc__side--end">
+              <CtlButton class="pc__audio" icon="audio" label={`Audio · ${audioText()}`} value={audioShort()} disabled={audioList().length < 2} onClick={() => setPicker("audio")} />
+              <CtlButton
+                icon="cc"
+                label={subAuto() ? `Subtitles · ${subText()} (automatic)` : `Subtitles · ${subText()}`}
+                value={subShort()}
+                tag={subAuto() && sub() >= 0 ? "Auto" : undefined}
+                active={sub() >= 0}
+                disabled={!subList().length}
+                onClick={() => setPicker("sub")}
+              />
+              <Show when={htmlVideo()}>
+                <CtlButton class="pc__speed" icon="speed" label="Playback speed" value={speed() !== 1 ? `${speed()}×` : undefined} active={speed() !== 1} onClick={() => setSpeedSheet(true)} />
+              </Show>
+              <span class="pc__sep" aria-hidden="true" />
+              <Show when={!TV}>
+                <CtlButton
+                  icon={airplaying() ? "airplay" : "cast"}
+                  label={cast() ? `Playing on ${cast()!.remote.device()}` : "Play on TV"}
+                  active={!!cast()}
+                  onClick={() => setCastSheet(true)}
+                />
+              </Show>
+              <CtlButton icon="info" label="Stream info" pressed={info()} onClick={() => setInfo((v) => !v)} />
+              <Show when={pipOk() && htmlVideo()}>
+                <CtlButton icon="pip" label="Picture in picture" onClick={togglePip} />
+              </Show>
+              <Show when={!TV}>
+                <CtlButton icon="fullscreen" label="Full screen (F)" onClick={fullscreen} />
+              </Show>
             </div>
           </div>
         </div>
       </div>
+
+      <Show when={speedSheet()}>
+        <Sheet
+          title="Playback speed"
+          selected={speed()}
+          options={SPEEDS.map((v) => ({ value: v, title: v === 1 ? "Normal" : `${v}×`, detail: v === 1 ? "1×" : undefined }))}
+          onSelect={changeSpeed}
+          onClose={() => {
+            setSpeedSheet(false);
+            poke();
+          }}
+        />
+      </Show>
 
       <Show when={picker() === "audio"}>
         <Sheet
@@ -1134,6 +1295,15 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       </Show>
     </div>
   );
+}
+
+function readVolume(): number {
+  try {
+    const v = Number(localStorage.getItem(VOL_KEY));
+    return localStorage.getItem(VOL_KEY) != null && isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
+  } catch {
+    return 1;
+  }
 }
 
 /** Fix-it button on the error card: busy while it runs, then playback restarts. */
