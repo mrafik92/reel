@@ -289,7 +289,7 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
                 ]),
                 HwAccel::Nvenc => push(&["-preset", "p4", "-profile:v", "high"]),
                 HwAccel::VideoToolbox => push(&["-profile:v", "high", "-realtime", "0"]),
-                HwAccel::Vaapi { .. } => push(&["-profile:v", "high"]),
+                HwAccel::Vaapi { .. } => push(&["-profile:v", "high", "-rc_mode", "VBR"]),
                 HwAccel::Qsv { .. } => push(&["-profile:v", "high", "-preset", "veryfast"]),
             }
             push(&[
@@ -535,7 +535,7 @@ mod tests {
         assert!(got.starts_with(&format!(
             "{HEAD} -init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va -hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi -copyts"
         )));
-        assert!(got.contains("-vf tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709,scale_vaapi=w=1280:h=720:format=nv12 -c:v h264_vaapi -profile:v high"));
+        assert!(got.contains("-vf tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709,scale_vaapi=w=1280:h=720:format=nv12 -c:v h264_vaapi -profile:v high -rc_mode VBR -b:v 4000k -maxrate 4800k -bufsize 8000k"));
     }
 
     #[test]

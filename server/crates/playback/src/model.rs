@@ -94,7 +94,7 @@ pub async fn load_file(
     file_id: i64,
 ) -> Result<Option<(FileInfo, Vec<StreamInfo>)>, sqlx::Error> {
     let Some(row) = sqlx::query(
-        "SELECT id, path, container, duration_s, bitrate FROM media_files WHERE id = ?",
+        "SELECT id, path, container, duration_s, bitrate, size FROM media_files WHERE id = ?",
     )
     .bind(file_id)
     .fetch_optional(pool)
@@ -107,7 +107,11 @@ pub async fn load_file(
         path: row.get("path"),
         container: row.get("container"),
         duration_s: row.get("duration_s"),
-        bitrate: row.get("bitrate"),
+        bitrate: bitrate_or_estimate(
+            row.get("bitrate"),
+            row.get::<Option<i64>, _>("size"),
+            row.get("duration_s"),
+        ),
     };
     let rows = sqlx::query(
         "SELECT id, idx, kind, codec, profile, level, width, height, hdr, bit_depth, channels, \
@@ -147,4 +151,35 @@ pub async fn load_file(
         })
         .collect();
     Ok(Some((file, streams)))
+}
+
+/// Probe bitrate (bits/s), or `size * 8 / duration` when the probe did not report one.
+pub fn bitrate_or_estimate(
+    bitrate: Option<i64>,
+    size: Option<i64>,
+    duration_s: Option<f64>,
+) -> Option<i64> {
+    match (bitrate.filter(|b| *b > 0), size, duration_s) {
+        (Some(b), _, _) => Some(b),
+        (None, Some(sz), Some(d)) if sz > 0 && d > 1.0 => Some((sz as f64 * 8.0 / d) as i64),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bitrate_falls_back_to_size_over_duration() {
+        assert_eq!(
+            bitrate_or_estimate(Some(9_000_000), Some(1), Some(1.0)),
+            Some(9_000_000)
+        );
+        // 6.7 GB over 5629 s ≈ 9.5 Mbps
+        let b = bitrate_or_estimate(None, Some(6_700_000_000), Some(5629.0)).unwrap();
+        assert!((9_400_000..9_600_000).contains(&b), "{b}");
+        assert_eq!(bitrate_or_estimate(Some(0), Some(100), Some(0.0)), None);
+        assert_eq!(bitrate_or_estimate(None, None, Some(10.0)), None);
+    }
 }

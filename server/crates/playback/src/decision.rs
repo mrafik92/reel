@@ -177,13 +177,13 @@ fn profile_rank(codec: &str, profile: &str) -> Option<u32> {
     }
 }
 
-fn even(v: f64) -> u32 {
+pub(crate) fn even(v: f64) -> u32 {
     let n = v.round() as u32;
     (n & !1).max(2)
 }
 
 /// Fit (w,h) into (mw,mh) preserving aspect ratio; never upscales.
-fn fit(w: u32, h: u32, mw: u32, mh: u32) -> (u32, u32) {
+pub(crate) fn fit(w: u32, h: u32, mw: u32, mh: u32) -> (u32, u32) {
     if w <= mw && h <= mh {
         return (w & !1, h & !1);
     }

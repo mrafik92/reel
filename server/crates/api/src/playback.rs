@@ -7,7 +7,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use reel_playback::{
-    DecisionInput, DeviceProfile, HwAccelStatus, PlaybackDecision, PlaybackMode, decide,
+    DecisionInput, DeviceProfile, HwAccelStatus, PlaybackDecision, PlaybackMode, Quality,
+    QualityOption, QualityRequest, decide_quality,
     decision::is_image_subtitle,
     model::{self, StreamKind},
     subtitles::{SubtitleSource, to_vtt},
@@ -51,6 +52,11 @@ pub struct DecideRequest {
     /// Receiver is a Chromecast/AirPlay device: defaults the preset to `chromecast` and returns
     /// absolute, 8-hour signed URLs on `cast_base_url`.
     pub for_cast: Option<bool>,
+    /// `auto` (default) | `original` | `1080p` | `720p` | `480p`. Auto keeps the original streams
+    /// when they fit the bandwidth cap, else picks the best H.264 ladder rung that does.
+    pub quality: Option<Quality>,
+    /// Client bandwidth estimate (kbit/s). The effective cap is `min(this, your bitrate limit)`.
+    pub max_bitrate_kbps: Option<u32>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -79,6 +85,32 @@ pub struct DecideResponse {
     pub audio: Vec<AudioStream>,
     /// The tracks chosen automatically (or taken from the request) and why.
     pub selected: reel_playback::Selected,
+    /// Expected bitrate (kbit/s) of the chosen output (source bitrate for direct play/remux).
+    pub bitrate_kbps: u32,
+    /// Resolved quality: `original` or a ladder rung (never `auto`).
+    pub quality: Quality,
+    /// Choices for a quality menu, with expected bitrates and availability (never upscales,
+    /// respects the user's bitrate limit).
+    pub quality_options: Vec<QualityOption>,
+}
+
+/// Re-deciding for the same file on the same device (quality switch, resume position) replaces
+/// the previous session: it neither counts against stream/transcode limits nor lingers.
+pub(crate) async fn replace_previous(
+    st: &AppState,
+    user_id: i64,
+    device_id: &Option<String>,
+    file_id: i64,
+) {
+    // without a device id we cannot tell a re-decide from a second player: leave those alone
+    if device_id.is_none() {
+        return;
+    }
+    for s in st.playback.list().await {
+        if s.user_id == user_id && s.file_id == file_id && s.device_id == *device_id {
+            st.end_session(&s.id).await;
+        }
+    }
 }
 
 /// Decide how to play a file and start a playback session.
@@ -137,6 +169,7 @@ pub async fn decide_playback(
     let (file, streams) = model::load_file(&st.db, file_id)
         .await?
         .ok_or(ApiError::NotFound)?;
+    replace_previous(&st, u.id(), &req.device_id, file_id).await;
     let limits = &u.user.limits;
     let max_bitrate_kbps = limits.max_bitrate_kbps;
     // Concurrent-stream limit (every live session of this user counts).
@@ -169,14 +202,22 @@ pub async fn decide_playback(
         reel_playback::Pick::from_request(req.subtitle_index),
         &profile,
     );
-    let decision = decide(&DecisionInput {
-        file: &file,
-        streams: &streams,
-        audio_index: selected.audio_index,
-        subtitle_index: selected.subtitle_index,
-        profile: &profile,
-        max_bitrate_kbps: max_bitrate_kbps.and_then(|v| u32::try_from(v).ok()),
-    });
+    let qd = decide_quality(
+        &DecisionInput {
+            file: &file,
+            streams: &streams,
+            audio_index: selected.audio_index,
+            subtitle_index: selected.subtitle_index,
+            profile: &profile,
+            max_bitrate_kbps: max_bitrate_kbps.and_then(|v| u32::try_from(v).ok()),
+        },
+        &QualityRequest {
+            quality: req.quality.unwrap_or_default(),
+            max_bitrate_kbps: req.max_bitrate_kbps.filter(|v| *v > 0),
+        },
+    );
+    let (decision, quality, bitrate_kbps, quality_options) =
+        (qd.decision, qd.quality, qd.bitrate_kbps, qd.options);
     if let Some(max) = limits.max_transcodes {
         let transcoding = mine
             .iter()
@@ -296,6 +337,9 @@ pub async fn decide_playback(
         subtitles,
         audio,
         selected,
+        bitrate_kbps,
+        quality,
+        quality_options,
     }))
 }
 

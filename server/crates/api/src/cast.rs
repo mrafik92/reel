@@ -734,6 +734,8 @@ async fn resolve_request(st: &AppState, u: AuthUser, req: &CastPlayRequest) -> A
                     device_id: None,
                     item_id: None,
                     for_cast: Some(true),
+                    quality: None,
+                    max_bitrate_kbps: None,
                 }),
             )
             .await?
@@ -784,6 +786,8 @@ async fn resolve_request(st: &AppState, u: AuthUser, req: &CastPlayRequest) -> A
                     device_id: None,
                     takeover: req.takeover,
                     for_cast: Some(true),
+                    quality: None,
+                    max_bitrate_kbps: None,
                 }),
             )
             .await?

@@ -321,3 +321,49 @@ async fn played_toggle_cascades() {
     let (_, d) = get(&fx.app, &format!("/api/v1/items/{item}")).await;
     assert_eq!(d["played"], true);
 }
+
+#[tokio::test]
+async fn decide_reports_quality_and_redecide_replaces_the_session() {
+    let Some(fx) = fixture().await else { return };
+    let (_, fid) = movie(&fx, "Chrome Ok").await;
+    let body =
+        json!({"preset":"web_chrome","device_id":"dev-1","quality":"auto","max_bitrate_kbps":3500});
+    let (s, v) = send(&fx.app, "POST", &decide_uri(fid), Some(body.clone())).await;
+    assert_eq!(s, 200, "{v}");
+    // a tiny file fits any bandwidth: original, with a menu that never offers upscaling
+    assert_eq!(v["quality"], "original");
+    assert!(v["bitrate_kbps"].as_u64().is_some());
+    let ids: Vec<&str> = v["quality_options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["auto", "original", "1080p", "720p", "480p"]);
+    assert_eq!(
+        v["quality_options"][2]["available"], false,
+        "128x96 source: no upscaling"
+    );
+    let first = v["session_id"].as_str().unwrap().to_string();
+
+    // unknown quality id is rejected
+    let bad = json!({"preset":"web_chrome","quality":"4k"});
+    assert_eq!(
+        send(&fx.app, "POST", &decide_uri(fid), Some(bad)).await.0,
+        422
+    );
+
+    // same device + file again: the first session is replaced, not accumulated
+    let (s, v2) = send(&fx.app, "POST", &decide_uri(fid), Some(body)).await;
+    assert_eq!(s, 200);
+    assert_ne!(v2["session_id"], first.as_str());
+    let (_, a) = get(&fx.app, "/api/v1/admin/sessions").await;
+    assert_eq!(a.as_array().unwrap().len(), 1, "{a}");
+    let prog = format!("/api/v1/playback/{first}/progress");
+    assert_eq!(
+        send(&fx.app, "POST", &prog, Some(json!({"position_s":1})))
+            .await
+            .0,
+        404
+    );
+}

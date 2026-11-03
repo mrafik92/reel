@@ -17,7 +17,7 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use reel_playback::{
-    DecisionInput, DeviceProfile, PlaybackMode, decide,
+    DecisionInput, DeviceProfile, PlaybackMode,
     decision::is_image_subtitle,
     model::{self, FileInfo, StreamKind},
 };
@@ -997,6 +997,10 @@ pub struct VodPlayRequest {
     /// Chromecast/AirPlay receiver: default preset `chromecast`, absolute 8-hour URLs on
     /// `cast_base_url`.
     pub for_cast: Option<bool>,
+    /// `auto` (default) | `original` | `1080p` | `720p` | `480p` (see `POST /playback/{file}/decide`).
+    pub quality: Option<reel_playback::Quality>,
+    /// Client bandwidth estimate (kbit/s); the cap is `min(this, your bitrate limit)`.
+    pub max_bitrate_kbps: Option<u32>,
 }
 
 fn ffprobe_path(st: &AppState) -> String {
@@ -1159,6 +1163,8 @@ pub async fn vod_play(
             reel_iptv::Error::NotFound(_) => ApiError::NotFound,
             e => e.into(),
         })?;
+    // re-deciding the same title on the same device replaces the previous playback
+    crate::playback::replace_previous(&st, u.id(), &req.device_id, vod_file_id(kind, req.id)).await;
     let limits = &u.user.limits;
     let mine: Vec<_> = st
         .playback
@@ -1282,14 +1288,22 @@ async fn vod_play_inner(
                 .push_str("; subtitle track not extractable on a single-connection provider");
         }
     }
-    let decision = decide(&DecisionInput {
-        file: &file,
-        streams: &streams,
-        audio_index: selected.audio_index,
-        subtitle_index: selected.subtitle_index,
-        profile,
-        max_bitrate_kbps: limits.max_bitrate_kbps.and_then(|v| u32::try_from(v).ok()),
-    });
+    let qd = reel_playback::decide_quality(
+        &DecisionInput {
+            file: &file,
+            streams: &streams,
+            audio_index: selected.audio_index,
+            subtitle_index: selected.subtitle_index,
+            profile,
+            max_bitrate_kbps: limits.max_bitrate_kbps.and_then(|v| u32::try_from(v).ok()),
+        },
+        &reel_playback::QualityRequest {
+            quality: req.quality.unwrap_or_default(),
+            max_bitrate_kbps: req.max_bitrate_kbps.filter(|v| *v > 0),
+        },
+    );
+    let (decision, quality, bitrate_kbps, quality_options) =
+        (qd.decision, qd.quality, qd.bitrate_kbps, qd.options);
     if let Some(max) = limits.max_transcodes {
         let transcoding = mine
             .iter()
@@ -1391,6 +1405,9 @@ async fn vod_play_inner(
             subtitles,
             audio,
             selected,
+            bitrate_kbps,
+            quality,
+            quality_options,
         },
         vs,
     ))
