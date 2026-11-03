@@ -7042,6 +7042,15 @@
             "format": "int64",
             "description": "Multi-episode files: the episode being watched (one of the file's `item_ids`); watch\nprogress is credited to it. Defaults to the file's first item."
           },
+          "max_bitrate_kbps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Client bandwidth estimate (kbit/s). The effective cap is `min(this, your bitrate limit)`.",
+            "minimum": 0
+          },
           "preset": {
             "type": [
               "string",
@@ -7057,6 +7066,17 @@
               {
                 "$ref": "#/components/schemas/DeviceProfile",
                 "description": "Full device profile. Takes precedence over `preset`."
+              }
+            ]
+          },
+          "quality": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Quality",
+                "description": "`auto` (default) | `original` | `1080p` | `720p` | `480p`. Auto keeps the original streams\nwhen they fit the bandwidth cap, else picks the best H.264 ladder rung that does."
               }
             ]
           },
@@ -7087,7 +7107,10 @@
           "decision",
           "subtitles",
           "audio",
-          "selected"
+          "selected",
+          "bitrate_kbps",
+          "quality",
+          "quality_options"
         ],
         "properties": {
           "audio": {
@@ -7096,11 +7119,28 @@
               "$ref": "#/components/schemas/AudioStream"
             }
           },
+          "bitrate_kbps": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Expected bitrate (kbit/s) of the chosen output (source bitrate for direct play/remux).",
+            "minimum": 0
+          },
           "decision": {
             "$ref": "#/components/schemas/PlaybackDecision"
           },
           "mode": {
             "$ref": "#/components/schemas/PlaybackMode"
+          },
+          "quality": {
+            "$ref": "#/components/schemas/Quality",
+            "description": "Resolved quality: `original` or a ladder rung (never `auto`)."
+          },
+          "quality_options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QualityOption"
+            },
+            "description": "Choices for a quality menu, with expected bitrates and availability (never upscales,\nrespects the user's bitrate limit)."
           },
           "selected": {
             "$ref": "#/components/schemas/Selected",
@@ -9290,6 +9330,43 @@
           }
         }
       },
+      "Quality": {
+        "type": "string",
+        "description": "Requested / resolved quality.",
+        "enum": [
+          "auto",
+          "original",
+          "1080p",
+          "720p",
+          "480p"
+        ]
+      },
+      "QualityOption": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "bitrate_kbps",
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "bitrate_kbps": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Expected total bitrate (kbit/s) of this choice.",
+            "minimum": 0
+          },
+          "id": {
+            "$ref": "#/components/schemas/Quality"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
       "QualityProfileDto": {
         "type": "object",
         "required": [
@@ -11079,6 +11156,15 @@
             "type": "string",
             "description": "`movie` | `episode`"
           },
+          "max_bitrate_kbps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Client bandwidth estimate (kbit/s); the cap is `min(this, your bitrate limit)`.",
+            "minimum": 0
+          },
           "preset": {
             "type": [
               "string",
@@ -11092,6 +11178,17 @@
               },
               {
                 "$ref": "#/components/schemas/DeviceProfile"
+              }
+            ]
+          },
+          "quality": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Quality",
+                "description": "`auto` (default) | `original` | `1080p` | `720p` | `480p` (see `POST /playback/{file}/decide`)."
               }
             ]
           },
