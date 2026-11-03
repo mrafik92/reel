@@ -511,8 +511,19 @@ fn subs_for(subs: &HashMap<(PathBuf, String), Vec<SubFile>>, e: &Entry) -> Vec<S
     v
 }
 
+/// A symlink that resolves to a regular file located under `root` (canonical).
+fn symlink_file_inside(link: &Path, root: &Path) -> bool {
+    std::fs::canonicalize(link)
+        .ok()
+        .is_some_and(|t| t.starts_with(root) && t.is_file())
+}
+
 fn walk(scope: &Scope) -> Vec<Entry> {
-    let mut wd = WalkDir::new(&scope.path).follow_links(true);
+    // Symlinked directories are not followed (a link inside a library must not pull in arbitrary
+    // parts of the filesystem); symlinked *files* are accepted only if they resolve to a regular
+    // file under the library root.
+    let root = std::fs::canonicalize(&scope.path).ok();
+    let mut wd = WalkDir::new(&scope.path).follow_links(false);
     if let Some(d) = scope.max_depth {
         wd = wd.max_depth(d);
     }
@@ -523,7 +534,12 @@ fn walk(scope: &Scope) -> Vec<Entry> {
     });
     for e in it {
         let Ok(e) = e else { continue };
-        if !e.file_type().is_file() {
+        let is_file = e.file_type().is_file()
+            || (e.path_is_symlink()
+                && root
+                    .as_ref()
+                    .is_some_and(|r| symlink_file_inside(e.path(), r)));
+        if !is_file {
             continue;
         }
         let name = e.file_name().to_string_lossy();
@@ -540,7 +556,13 @@ fn walk(scope: &Scope) -> Vec<Entry> {
             warn!(path = %e.path().display(), "skipping non-UTF-8 path");
             continue;
         };
-        let Ok(md) = e.metadata() else { continue };
+        // for accepted symlinked files the *target's* size/mtime matter
+        let md = if e.path_is_symlink() {
+            std::fs::metadata(e.path())
+        } else {
+            e.metadata().map_err(std::io::Error::from)
+        };
+        let Ok(md) = md else { continue };
         let mtime = md
             .modified()
             .ok()
@@ -1327,5 +1349,46 @@ impl Scanner {
                 links: t.links,
             }
         }))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod symlink_tests {
+    use super::*;
+
+    fn names(v: &[Entry]) -> Vec<String> {
+        let mut n: Vec<String> = v
+            .iter()
+            .map(|e| e.path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        n.sort();
+        n
+    }
+
+    #[test]
+    fn symlinks_may_not_lead_out_of_the_library() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("lib");
+        let outside = d.path().join("outside");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::create_dir_all(outside.join("deep")).unwrap();
+        std::fs::write(root.join("a.mkv"), b"1").unwrap();
+        std::fs::write(root.join("sub/real.mkv"), b"22").unwrap();
+        std::fs::write(outside.join("secret.mkv"), b"333").unwrap();
+        std::fs::write(outside.join("deep/more.mkv"), b"4444").unwrap();
+        use std::os::unix::fs::symlink;
+        // directory symlink leaving the library: not followed
+        symlink(&outside, root.join("escape-dir")).unwrap();
+        // file symlink leaving the library: rejected
+        symlink(outside.join("secret.mkv"), root.join("escape-file.mkv")).unwrap();
+        // file symlink staying inside: accepted, with the target's size
+        symlink(root.join("sub/real.mkv"), root.join("alias.mkv")).unwrap();
+        let got = walk(&Scope {
+            path: root.clone(),
+            max_depth: None,
+        });
+        assert_eq!(names(&got), ["a.mkv", "alias.mkv", "real.mkv"]);
+        let alias = got.iter().find(|e| e.path.ends_with("alias.mkv")).unwrap();
+        assert_eq!(alias.size, 2);
     }
 }

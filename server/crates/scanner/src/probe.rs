@@ -261,6 +261,15 @@ pub async fn probe_url(
     ext_hint: Option<&str>,
     timeout: Duration,
 ) -> Result<ProbeResult, ProbeError> {
+    // ffprobe must never see a provider URL (credentials in argv, SSRF through redirects/HLS
+    // nesting): callers fetch through the loopback upstream proxy and pass that URL here.
+    let loopback = reqwest_free_host(url).is_some_and(|h| h == "127.0.0.1" || h == "localhost");
+    if !loopback {
+        return Err(ProbeError::Failed {
+            status: "refused".into(),
+            stderr: "remote probes must go through the loopback upstream proxy".into(),
+        });
+    }
     let mut cmd = Command::new(ffprobe);
     cmd.args([
         "-v",
@@ -268,7 +277,7 @@ pub async fn probe_url(
         "-user_agent",
         user_agent,
         "-protocol_whitelist",
-        "http,https,tcp,tls,crypto",
+        "http,tcp",
         "-print_format",
         "json",
         "-show_format",
@@ -306,6 +315,9 @@ pub async fn probe(
     cmd.args([
         "-v",
         "error",
+        // local files only: a library file must not make ffprobe open network/other protocols
+        "-protocol_whitelist",
+        "file",
         "-print_format",
         "json",
         "-show_format",
@@ -408,5 +420,61 @@ mod tests {
         )
         .await;
         assert!(matches!(r, Err(ProbeError::Spawn(_))));
+    }
+}
+
+/// Host of an `http://host[:port]/…` URL (no dependency on a URL parser here).
+fn reqwest_free_host(url: &str) -> Option<&str> {
+    let rest = url.strip_prefix("http://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    if authority.contains('@') {
+        return None;
+    }
+    authority
+        .rsplit_once(':')
+        .map_or(Some(authority), |(h, port)| {
+            port.chars().all(|c| c.is_ascii_digit()).then_some(h)
+        })
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::reqwest_free_host;
+
+    #[tokio::test]
+    async fn remote_probe_refuses_non_loopback_urls() {
+        for url in [
+            "http://provider.example/movie/u/p/1.mkv",
+            "https://127.0.0.1/x.mkv",
+            "file:///etc/passwd",
+            "http://127.0.0.1@evil.example/x",
+        ] {
+            let e = super::probe_url(
+                "ffprobe",
+                url,
+                "ua",
+                None,
+                std::time::Duration::from_secs(2),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+            assert!(e.contains("refused") || e.contains("proxy"), "{url}: {e}");
+            assert!(!e.contains("provider.example"), "{e}");
+        }
+    }
+
+    #[test]
+    fn loopback_host_extraction() {
+        assert_eq!(
+            reqwest_free_host("http://127.0.0.1:8080/internal/upstream/t/f.mkv"),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            reqwest_free_host("http://prov.example/x"),
+            Some("prov.example")
+        );
+        assert_eq!(reqwest_free_host("http://127.0.0.1@evil.example/x"), None);
+        assert_eq!(reqwest_free_host("https://127.0.0.1/x"), None);
     }
 }
