@@ -178,6 +178,7 @@ because they load from `file://`.
 | A15 | **Image build in GitHub Actions → GHCR (private) → pulled on CT 113** | The N100 doesn't spend time building; reproducible images; pull-only token on the server | ~10 min per server change (web-only changes take ~1 min thanks to layer caching) |
 | A16 | **Internal upstream proxy for ffmpeg** | ffmpeg ignores the app's SSRF checks and puts credentials in argv; the proxy enforces both | One more hop for VOD reads |
 | A17 | **Client-side quality steering on top of A6; hls.js preferred over Chrome's native HLS in the player** | The player sees real throughput (hls.js segment stats; a 2 MB ranged probe on first direct play; buffer growth otherwise) and buffer health, so it picks the rung and re-decides. Chrome 14x+ plays HLS natively but exposes no segment stats | A switch is a new session with a short hold on the last frame (≤ 1 per 30 s); the estimate is per device and server (localStorage); Safari/TVs keep native HLS and use the coarser buffer-growth estimate |
+| A18 | **Deploy from GitHub via a self-hosted runner on the LAN, gated by a manual "Run workflow"** | GitHub can't reach CT 113 and there are no inbound ports; the runner only connects outbound. The click is the gate (works on any GitHub plan; no surprise restarts mid-movie); full audit trail in Actions; tickets move to Deployed in the same job | One more CT to maintain. The runner holds a deploy key (pinned on minix to a two-verb forced command) and a PAT with `repo`+`project`. The repo must stay private |
 
 ## 6. Data model (essentials)
 

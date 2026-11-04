@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """Deploy Reel to CT 113 and move the tickets that shipped to "Deployed" on the GitHub Project.
 
-Run from the Mac (needs `ssh minix-local`, `gh` with the `project` scope, and the repo checkout):
+Two ways to run it:
 
-    deploy/ct113/deploy.py            # deploy :latest, update tickets
-    deploy/ct113/deploy.py --dry-run  # show what would happen, change nothing
+* **From GitHub** (normal): Actions → `deploy` → *Run workflow*. Runs on the self-hosted runner (CT 116)
+  with `--forced`; see `.github/workflows/deploy.yml`.
+* **From the Mac** (fallback): needs `ssh minix-local`, `gh` with the `project` scope, and the checkout.
+
+    deploy/ct113/deploy.py                     # Mac: deploy :latest, update tickets
+    deploy/ct113/deploy.py --dry-run           # show what would happen, change nothing
+    DEPLOY_SSH=root@10.10.10.10 deploy/ct113/deploy.py --forced
+    deploy/ct113/deploy.py --since <sha>       # only (re)process tickets for <sha>..latest, no deploy
+        # runner: the SSH key is pinned on minix to the forced command /usr/local/bin/reel-deploy,
+        # which only understands `sha` and `deploy`
 
 Ticket convention: reference issues in commit messages with `Refs #12` (or `#12`). Use `Fixes #12` only
 when the change needs no verification — GitHub closes it on push, skipping Deployed/Verified.
@@ -13,6 +21,7 @@ Tickets referenced by commits between the previously deployed build and the new 
   * Status → Deployed (unless already Deployed / Verified / Done).
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -22,8 +31,12 @@ REPO = "mrafik92/reel"
 OWNER = "mrafik92"
 PROJECT = "1"
 SSH = ["ssh", "minix-local"]
+HEALTH = "https://reel.rafikii.co/api/v1/health"
 
 DRY = "--dry-run" in sys.argv
+SINCE = sys.argv[sys.argv.index("--since") + 1] if "--since" in sys.argv else None
+FORCED = "--forced" in sys.argv
+FORCED_TARGET = os.environ.get("DEPLOY_SSH", "root@10.10.10.10")
 ADVANCE_FROM = {"Backlog", "To do", "Implementing", "Reviewing", None}
 
 
@@ -34,6 +47,22 @@ def run(*a, check=True):
     return r.stdout.strip()
 
 
+def gql(query, **variables):
+    """GitHub GraphQL via `gh api graphql` (only needs the token's scopes for the objects touched)."""
+    args = ["gh", "api", "graphql", "-f", f"query={query}"]
+    for k, v in variables.items():
+        args += ["-F" if isinstance(v, int) else "-f", f"{k}={v}"]
+    out = json.loads(run(*args))
+    if out.get("errors"):
+        sys.exit(f"GraphQL error: {out['errors']}")
+    return out["data"]
+
+
+def forced(verb, check=True):
+    """Forced-command mode: the remote side runs /usr/local/bin/reel-deploy with `verb`."""
+    return run("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", FORCED_TARGET, verb, check=check)
+
+
 def remote(cmd, check=True):
     """Run `cmd` (argv list) inside CT 113 via the PVE host, quoting safely through ssh."""
     import shlex
@@ -42,9 +71,19 @@ def remote(cmd, check=True):
 
 
 def deployed_sha():
+    if FORCED:
+        out = forced("sha", check=False)
+        return out if re.fullmatch(r"[0-9a-f]{7,40}", out or "") else None
     env = remote(["docker", "inspect", "reel", "--format", "{{range .Config.Env}}{{println .}}{{end}}"], check=False)
     m = re.search(r"^REEL_GIT_SHA=([0-9a-f]{7,40})", env, re.M)
     return m.group(1) if m else None
+
+
+def do_deploy():
+    if FORCED:
+        print(forced("deploy"))
+    else:
+        remote(["sh", "-c", "cd /root/reel && docker compose pull -q && docker compose up -d && docker image prune -f"])
 
 
 def latest_image_sha():
@@ -60,20 +99,42 @@ def main():
     print(f"deployed: {old or '?'}  →  latest image: {new or '?'}")
     if not new:
         sys.exit("no successful image build found")
-    if old and new.startswith(old[:12]):
+    if SINCE:
+        print(f"--since {SINCE[:12]}: only updating tickets for {SINCE[:7]}..{new[:7]} (no deploy)")
+        old, skip_deploy = SINCE, True
+    elif old and new.startswith(old[:12]):
         print("already up to date")
         return
+    else:
+        skip_deploy = False
+    # the deploy pulls :latest; refuse if a newer image build is still running (it would race the tag)
+    running = run("gh", "run", "list", "-R", REPO, "--workflow", "image", "--branch", "main", "--status", "in_progress",
+                  "--limit", "1", "--json", "headSha", "--jq", ".[0].headSha // empty", check=False)
+    if running and not DRY and not skip_deploy:
+        sys.exit(f"an image build for {running[:7]} is still running — wait for it, then deploy again")
 
-    if not DRY:
-        remote(["sh", "-c", "cd /root/reel && docker compose pull -q && docker compose up -d && docker image prune -f"])
+    if not DRY and not skip_deploy:
+        do_deploy()
         for _ in range(20):
             time.sleep(3)
-            if deployed_sha() and deployed_sha().startswith(new[:12]):
+            cur = deployed_sha()
+            if cur and new.startswith(cur[:12]):
                 break
-        health = run("curl", "-s", "-m", "10", "https://reel.rafikii.co/api/v1/health", check=False)
+        else:
+            sys.exit(f"CT 113 still reports build {deployed_sha()!r}, expected {new[:12]} — check `docker compose ps` on CT 113")
+        health = ""
+        for _ in range(10):
+            health = run("curl", "-s", "-m", "10", HEALTH, check=False)
+            if '"ok"' in health:
+                break
+            time.sleep(3)
         print("health:", health)
         if '"ok"' not in health:
             sys.exit("health check failed — investigate before touching tickets")
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with open(summary, "a") as f:
+                f.write(f"### Deployed `{new[:7]}` to CT 113\n\nPrevious build: `{(old or '?')[:7]}` · health: `{health}`\n")
 
     # Commits that shipped.
     run("git", "fetch", "-q", "origin")
@@ -85,37 +146,47 @@ def main():
         if not entry:
             continue
         sha = entry.split("\t", 1)[0]
+        entry = re.sub(r"Merge pull request #\d+", "", entry)  # the PR number of a merge commit isn't a ticket
         for n in re.findall(r"(?<![\w/])#(\d+)\b", entry):
             refs.setdefault(int(n), []).append(sha)
+    # keep issues only (a bare "#70" may be a PR)
+    for n in list(refs):
+        kind = run("gh", "api", f"repos/{REPO}/issues/{n}", "--jq", "if .pull_request then \"pr\" else \"issue\" end", check=False)
+        if kind != "issue":
+            refs.pop(n)
     print(f"commits {rng}: tickets referenced: {sorted(refs) or 'none'}")
     if not refs:
         return
 
-    pid = run("gh", "project", "view", PROJECT, "--owner", OWNER, "--format", "json", "--jq", ".id")
-    fields = json.loads(run("gh", "project", "field-list", PROJECT, "--owner", OWNER, "--format", "json"))["fields"]
-    status = next(f for f in fields if f["name"] == "Status")
-    deployed_opt = next(o["id"] for o in status["options"] if o["name"] == "Deployed")
-    items = json.loads(run("gh", "project", "item-list", PROJECT, "--owner", OWNER, "--format", "json", "--limit", "500"))["items"]
-    by_num = {i["content"].get("number"): i for i in items if i.get("content")}
+    # Project updates go through GraphQL directly: `gh project …` insists on read:org/read:discussion,
+    # while these queries only need the `project` scope that PROJECT_TOKEN has.
+    owner, name = REPO.split("/")
+    proj = gql("""query($login:String!,$n:Int!){ user(login:$login){ projectV2(number:$n){ id
+                 field(name:"Status"){ ... on ProjectV2SingleSelectField { id options { id name } } } } } }""",
+               login=OWNER, n=int(PROJECT))["user"]["projectV2"]
+    pid, status_field = proj["id"], proj["field"]
+    deployed_opt = next(o["id"] for o in status_field["options"] if o["name"] == "Deployed")
 
     short = new[:7]
     for num, shas in sorted(refs.items()):
-        item = by_num.get(num)
-        cur = item.get("status") if item else None
+        issue = gql("""query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ issue(number:$n){ id
+                     projectItems(first:20){ nodes { id project { id }
+                       fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }""",
+                    o=owner, r=name, n=num)["repository"]["issue"]
+        item = next((i for i in issue["projectItems"]["nodes"] if i["project"]["id"] == pid), None)
+        cur = (item.get("fieldValueByName") or {}).get("name") if item else None
         note = f"🚀 Deployed to CT 113 — build `{short}` (commits {', '.join(sorted(set(shas)))}). Verify on the real setup, then move to **Verified**."
         print(f"#{num}: status {cur!r}", "→ Deployed" if cur in ADVANCE_FROM else "(unchanged)")
         if DRY:
             continue
         run("gh", "issue", "comment", str(num), "-R", REPO, "-b", note, check=False)
         if cur in ADVANCE_FROM:
-            if not item:
-                item_id = json.loads(run("gh", "project", "item-add", PROJECT, "--owner", OWNER, "--url",
-                                         f"https://github.com/{REPO}/issues/{num}", "--format", "json"))["id"]
-            else:
-                item_id = item["id"]
-            run("gh", "project", "item-edit", "--id", item_id, "--project-id", pid, "--field-id", status["id"],
-                "--single-select-option-id", deployed_opt)
-
+            item_id = item["id"] if item else gql(
+                "mutation($p:ID!,$c:ID!){ addProjectV2ItemById(input:{projectId:$p,contentId:$c}){ item { id } } }",
+                p=pid, c=issue["id"])["addProjectV2ItemById"]["item"]["id"]
+            gql("""mutation($p:ID!,$i:ID!,$f:ID!,$o:String!){ updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,
+                   fieldId:$f,value:{singleSelectOptionId:$o}}){ projectV2Item { id } } }""",
+                p=pid, i=item_id, f=status_field["id"], o=deployed_opt)
 
 if __name__ == "__main__":
     main()

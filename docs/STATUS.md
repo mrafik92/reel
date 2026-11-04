@@ -17,7 +17,7 @@ Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafi
   - Group browser; newest-wins on the single-connection plan.
   - **EPG ~1,436 channels / ~54k programmes** from external guides.
   - VOD catalog imported (41k movies / 15k series).
-- **Ops:** GitHub → GHCR → CT 113 deploys; version shown in Settings → About; container resource limits; transcode caps (3 total, 2 per user).
+- **Ops:** GitHub → GHCR → CT 113 deploys (one-click **deploy** workflow on the self-hosted runner CT 116; the `PROJECT_TOKEN` secret is needed for ticket updates); version shown in Settings → About; container resource limits; transcode caps (3 total, 2 per user).
 - **Network:** Tailscale now **direct** (UDP 41641 static-port rule on OPNsense) → 9–15 Mbps remote, up from 3.5 Mbps over the DERP relay.
 
 ## Built but not exercised for real (🧪)
