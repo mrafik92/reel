@@ -29,7 +29,6 @@ import time
 
 REPO = "mrafik92/reel"
 OWNER = "mrafik92"
-PROJECT_OWNER = "@me"  # the token owner; avoids needing read:user/read:org to resolve the owner type
 PROJECT = "1"
 SSH = ["ssh", "minix-local"]
 HEALTH = "https://reel.rafikii.co/api/v1/health"
@@ -46,6 +45,17 @@ def run(*a, check=True):
     if check and r.returncode != 0:
         sys.exit(f"command failed: {' '.join(a[:6])}…\n{r.stderr.strip()[:400]}")
     return r.stdout.strip()
+
+
+def gql(query, **variables):
+    """GitHub GraphQL via `gh api graphql` (only needs the token's scopes for the objects touched)."""
+    args = ["gh", "api", "graphql", "-f", f"query={query}"]
+    for k, v in variables.items():
+        args += ["-F" if isinstance(v, int) else "-f", f"{k}={v}"]
+    out = json.loads(run(*args))
+    if out.get("errors"):
+        sys.exit(f"GraphQL error: {out['errors']}")
+    return out["data"]
 
 
 def forced(verb, check=True):
@@ -148,31 +158,35 @@ def main():
     if not refs:
         return
 
-    pid = run("gh", "project", "view", PROJECT, "--owner", PROJECT_OWNER, "--format", "json", "--jq", ".id")
-    fields = json.loads(run("gh", "project", "field-list", PROJECT, "--owner", PROJECT_OWNER, "--format", "json"))["fields"]
-    status = next(f for f in fields if f["name"] == "Status")
-    deployed_opt = next(o["id"] for o in status["options"] if o["name"] == "Deployed")
-    items = json.loads(run("gh", "project", "item-list", PROJECT, "--owner", PROJECT_OWNER, "--format", "json", "--limit", "500"))["items"]
-    by_num = {i["content"].get("number"): i for i in items if i.get("content")}
+    # Project updates go through GraphQL directly: `gh project …` insists on read:org/read:discussion,
+    # while these queries only need the `project` scope that PROJECT_TOKEN has.
+    owner, name = REPO.split("/")
+    proj = gql("""query($login:String!,$n:Int!){ user(login:$login){ projectV2(number:$n){ id
+                 field(name:"Status"){ ... on ProjectV2SingleSelectField { id options { id name } } } } } }""",
+               login=OWNER, n=int(PROJECT))["user"]["projectV2"]
+    pid, status_field = proj["id"], proj["field"]
+    deployed_opt = next(o["id"] for o in status_field["options"] if o["name"] == "Deployed")
 
     short = new[:7]
     for num, shas in sorted(refs.items()):
-        item = by_num.get(num)
-        cur = item.get("status") if item else None
+        issue = gql("""query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ issue(number:$n){ id
+                     projectItems(first:20){ nodes { id project { id }
+                       fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }""",
+                    o=owner, r=name, n=num)["repository"]["issue"]
+        item = next((i for i in issue["projectItems"]["nodes"] if i["project"]["id"] == pid), None)
+        cur = (item.get("fieldValueByName") or {}).get("name") if item else None
         note = f"🚀 Deployed to CT 113 — build `{short}` (commits {', '.join(sorted(set(shas)))}). Verify on the real setup, then move to **Verified**."
         print(f"#{num}: status {cur!r}", "→ Deployed" if cur in ADVANCE_FROM else "(unchanged)")
         if DRY:
             continue
         run("gh", "issue", "comment", str(num), "-R", REPO, "-b", note, check=False)
         if cur in ADVANCE_FROM:
-            if not item:
-                item_id = json.loads(run("gh", "project", "item-add", PROJECT, "--owner", PROJECT_OWNER, "--url",
-                                         f"https://github.com/{REPO}/issues/{num}", "--format", "json"))["id"]
-            else:
-                item_id = item["id"]
-            run("gh", "project", "item-edit", "--id", item_id, "--project-id", pid, "--field-id", status["id"],
-                "--single-select-option-id", deployed_opt)
-
+            item_id = item["id"] if item else gql(
+                "mutation($p:ID!,$c:ID!){ addProjectV2ItemById(input:{projectId:$p,contentId:$c}){ item { id } } }",
+                p=pid, c=issue["id"])["addProjectV2ItemById"]["item"]["id"]
+            gql("""mutation($p:ID!,$i:ID!,$f:ID!,$o:String!){ updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,
+                   fieldId:$f,value:{singleSelectOptionId:$o}}){ projectV2Item { id } } }""",
+                p=pid, i=item_id, f=status_field["id"], o=deployed_opt)
 
 if __name__ == "__main__":
     main()
