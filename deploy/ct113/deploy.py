@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """Deploy Reel to CT 113 and move the tickets that shipped to "Deployed" on the GitHub Project.
 
-Run from the Mac (needs `ssh minix-local`, `gh` with the `project` scope, and the repo checkout):
+Two ways to run it:
 
-    deploy/ct113/deploy.py            # deploy :latest, update tickets
-    deploy/ct113/deploy.py --dry-run  # show what would happen, change nothing
+* **From GitHub** (normal): Actions → `deploy` → *Run workflow*. Runs on the self-hosted runner (CT 116)
+  with `--forced`; see `.github/workflows/deploy.yml`.
+* **From the Mac** (fallback): needs `ssh minix-local`, `gh` with the `project` scope, and the checkout.
+
+    deploy/ct113/deploy.py                     # Mac: deploy :latest, update tickets
+    deploy/ct113/deploy.py --dry-run           # show what would happen, change nothing
+    DEPLOY_SSH=root@10.10.10.10 deploy/ct113/deploy.py --forced
+        # runner: the SSH key is pinned on minix to the forced command /usr/local/bin/reel-deploy,
+        # which only understands `sha` and `deploy`
 
 Ticket convention: reference issues in commit messages with `Refs #12` (or `#12`). Use `Fixes #12` only
 when the change needs no verification — GitHub closes it on push, skipping Deployed/Verified.
@@ -13,6 +20,7 @@ Tickets referenced by commits between the previously deployed build and the new 
   * Status → Deployed (unless already Deployed / Verified / Done).
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -22,8 +30,11 @@ REPO = "mrafik92/reel"
 OWNER = "mrafik92"
 PROJECT = "1"
 SSH = ["ssh", "minix-local"]
+HEALTH = "https://reel.rafikii.co/api/v1/health"
 
 DRY = "--dry-run" in sys.argv
+FORCED = "--forced" in sys.argv
+FORCED_TARGET = os.environ.get("DEPLOY_SSH", "root@10.10.10.10")
 ADVANCE_FROM = {"Backlog", "To do", "Implementing", "Reviewing", None}
 
 
@@ -34,6 +45,11 @@ def run(*a, check=True):
     return r.stdout.strip()
 
 
+def forced(verb, check=True):
+    """Forced-command mode: the remote side runs /usr/local/bin/reel-deploy with `verb`."""
+    return run("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", FORCED_TARGET, verb, check=check)
+
+
 def remote(cmd, check=True):
     """Run `cmd` (argv list) inside CT 113 via the PVE host, quoting safely through ssh."""
     import shlex
@@ -42,9 +58,19 @@ def remote(cmd, check=True):
 
 
 def deployed_sha():
+    if FORCED:
+        out = forced("sha", check=False)
+        return out if re.fullmatch(r"[0-9a-f]{7,40}", out or "") else None
     env = remote(["docker", "inspect", "reel", "--format", "{{range .Config.Env}}{{println .}}{{end}}"], check=False)
     m = re.search(r"^REEL_GIT_SHA=([0-9a-f]{7,40})", env, re.M)
     return m.group(1) if m else None
+
+
+def do_deploy():
+    if FORCED:
+        print(forced("deploy"))
+    else:
+        remote(["sh", "-c", "cd /root/reel && docker compose pull -q && docker compose up -d && docker image prune -f"])
 
 
 def latest_image_sha():
@@ -63,17 +89,34 @@ def main():
     if old and new.startswith(old[:12]):
         print("already up to date")
         return
+    # the deploy pulls :latest; refuse if a newer image build is still running (it would race the tag)
+    running = run("gh", "run", "list", "-R", REPO, "--workflow", "image", "--branch", "main", "--status", "in_progress",
+                  "--limit", "1", "--json", "headSha", "--jq", ".[0].headSha // empty", check=False)
+    if running and not DRY:
+        sys.exit(f"an image build for {running[:7]} is still running — wait for it, then deploy again")
 
     if not DRY:
-        remote(["sh", "-c", "cd /root/reel && docker compose pull -q && docker compose up -d && docker image prune -f"])
+        do_deploy()
         for _ in range(20):
             time.sleep(3)
-            if deployed_sha() and deployed_sha().startswith(new[:12]):
+            cur = deployed_sha()
+            if cur and new.startswith(cur[:12]):
                 break
-        health = run("curl", "-s", "-m", "10", "https://reel.rafikii.co/api/v1/health", check=False)
+        else:
+            sys.exit(f"CT 113 still reports build {deployed_sha()!r}, expected {new[:12]} — check `docker compose ps` on CT 113")
+        health = ""
+        for _ in range(10):
+            health = run("curl", "-s", "-m", "10", HEALTH, check=False)
+            if '"ok"' in health:
+                break
+            time.sleep(3)
         print("health:", health)
         if '"ok"' not in health:
             sys.exit("health check failed — investigate before touching tickets")
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with open(summary, "a") as f:
+                f.write(f"### Deployed `{new[:7]}` to CT 113\n\nPrevious build: `{(old or '?')[:7]}` · health: `{health}`\n")
 
     # Commits that shipped.
     run("git", "fetch", "-q", "origin")
