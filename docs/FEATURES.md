@@ -44,7 +44,7 @@ gaps are listed in [STATUS.md](STATUS.md).
 | Hardware transcoding (VAAPI on the N100) | ✅ | Full GPU pipeline (decode → scale_vaapi → h264_vaapi). Measured at 8.3× realtime for 1080p→720p. Falls back to software per attempt |
 | Keyframe-accurate HLS for remux | ✅ | Reads the keyframe index from MKV Cues / MP4 `stss` (kilobytes, not the whole file). Segments are validated before serving, so seek/resume stays stable |
 | Adaptive quality (server) | ✅ | `quality` = auto/original/1080p/720p/480p plus a `max_bitrate_kbps` hint. Ladder: 8/4/2 Mbps, never upscales |
-| Adaptive quality (player: bandwidth estimate, auto step-down, quality menu) | ⏳ | Not built yet (the agent errored). For now there's a per-user bitrate cap (Settings → Users) |
+| Adaptive quality (player: bandwidth estimate, auto step-down, quality menu) | 🧪 | Auto by default: decide with `max_bitrate_kbps` = 70 % of the measured link; steps down on 2 underruns in 30 s or a starving buffer, up after 2 min healthy at 2× the next rung (≤ 1 switch / 30 s, last frame held). Quality menu with "remember on this device"; link/bitrate/buffer in Stream info. Library + IPTV VOD; not live TV |
 | Subtitles | ✅ | Reel's own overlay on every platform. Text subtitles → WebVTT. Image subtitles are burned in. Human-readable labels such as "English · SDH" |
 | Automatic audio/subtitle selection | ✅ | Settings → Playback (languages, Off / Forced only / Automatic / Always, SDH). The server picks the tracks and explains why |
 | Player UI | ✅ | Redesigned controls: centred transport, scrubber with a time tooltip, labelled actions, volume/speed/PiP, keyboard shortcuts, D-pad seek mode |

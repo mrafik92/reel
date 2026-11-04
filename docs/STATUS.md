@@ -26,12 +26,13 @@ Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafi
 - **Casting:** AirPlay and Chromecast never tested with devices. **DLNA** needs the TV IPs + a CT 113 firewall rule.
 - **IPTV VOD playback** through the upstream proxy, against the real provider.
 - **Notifications** (Discord/Telegram/webhook).
+- **Adaptive quality in the player (#1):** bandwidth estimate from real downloads (hls.js segments, ranged probe on first direct play, buffer growth), Auto step-down/up, quality menu, stream-info stats. Exercised from a ~1–4 Mbps link (720p → 480p within ~10 s); step-up only unit-tested.
 
 ## Known gaps / bugs
 
 | Area | Gap |
 |---|---|
-| Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) wasn't delivered (the agent errored). For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
+| Player | Adaptive quality client is built (#1) but not yet verified on the real remote link. The ladder's floor is 480p (~2 Mbps): links slower than that still stall. Per-user `max_bitrate_kbps` (admin at 6000) still caps Original |
 | Reviews | IMDb/RT/Metacritic scores need `REEL_OMDB_API_KEY` |
 | EPG | Al Jazeera guide fully covered by AE1 (fine). The EG1 guide is stale upstream (removed) |
 | IPTV | Live HLS has no quality ladder (live transcode is fixed) |
@@ -74,7 +75,7 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 
 ## Backlog (next)
 
-1. Adaptive quality in the player (bandwidth probe, auto step, quality menu), then remove the admin's 6 Mbps cap.
+1. Verify adaptive quality (#1) remotely, then remove the admin's 6 Mbps cap.
 2. Close the security items above.
 3. Verify webOS/Tizen on real TVs; DLNA with the TV IPs; AirPlay/Chromecast.
 4. IPTV VOD playback check on the provider; live HLS quality ladder.

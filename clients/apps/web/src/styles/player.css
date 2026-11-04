@@ -840,3 +840,25 @@ html[data-input="key"] .sheet__switch:focus {
     padding: 0;
   }
 }
+/* The right cluster must never push into the centred transport: drop the small print first */
+@media (max-width: 1560px) {
+  html:not(.tv) .pc__side--end .ctl__tag {
+    display: none;
+  }
+  html:not(.tv) .pc__audio .ctl__val {
+    display: none;
+  }
+  html:not(.tv) .pc__audio.has-value {
+    width: 2.75rem;
+    padding: 0;
+  }
+}
+/* TV: the same compaction (rem scales with the screen, so width queries don't apply) */
+html.tv .pc__side--end .ctl__tag,
+html.tv .pc__audio .ctl__val {
+  display: none;
+}
+html.tv .pc__audio.has-value {
+  width: 2.75rem;
+  padding: 0;
+}

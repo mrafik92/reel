@@ -16,6 +16,8 @@ export interface LoadOptions {
   headers?: Record<string, string>;
   /** Sidecar subtitles (WebVTT). Native adapters attach them; others may ignore. */
   textTracks?: ExternalTextTrack[];
+  /** HLS: use hls.js over a browser's native HLS when MSE exists (not on Apple). Additive. */
+  preferMse?: boolean;
 }
 
 export interface PlayerTrack {
@@ -119,7 +121,12 @@ export class HlsJsAdapter implements PlayerAdapter {
     this.hls = undefined;
     const v = this.video;
     const isHls = /\.m3u8(\?|$)/.test(url);
-    const nativeHls = isHls && v.canPlayType("application/vnd.apple.mpegurl") !== "";
+    // `preferMse`: native HLS only where it's the platform's own engine (Safari/iOS: AirPlay) or
+    // MSE is missing (TV browsers). Chrome 14x+ answers "maybe" too, but hls.js there reports
+    // segment throughput (adaptive quality). Without the flag: native whenever offered.
+    const apple = typeof navigator !== "undefined" && /Apple/.test(navigator.vendor || "") && !/Chrome|CriOS|Edg/.test(navigator.userAgent);
+    const mse = typeof window !== "undefined" && ("MediaSource" in window || "ManagedMediaSource" in window);
+    const nativeHls = isHls && v.canPlayType("application/vnd.apple.mpegurl") !== "" && (!opts.preferMse || apple || !mse);
     // hls.js is only fetched for HLS on MSE browsers; direct play stays lean.
     const Hls = isHls && !nativeHls ? (await import("hls.js")).default : undefined;
     if (Hls && Hls.isSupported()) {

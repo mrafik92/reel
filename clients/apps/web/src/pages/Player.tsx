@@ -283,7 +283,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       .filter((s) => s.url)
       .map((s) => ({ id: String(s.index), url: mediaUrl(s.url)!, label: subLabel(s).short, language: s.language ?? undefined }));
     try {
-      await a.load(mediaUrl(d.url)!, { startPositionSec: at || undefined, autoplay: true, textTracks });
+      await a.load(mediaUrl(d.url)!, { startPositionSec: at || undefined, autoplay: true, textTracks, preferMse: true });
     } catch {
       // Autoplay blocked: show the play button instead.
       setPlaying(false);
@@ -814,7 +814,10 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     // Direct play / native HLS: seconds of media buffered per second × stream bitrate.
     if (!adapterMeasures && kbps && lastEnd != null && now - lastAt >= 2000) {
       const grew = end - lastEnd;
-      if (grew > 0.5 && ahead < 120 && now - lastSeekAt > 3000) recordThroughput((grew * kbps) / ((now - lastAt) / 1000), 0.5);
+      const secs = (now - lastAt) / 1000;
+      // Only steady filling of the same range: jumps (start position, seeks) aren't downloads.
+      const steady = hasPlayed && grew > 0.5 && grew < secs * 12 && ahead < 120 && now - lastSeekAt > 3000;
+      if (steady) recordThroughput((grew * kbps) / secs, 0.5);
       lastEnd = end;
       lastAt = now;
     } else if (lastEnd == null || now - lastAt >= 2000) {
