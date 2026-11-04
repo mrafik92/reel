@@ -55,7 +55,7 @@ CT 113:  Actions → deploy → Run workflow  (runner CT 116 → ssh forced comm
 Backlog → To do → Implementing → Reviewing → **Deployed** (automatic, `deploy.py`) → Verified (manual, fill *Verified on*) → Done (close the issue).
 
 - Reference tickets in commits with `Refs #12`. Use `Fixes #12` only when no real-setup verification is needed; GitHub closes it on push, skipping Deployed/Verified.
-- Built-in project workflows (Project → ⋯ → Workflows): *Item added → Backlog*, *Item closed → Done*, *Auto-close issue (Status = Done)*, *Pull request linked to issue → Reviewing*, *Auto-add to project* (`is:issue,pr is:open` on `mrafik92/reel`).
+- Built-in project workflows (Project → ⋯ → Workflows): *Item added → Backlog*, *Item closed → Done*, *Auto-close issue (Status = Done)*, *Auto-add to project* (`is:issue is:open` on `mrafik92/reel`; issues only, PRs aren't cards). The agent moves a card to **Reviewing** when it opens the PR (`Refs #N` doesn't create a GitHub link, so *Pull request linked to issue* doesn't fire).
 
 ## Configuration (CT 113 compose → env)
 
