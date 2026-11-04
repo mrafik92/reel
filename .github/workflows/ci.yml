@@ -40,3 +40,30 @@ jobs:
       - run: bun run --filter @reel/sdk generate
       - run: bun run typecheck
       - run: bun run build
+
+  docs:
+    # AGENTS.md §6: every PR that changes code updates docs/ — or says why not.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Code changes come with docs (or an explicit opt-out)
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          changed=$(git diff --name-only "$BASE" "$HEAD")
+          echo "$changed"
+          code=$(echo "$changed" | grep -E '^(server/crates|clients/(apps|packages)|deploy)/' | grep -vE '(_test|/tests/)' || true)
+          docs=$(echo "$changed" | grep -E '^(docs/|AGENTS\.md|deploy/README\.md)' || true)
+          if [ -n "$code" ] && [ -z "$docs" ]; then
+            if printf '%s' "$BODY" | grep -qiE 'docs:[[:space:]]*no (doc )?change'; then
+              echo "No docs changed — opt-out given in the PR description."
+            else
+              echo "::error::This PR changes code but not docs/. Update docs/ (see AGENTS.md §6) or add 'Docs: no change because …' to the PR description."
+              exit 1
+            fi
+          fi

@@ -15,14 +15,15 @@ an issue in `mrafik92/reel`. When asked to "work on #N":
 2. **Move it to Implementing** (see §2 for the command), then create a branch `N-short-slug` from `main`.
 3. **Implement it** with tests. Keep commits focused, and mention the ticket in every commit message:
    `Refs #N`.
-4. **Validate locally** (see §3) before pushing.
+4. **Validate locally** (see §3) and **update the docs** (see §6) before pushing. Docs changes go in the
+   same PR as the code.
 5. **Open a PR**: `gh pr create -R mrafik92/reel --base main --head <branch>`, filling in the PR template.
    Write **`Refs #N`, never `Closes #N` / `Fixes #N`**. Then link the PR to the issue in its *Development*
    section, or with `gh pr edit` (the body reference is enough for the board). The project workflow moves
    the card to **Reviewing**.
 6. **After merge** (by the owner, or by you when explicitly asked), CI builds the image. To deploy, run
    `deploy/ct113/deploy.py`. It moves every ticket referenced in the shipped commits to **Deployed** and
-   comments the build SHA.
+   comments the build SHA. Then run `scripts/sync_obsidian.py` so the owner's Obsidian notes match `docs/`.
 7. **Verified** and **Done** belong to the owner. They check the change on the real setup, fill in
    *Verified on*, and close the issue, which moves the card to Done. Don't close tickets yourself
    unless told to.
@@ -84,4 +85,29 @@ cd clients && bun install && bun run typecheck && bun run build
   tune channels while someone is watching (`GET /api/v1/admin/iptv/hub`).
 - Stage only the files you changed (`git add <paths>`, never `git add -A`). Don't commit `clients/data/`
   or other local artifacts.
-- Keep `docs/STATUS.md` honest: update it when a ticket changes what works, what's verified or what's open.
+- Keep `docs/STATUS.md` honest (see §6).
+
+## 6. Docs are part of every PR
+
+**A PR isn't done until `docs/` describes the code as it is after the merge.** Before opening the PR, go
+through this table and update every doc your change affects. If nothing applies, say so in the PR
+("Docs: no change, because …").
+
+| If the PR… | Update |
+|---|---|
+| adds, changes or removes a feature, or changes its status (✅ live / 🧪 built / ⏳ partial) | `docs/FEATURES.md` |
+| changes components, crates, data flow, the data model (migrations), the security model, or makes a design choice | `docs/ARCHITECTURE.md` (§5: add or adjust a decision row with *why* and *trade-off*) |
+| fixes or opens a gap, changes what's verified, closes or adds security items, or changes the backlog | `docs/STATUS.md` (bump the date and the live-build line when deploying) |
+| changes deploy, config/env vars, credential locations, CT 113 compose, firewall needs or runbooks | `docs/OPERATIONS.md` and, if generic, `deploy/README.md` |
+| changes the API | `server/openapi.json` (regenerated), plus the client types |
+| changes how agents should work | this `AGENTS.md` |
+
+Rules:
+- Write what is **true now**, not plans. Plans and ideas belong in tickets.
+- Status words must match reality: only mark something ✅ **live** once it's deployed and checked on the real
+  setup. Built and tested in CI is 🧪.
+- Keep secrets out: name *where* a credential lives, never its value.
+- After the merge and deploy, run `scripts/sync_obsidian.py`. It mirrors `docs/` into the owner's Obsidian
+  vault (`~/Documents/obsidian/notes-/Reel`). `scripts/sync_obsidian.py --check` reports drift without writing.
+- When the ticket moves to Verified, the owner may ask you to flip 🧪 → ✅ in `FEATURES.md`/`STATUS.md`. Do
+  that in a small follow-up commit with `Refs #N`.
