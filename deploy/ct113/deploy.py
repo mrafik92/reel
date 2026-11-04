@@ -10,6 +10,7 @@ Two ways to run it:
     deploy/ct113/deploy.py                     # Mac: deploy :latest, update tickets
     deploy/ct113/deploy.py --dry-run           # show what would happen, change nothing
     DEPLOY_SSH=root@10.10.10.10 deploy/ct113/deploy.py --forced
+    deploy/ct113/deploy.py --since <sha>       # only (re)process tickets for <sha>..latest, no deploy
         # runner: the SSH key is pinned on minix to the forced command /usr/local/bin/reel-deploy,
         # which only understands `sha` and `deploy`
 
@@ -28,11 +29,13 @@ import time
 
 REPO = "mrafik92/reel"
 OWNER = "mrafik92"
+PROJECT_OWNER = "@me"  # the token owner; avoids needing read:user/read:org to resolve the owner type
 PROJECT = "1"
 SSH = ["ssh", "minix-local"]
 HEALTH = "https://reel.rafikii.co/api/v1/health"
 
 DRY = "--dry-run" in sys.argv
+SINCE = sys.argv[sys.argv.index("--since") + 1] if "--since" in sys.argv else None
 FORCED = "--forced" in sys.argv
 FORCED_TARGET = os.environ.get("DEPLOY_SSH", "root@10.10.10.10")
 ADVANCE_FROM = {"Backlog", "To do", "Implementing", "Reviewing", None}
@@ -86,16 +89,21 @@ def main():
     print(f"deployed: {old or '?'}  →  latest image: {new or '?'}")
     if not new:
         sys.exit("no successful image build found")
-    if old and new.startswith(old[:12]):
+    if SINCE:
+        print(f"--since {SINCE[:12]}: only updating tickets for {SINCE[:7]}..{new[:7]} (no deploy)")
+        old, skip_deploy = SINCE, True
+    elif old and new.startswith(old[:12]):
         print("already up to date")
         return
+    else:
+        skip_deploy = False
     # the deploy pulls :latest; refuse if a newer image build is still running (it would race the tag)
     running = run("gh", "run", "list", "-R", REPO, "--workflow", "image", "--branch", "main", "--status", "in_progress",
                   "--limit", "1", "--json", "headSha", "--jq", ".[0].headSha // empty", check=False)
-    if running and not DRY:
+    if running and not DRY and not skip_deploy:
         sys.exit(f"an image build for {running[:7]} is still running — wait for it, then deploy again")
 
-    if not DRY:
+    if not DRY and not skip_deploy:
         do_deploy()
         for _ in range(20):
             time.sleep(3)
@@ -128,17 +136,23 @@ def main():
         if not entry:
             continue
         sha = entry.split("\t", 1)[0]
+        entry = re.sub(r"Merge pull request #\d+", "", entry)  # the PR number of a merge commit isn't a ticket
         for n in re.findall(r"(?<![\w/])#(\d+)\b", entry):
             refs.setdefault(int(n), []).append(sha)
+    # keep issues only (a bare "#70" may be a PR)
+    for n in list(refs):
+        kind = run("gh", "api", f"repos/{REPO}/issues/{n}", "--jq", "if .pull_request then \"pr\" else \"issue\" end", check=False)
+        if kind != "issue":
+            refs.pop(n)
     print(f"commits {rng}: tickets referenced: {sorted(refs) or 'none'}")
     if not refs:
         return
 
-    pid = run("gh", "project", "view", PROJECT, "--owner", OWNER, "--format", "json", "--jq", ".id")
-    fields = json.loads(run("gh", "project", "field-list", PROJECT, "--owner", OWNER, "--format", "json"))["fields"]
+    pid = run("gh", "project", "view", PROJECT, "--owner", PROJECT_OWNER, "--format", "json", "--jq", ".id")
+    fields = json.loads(run("gh", "project", "field-list", PROJECT, "--owner", PROJECT_OWNER, "--format", "json"))["fields"]
     status = next(f for f in fields if f["name"] == "Status")
     deployed_opt = next(o["id"] for o in status["options"] if o["name"] == "Deployed")
-    items = json.loads(run("gh", "project", "item-list", PROJECT, "--owner", OWNER, "--format", "json", "--limit", "500"))["items"]
+    items = json.loads(run("gh", "project", "item-list", PROJECT, "--owner", PROJECT_OWNER, "--format", "json", "--limit", "500"))["items"]
     by_num = {i["content"].get("number"): i for i in items if i.get("content")}
 
     short = new[:7]
@@ -152,7 +166,7 @@ def main():
         run("gh", "issue", "comment", str(num), "-R", REPO, "-b", note, check=False)
         if cur in ADVANCE_FROM:
             if not item:
-                item_id = json.loads(run("gh", "project", "item-add", PROJECT, "--owner", OWNER, "--url",
+                item_id = json.loads(run("gh", "project", "item-add", PROJECT, "--owner", PROJECT_OWNER, "--url",
                                          f"https://github.com/{REPO}/issues/{num}", "--format", "json"))["id"]
             else:
                 item_id = item["id"]
