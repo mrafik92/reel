@@ -21,8 +21,9 @@ an issue in `mrafik92/reel`. When asked to "work on #N":
    Write **`Refs #N`, never `Closes #N` / `Fixes #N`**. Then link the PR to the issue in its *Development*
    section, or with `gh pr edit` (the body reference is enough for the board). The project workflow moves
    the card to **Reviewing**.
-6. **After merge** (by the owner, or by you when explicitly asked), CI builds the image. To deploy, run
-   `deploy/ct113/deploy.py`. It moves every ticket referenced in the shipped commits to **Deployed** and
+6. **After merge** (by the owner, or by you when explicitly asked), CI builds the image. To deploy, trigger
+   **Actions → deploy → Run workflow** (`gh workflow run deploy -R mrafik92/reel`, only when asked), or run
+   `deploy/ct113/deploy.py` from the Mac as a fallback. It moves every ticket referenced in the shipped commits to **Deployed** and
    comments the build SHA. Then run `scripts/sync_obsidian.py` so the owner's Obsidian notes match `docs/`.
 7. **Verified** and **Done** belong to the owner. They check the change on the real setup, fill in
    *Verified on*, and close the issue, which moves the card to Done. Don't close tickets yourself
@@ -69,7 +70,9 @@ cd clients && bun install && bun run typecheck && bun run build
 
 - Images: GitHub Actions `image.yml` → `ghcr.io/mrafik92/reel:latest` (~10 min for server changes,
   ~1 min for web-only).
-- Deploy: `deploy/ct113/deploy.py` (pulls, restarts, health-checks, updates tickets). Use `--dry-run` first.
+- Deploy: **Actions → deploy → Run workflow** (self-hosted runner CT 116, forced-command SSH key). Fallback:
+  `deploy/ct113/deploy.py` from the Mac (`--dry-run` first). Both pull, restart, health-check and update tickets.
+- Never make the repo public while the self-hosted runner is attached.
 - Live access for checks: `ssh minix-local` → `pct exec 113 -- …` (Reel runs in Docker there). Admin
   credentials for API smoke tests are in `/root/.reel-admin` on minix. Never print them.
 

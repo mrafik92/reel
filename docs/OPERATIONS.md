@@ -16,6 +16,8 @@
 | Firewall | CT 113 Proxmox firewall drops LAN egress apart from the Arr ports and **qBittorrent :8200** (added for Reel) | Backup: `/root/113.fw.bak-*` |
 | Remote access | Tailscale; OPNsense has a static-port outbound NAT + WAN UDP 41641 pass (Firewall → Automation, "Tailscale: …") | Config backup `/conf/backup/config-pre-tailscale-static-port-20261103T165802Z.xml` |
 | Image registry | `ghcr.io/mrafik92/reel` (private) | CT 113 is logged in with a **pull-only** PAT (`read:packages`) |
+| Deploy runner | **CT 116** `gh-runner` (10.10.10.196, Debian 13, unprivileged, 512 MB) | GitHub Actions self-hosted runner `gh-runner-ct116`, label `homelab`, service user `runner`. Outbound only: firewall `policy_in DROP`, LAN egress limited to DNS/NTP, minix:22, Caddy:443 |
+| Deploy key | minix `/root/.ssh/authorized_keys` → `restrict,command="/usr/local/bin/reel-deploy",from="10.10.10.0/24"` | `reel-deploy` accepts only `sha` / `deploy` and logs to the journal (`journalctl -t reel-deploy`). Host firewall `host.fw`: `IN ACCEPT -source 10.10.10.196 -p tcp -dport 22` (backup `/root/host.fw.bak-*`) |
 
 ### Credentials and where they live
 
@@ -24,6 +26,7 @@
 | Reel admin (`rafik`) | minix `/root/.reel-admin` (root-only). Change the password in Settings |
 | TMDB key, webhook secret, (OMDb, Trakt) | CT 113 `/root/reel/.env` |
 | IPTV provider login, qBittorrent password, Arr API keys | Reel DB (entered in Settings) |
+| `PROJECT_TOKEN` (classic PAT: `repo`, `project`) | GitHub repo secret, used by the `deploy` workflow to comment on tickets and move them to Deployed |
 | OPNsense API key (firewall automation) | Mac `~/.config/opnsense-api` (0600). Revoke in OPNsense if no longer needed |
 
 ## Build & deploy pipeline
@@ -33,7 +36,7 @@ git push main ──► GitHub Actions
                    ├── ci.yml:    cargo fmt/clippy/test (rustc 1.86, ffmpeg installed), bun typecheck/build
                    └── image.yml: docker buildx (deploy/Dockerfile) → ghcr.io/mrafik92/reel:latest + :sha-xxxx
                                   build args GIT_SHA / BUILD_DATE → shown in Settings → About
-CT 113:  docker compose pull && docker compose up -d && docker image prune -f
+CT 113:  Actions → deploy → Run workflow  (runner CT 116 → ssh forced command → compose pull/up/prune)
 ```
 
 - Server changes take ~10 min to build; web-only changes take ~1 min (cached Rust layer).
@@ -43,7 +46,8 @@ CT 113:  docker compose pull && docker compose up -d && docker image prune -f
   ssh minix-local 'pct exec 113 -- sh -c "cd /root/reel && docker compose pull -q && docker compose up -d && docker image prune -f"'
   curl -s https://reel.rafikii.co/api/v1/health   # {"status":"ok"} (version only when signed in)
   ```
-- **Preferred:** `deploy/ct113/deploy.py` (or `--dry-run`). It pulls the latest successful image, restarts, runs a health check, then finds tickets referenced in the commits since the previously deployed build. Each gets a comment "🚀 Deployed to CT 113 — build `abc1234`" and moves to **Deployed** on the project board.
+- **Preferred: GitHub.** After an image build, its run summary links to **Actions → deploy → Run workflow**. That click is the gate (web or the GitHub mobile app). The job runs `deploy/ct113/deploy.py --forced` on CT 116: it deploys, health-checks, moves tickets to Deployed and writes a run summary. Runs are serialized, and the job refuses to deploy while a newer image build is still running.
+- **Fallback from the Mac:** `deploy/ct113/deploy.py` (or `--dry-run`). It pulls the latest successful image, restarts, runs a health check, then finds tickets referenced in the commits since the previously deployed build. Each gets a comment "🚀 Deployed to CT 113 — build `abc1234`" and moves to **Deployed** on the project board.
 - Rollback: pin `image: ghcr.io/mrafik92/reel:sha-<previous>` in the compose file and run `up -d`.
 
 ### Ticket flow (GitHub Project #1)
@@ -96,6 +100,12 @@ URL must be `http://10.10.10.122:8200` (the CT 113 firewall allows only that). q
 1. Get the TV's IP and model.
 2. CT 113 firewall: allow TCP out to the TV's UPnP port (Samsung 9197; LG somewhere in 1000–2000), plus TCP in from the TV to 8420.
 3. `POST /api/v1/admin/cast/devices {"ip": "<tv>"}`, or use Settings.
+
+**Deploy runner (CT 116)**
+- Status: GitHub → Settings → Actions → Runners (`gh-runner-ct116` online), or `systemctl status 'actions.runner.*'` in CT 116.
+- Re-register: `gh api -X POST repos/mrafik92/reel/actions/runners/registration-token`, then `./config.sh --url … --token … --labels homelab --replace` as `runner` in `~/actions-runner`.
+- If the runner's IP changes from 10.10.10.196, update `host.fw` and `116.fw` (the key's `from=` allows 10.10.10.0/24).
+- **The repo must stay private** while this runner is attached.
 
 **Bootstrap a fresh instance**
 `deploy/ct113/bootstrap.py` (on minix) creates the admin, libraries, Arr servers and webhooks. It's idempotent and never prints keys.
