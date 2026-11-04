@@ -1,0 +1,25 @@
+name: Bug
+description: Something in Reel doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: "What you did, what you expected, what you saw" }
+    validations: { required: true }
+  - type: input
+    id: item
+    attributes: { label: Title / item / channel, placeholder: "e.g. Resident Evil (/item/310), MBC 2 HD" }
+  - type: dropdown
+    id: client
+    attributes:
+      label: Client
+      options: [Web (desktop), Web (TV mode), LG webOS app, Samsung Tizen app, Cast (AirPlay/Chromecast/DLNA), Other]
+  - type: input
+    id: build
+    attributes: { label: Build, description: "Settings → About (server SHA)", placeholder: "99b0deb" }
+  - type: textarea
+    id: session
+    attributes: { label: Now playing details, description: "Settings → Now playing: mode, reasons, bitrate, hwaccel (if playback-related)" }
+  - type: textarea
+    id: logs
+    attributes: { label: Logs, description: "docker logs excerpt — redact credentials", render: text }

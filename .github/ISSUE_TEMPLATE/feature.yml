@@ -1,0 +1,14 @@
+name: Feature
+description: A new capability or improvement
+labels: [feature]
+body:
+  - type: textarea
+    id: want
+    attributes: { label: What should Reel do, description: "User-facing behaviour" }
+    validations: { required: true }
+  - type: textarea
+    id: why
+    attributes: { label: Why / context }
+  - type: textarea
+    id: done
+    attributes: { label: Done when, description: "Acceptance criteria, incl. how it's verified on the real setup" }
