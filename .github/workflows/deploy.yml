@@ -13,6 +13,10 @@ on:
         description: "Why (optional, shown in the run summary)"
         required: false
         type: string
+      since:
+        description: "Only update tickets for <sha>..latest, no deploy (recovery)"
+        required: false
+        type: string
 
 concurrency:
   group: deploy-ct113
@@ -35,6 +39,11 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           DEPLOY_SSH: root@10.10.10.10
           REASON: ${{ inputs.reason }}
+          SINCE: ${{ inputs.since }}
         run: |
           [ -n "$REASON" ] && echo "**Reason:** $REASON" >> "$GITHUB_STEP_SUMMARY"
-          python3 deploy/ct113/deploy.py --forced
+          if [ -n "$SINCE" ]; then
+            python3 deploy/ct113/deploy.py --forced --since "$SINCE"
+          else
+            python3 deploy/ct113/deploy.py --forced
+          fi

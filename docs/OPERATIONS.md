@@ -46,7 +46,7 @@ CT 113:  Actions → deploy → Run workflow  (runner CT 116 → ssh forced comm
   ssh minix-local 'pct exec 113 -- sh -c "cd /root/reel && docker compose pull -q && docker compose up -d && docker image prune -f"'
   curl -s https://reel.rafikii.co/api/v1/health   # {"status":"ok"} (version only when signed in)
   ```
-- **Preferred: GitHub.** After an image build, its run summary links to **Actions → deploy → Run workflow**. That click is the gate (web or the GitHub mobile app). The job runs `deploy/ct113/deploy.py --forced` on CT 116: it deploys, health-checks, moves tickets to Deployed and writes a run summary. Runs are serialized, and the job refuses to deploy while a newer image build is still running.
+- **Preferred: GitHub.** After an image build, its run summary links to **Actions → deploy → Run workflow**. That click is the gate (web or the GitHub mobile app). The job runs `deploy/ct113/deploy.py --forced` on CT 116: it deploys, health-checks, moves tickets to Deployed and writes a run summary. Runs are serialized, and the job refuses to deploy while a newer image build is still running. Recovery: run it with **since = <old sha>** to (re)process tickets without deploying.
 - **Fallback from the Mac:** `deploy/ct113/deploy.py` (or `--dry-run`). It pulls the latest successful image, restarts, runs a health check, then finds tickets referenced in the commits since the previously deployed build. Each gets a comment "🚀 Deployed to CT 113 — build `abc1234`" and moves to **Deployed** on the project board.
 - Rollback: pin `image: ghcr.io/mrafik92/reel:sha-<previous>` in the compose file and run `up -d`.
 
