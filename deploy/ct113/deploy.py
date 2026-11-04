@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Deploy Reel to CT 113 and move the tickets that shipped to "Deployed" on the GitHub Project.
+
+Run from the Mac (needs `ssh minix-local`, `gh` with the `project` scope, and the repo checkout):
+
+    deploy/ct113/deploy.py            # deploy :latest, update tickets
+    deploy/ct113/deploy.py --dry-run  # show what would happen, change nothing
+
+Ticket convention: reference issues in commit messages with `Refs #12` (or `#12`). Use `Fixes #12` only
+when the change needs no verification — GitHub closes it on push, skipping Deployed/Verified.
+Tickets referenced by commits between the previously deployed build and the new one get:
+  * a comment "Deployed to CT 113 — build <sha>",
+  * Status → Deployed (unless already Deployed / Verified / Done).
+"""
+import json
+import re
+import subprocess
+import sys
+import time
+
+REPO = "mrafik92/reel"
+OWNER = "mrafik92"
+PROJECT = "1"
+SSH = ["ssh", "minix-local"]
+
+DRY = "--dry-run" in sys.argv
+ADVANCE_FROM = {"Backlog", "To do", "Implementing", "Reviewing", None}
+
+
+def run(*a, check=True):
+    r = subprocess.run(a, capture_output=True, text=True)
+    if check and r.returncode != 0:
+        sys.exit(f"command failed: {' '.join(a[:6])}…\n{r.stderr.strip()[:400]}")
+    return r.stdout.strip()
+
+
+def remote(cmd, check=True):
+    """Run `cmd` (argv list) inside CT 113 via the PVE host, quoting safely through ssh."""
+    import shlex
+    inner = " ".join(shlex.quote(c) for c in cmd)
+    return run(*SSH, f"pct exec 113 -- sh -c {shlex.quote(inner)}", check=check)
+
+
+def deployed_sha():
+    env = remote(["docker", "inspect", "reel", "--format", "{{range .Config.Env}}{{println .}}{{end}}"], check=False)
+    m = re.search(r"^REEL_GIT_SHA=([0-9a-f]{7,40})", env, re.M)
+    return m.group(1) if m else None
+
+
+def latest_image_sha():
+    # Newest successful image build on main.
+    out = run("gh", "run", "list", "-R", REPO, "--workflow", "image", "--branch", "main", "--status", "success",
+              "--limit", "1", "--json", "headSha", "--jq", ".[0].headSha")
+    return out or None
+
+
+def main():
+    old = deployed_sha()
+    new = latest_image_sha()
+    print(f"deployed: {old or '?'}  →  latest image: {new or '?'}")
+    if not new:
+        sys.exit("no successful image build found")
+    if old and new.startswith(old[:12]):
+        print("already up to date")
+        return
+
+    if not DRY:
+        remote(["sh", "-c", "cd /root/reel && docker compose pull -q && docker compose up -d && docker image prune -f"])
+        for _ in range(20):
+            time.sleep(3)
+            if deployed_sha() and deployed_sha().startswith(new[:12]):
+                break
+        health = run("curl", "-s", "-m", "10", "https://reel.rafikii.co/api/v1/health", check=False)
+        print("health:", health)
+        if '"ok"' not in health:
+            sys.exit("health check failed — investigate before touching tickets")
+
+    # Commits that shipped.
+    run("git", "fetch", "-q", "origin")
+    rng = f"{old}..{new}" if old else f"{new}~20..{new}"
+    log = run("git", "log", "--format=%h%x09%s%x09%b%x1e", rng, check=False)
+    refs = {}
+    for entry in log.split("\x1e"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        sha = entry.split("\t", 1)[0]
+        for n in re.findall(r"(?<![\w/])#(\d+)\b", entry):
+            refs.setdefault(int(n), []).append(sha)
+    print(f"commits {rng}: tickets referenced: {sorted(refs) or 'none'}")
+    if not refs:
+        return
+
+    pid = run("gh", "project", "view", PROJECT, "--owner", OWNER, "--format", "json", "--jq", ".id")
+    fields = json.loads(run("gh", "project", "field-list", PROJECT, "--owner", OWNER, "--format", "json"))["fields"]
+    status = next(f for f in fields if f["name"] == "Status")
+    deployed_opt = next(o["id"] for o in status["options"] if o["name"] == "Deployed")
+    items = json.loads(run("gh", "project", "item-list", PROJECT, "--owner", OWNER, "--format", "json", "--limit", "500"))["items"]
+    by_num = {i["content"].get("number"): i for i in items if i.get("content")}
+
+    short = new[:7]
+    for num, shas in sorted(refs.items()):
+        item = by_num.get(num)
+        cur = item.get("status") if item else None
+        note = f"🚀 Deployed to CT 113 — build `{short}` (commits {', '.join(sorted(set(shas)))}). Verify on the real setup, then move to **Verified**."
+        print(f"#{num}: status {cur!r}", "→ Deployed" if cur in ADVANCE_FROM else "(unchanged)")
+        if DRY:
+            continue
+        run("gh", "issue", "comment", str(num), "-R", REPO, "-b", note, check=False)
+        if cur in ADVANCE_FROM:
+            if not item:
+                item_id = json.loads(run("gh", "project", "item-add", PROJECT, "--owner", OWNER, "--url",
+                                         f"https://github.com/{REPO}/issues/{num}", "--format", "json"))["id"]
+            else:
+                item_id = item["id"]
+            run("gh", "project", "item-edit", "--id", item_id, "--project-id", pid, "--field-id", status["id"],
+                "--single-select-option-id", deployed_opt)
+
+
+if __name__ == "__main__":
+    main()

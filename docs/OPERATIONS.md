@@ -43,7 +43,15 @@ CT 113:  docker compose pull && docker compose up -d && docker image prune -f
   ssh minix-local 'pct exec 113 -- sh -c "cd /root/reel && docker compose pull -q && docker compose up -d && docker image prune -f"'
   curl -s https://reel.rafikii.co/api/v1/health   # {"status":"ok"} (version only when signed in)
   ```
+- **Preferred:** `deploy/ct113/deploy.py` (or `--dry-run`). It pulls the latest successful image, restarts, runs a health check, then finds tickets referenced in the commits since the previously deployed build. Each gets a comment "🚀 Deployed to CT 113 — build `abc1234`" and moves to **Deployed** on the project board.
 - Rollback: pin `image: ghcr.io/mrafik92/reel:sha-<previous>` in the compose file and run `up -d`.
+
+### Ticket flow (GitHub Project #1)
+
+Backlog → To do → Implementing → Reviewing → **Deployed** (automatic, `deploy.py`) → Verified (manual, fill *Verified on*) → Done (close the issue).
+
+- Reference tickets in commits with `Refs #12`. Use `Fixes #12` only when no real-setup verification is needed; GitHub closes it on push, skipping Deployed/Verified.
+- Built-in project workflows (Project → ⋯ → Workflows): *Item added → Backlog*, *Item closed → Done*, *Auto-close issue (Status = Done)*, *Pull request linked to issue → Reviewing*, *Auto-add to project* (`is:issue,pr is:open` on `mrafik92/reel`).
 
 ## Configuration (CT 113 compose → env)
 
