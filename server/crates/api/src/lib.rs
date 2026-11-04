@@ -359,7 +359,9 @@ impl utoipa::Modify for SecurityAddon {
 #[derive(Serialize, ToSchema)]
 pub struct Health {
     pub status: String,
-    pub version: String,
+    /// Server version (signed-in callers only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     /// Git commit the server was built from (short SHA), when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_sha: Option<String>,
@@ -377,12 +379,25 @@ fn build_info(var: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Liveness check.
+/// Liveness check. Anyone gets `{status}`; signed-in callers also see version, git SHA and build
+/// date (so an unauthenticated scanner learns nothing about the build).
 #[utoipa::path(get, path = "/health", security(()), responses((status = 200, body = Health)))]
-pub async fn health() -> Json<Health> {
+pub async fn health(State(st): State<AppState>, headers: HeaderMap) -> Json<Health> {
+    let signed_in = match auth::bearer(&headers) {
+        Some(t) => st.auth.authenticate(t).await.is_ok(),
+        None => false,
+    };
+    if !signed_in {
+        return Json(Health {
+            status: "ok".into(),
+            version: None,
+            git_sha: None,
+            build_date: None,
+        });
+    }
     Json(Health {
         status: "ok".into(),
-        version: env!("CARGO_PKG_VERSION").into(),
+        version: Some(env!("CARGO_PKG_VERSION").into()),
         git_sha: build_info("REEL_GIT_SHA").map(|s| s.chars().take(12).collect()),
         build_date: build_info("REEL_BUILD_DATE"),
     })
@@ -707,7 +722,8 @@ pub fn app(state: AppState) -> Router {
     router
         .route(
             "/api/v1/openapi.json",
-            axum::routing::get(move || {
+            // the API description is for signed-in users only
+            axum::routing::get(move |_u: auth::AuthUser| {
                 let spec = spec.clone();
                 async move { Json(spec) }
             }),
@@ -861,7 +877,9 @@ mod tests {
         let body = res.into_body().collect().await.unwrap().to_bytes();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["status"], "ok");
-        assert!(v["version"].is_string());
+        // anonymous callers learn nothing about the build
+        assert!(v.get("version").is_none());
+        assert!(v.get("git_sha").is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

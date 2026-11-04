@@ -2421,7 +2421,7 @@
     },
     "/api/v1/health": {
       "get": {
-        "summary": "Liveness check.",
+        "summary": "Liveness check. Anyone gets `{status}`; signed-in callers also see version, git SHA and build\ndate (so an unauthenticated scanner learns nothing about the build).",
         "operationId": "health",
         "responses": {
           "200": {
@@ -7798,8 +7798,7 @@
         "type": "object",
         "description": "Health response.",
         "required": [
-          "status",
-          "version"
+          "status"
         ],
         "properties": {
           "build_date": {
@@ -7820,7 +7819,11 @@
             "type": "string"
           },
           "version": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Server version (signed-in callers only)."
           }
         }
       },

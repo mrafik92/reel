@@ -1,7 +1,7 @@
 import { createResource, Show, type JSX } from "solid-js";
 import { http } from "../../api/http";
 
-type Health = { status: string; version: string; git_sha?: string; build_date?: string };
+type Health = { status: string; version?: string; git_sha?: string; build_date?: string };
 
 const WEB_SHA = (import.meta.env.VITE_GIT_SHA || "").slice(0, 7);
 const WEB_DATE = import.meta.env.VITE_BUILD_DATE || "";
@@ -18,7 +18,7 @@ function when(iso?: string): string {
 
 /** Server + web app versions. Shown to everyone on the Settings page. */
 export default function About(): JSX.Element {
-  const [health] = createResource(() => http.get<Health>("/health", undefined, { auth: false }).catch(() => null));
+  const [health] = createResource(() => http.get<Health>("/health").catch(() => null));
   // A web bundle older than the server (e.g. a cached tab after a deploy) is worth a reload hint.
   const stale = () => {
     const s = health()?.git_sha;
@@ -33,7 +33,7 @@ export default function About(): JSX.Element {
           <Show when={health()} fallback={<span>{health.loading ? "…" : "unreachable"}</span>}>
             {(h) => (
               <>
-                v{h().version} · <code>{short(h().git_sha)}</code>
+                v{h().version ?? "?"} · <code>{short(h().git_sha)}</code>
                 <Show when={h().build_date}>
                   <small>built {when(h().build_date)}</small>
                 </Show>

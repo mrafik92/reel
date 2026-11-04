@@ -20,11 +20,34 @@ use crate::{
     error::ApiError,
 };
 
-fn session_id(path: &str) -> Option<&str> {
-    path.split('/')
+fn percent_decode(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            let h = b.get(i + 1..i + 3)?;
+            out.push(u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// The session id of a `/stream/{sid}/…` path, percent-decoded exactly like the router decodes it
+/// (checking the raw text would let `%61bc` slip past the owner check and still reach session
+/// `abc`).
+pub(crate) fn session_id(path: &str) -> Option<String> {
+    let raw = path
+        .split('/')
         .skip_while(|s| *s != "stream")
         .nth(1)
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty())?;
+    let id = percent_decode(raw)?;
+    (!id.is_empty() && !id.contains(['/', '\\', '\0'])).then_some(id)
 }
 
 /// Append `?{q}` to every URI of an HLS playlist.
@@ -47,7 +70,7 @@ pub fn sign_playlist(text: &str, q: &str) -> String {
 }
 
 pub async fn stream_guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
-    let Some(sid) = session_id(req.uri().path()).map(str::to_string) else {
+    let Some(sid) = session_id(req.uri().path()) else {
         return ApiError::NotFound.into_response();
     };
     let sig = Query::<SignedQuery>::try_from_uri(req.uri())
@@ -60,10 +83,10 @@ pub async fn stream_guard(State(st): State<AppState>, req: Request, next: Next) 
             Ok((u, _)) => u,
             Err(e) => return ApiError::from(e).into_response(),
         };
-        if let Ok(info) = st.playback.session(&sid).await {
-            if info.user_id != user.id && !user.is_admin() {
-                return ApiError::NotFound.into_response();
-            }
+        // an unknown session is a 404, never a way past the owner check
+        match st.playback.session(&sid).await {
+            Ok(info) if info.user_id == user.id || user.is_admin() => {}
+            _ => return ApiError::NotFound.into_response(),
         }
     } else if let (Some(exp), Some(u), Some(s)) = (sig.exp, sig.u, sig.sig.as_deref()) {
         if let Err(e) = st.auth.verify_signature(&scope, u, exp, s).await {
@@ -103,10 +126,20 @@ mod tests {
         assert!(out.contains("\nseg_00000.m4s?exp=1&u=2&sig=x\n"));
         assert!(out.contains("\nmain/index.m3u8?exp=1&u=2&sig=x\n"));
         assert!(out.contains("#EXTINF:4.000,\n"));
-        assert_eq!(session_id("/stream/abc/master.m3u8"), Some("abc"));
         assert_eq!(
-            session_id("/api/v1/stream/abc/main/index.m3u8"),
+            session_id("/stream/abc/master.m3u8").as_deref(),
             Some("abc")
         );
+        assert_eq!(
+            session_id("/api/v1/stream/abc/main/index.m3u8").as_deref(),
+            Some("abc")
+        );
+        // percent-encoded ids are decoded like the router does
+        assert_eq!(
+            session_id("/stream/%61bc/master.m3u8").as_deref(),
+            Some("abc")
+        );
+        assert_eq!(session_id("/stream/a%2Fb/x"), None);
+        assert_eq!(session_id("/stream/%zz/x"), None);
     }
 }
