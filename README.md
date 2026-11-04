@@ -1,7 +1,7 @@
 # Reel
 
 Self-hosted media server: library + playback, built-in requests (search → Add → live download progress),
-and a low-latency IPTV engine. No cloud account. See [SPEC.md](SPEC.md).
+and a low-latency IPTV engine. No cloud account. Documentation: **[docs/](docs/README.md)** — [features](docs/FEATURES.md), [architecture & design choices](docs/ARCHITECTURE.md), [current status](docs/STATUS.md), [operations](docs/OPERATIONS.md). Original design: [SPEC.md](SPEC.md).
 
 ## Layout
 
@@ -26,4 +26,4 @@ cd clients && bun install && bun run dev
 
 ## Status
 
-Phase 0 (foundation). Roadmap in SPEC.md §10.
+Live on the homelab (CT 113). See [docs/STATUS.md](docs/STATUS.md).
