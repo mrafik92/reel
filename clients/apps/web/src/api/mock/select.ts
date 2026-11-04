@@ -29,3 +29,23 @@ export function mockSelected(f: MediaFile, audioReq: number | null | undefined, 
   if (forCast) why.push("for a cast receiver");
   return { audio_index: audio, subtitle_index: sub, reason: why.join("; ") };
 }
+
+/** Mock of the server's quality ladder (`decide_quality`): original ≈ file bitrate, 8/4/2 Mbps rungs. */
+export function mockQuality(f: MediaFile, body: { quality?: string; max_bitrate_kbps?: number }) {
+  const src = f.duration_s ? Math.round((f.size * 8) / f.duration_s / 1000) : 9000;
+  const h = f.video?.height ?? 1080;
+  const rungs = [
+    { id: "original", label: `Original (${(src / 1000).toFixed(1)} Mbps)`, bitrate_kbps: src, available: true },
+    { id: "1080p", label: "1080p (8.3 Mbps)", bitrate_kbps: 8256, available: h >= 1000 },
+    { id: "720p", label: "720p (4.2 Mbps)", bitrate_kbps: 4160, available: h >= 700 },
+    { id: "480p", label: "480p (2.1 Mbps)", bitrate_kbps: 2128, available: true },
+  ];
+  const cap = body.max_bitrate_kbps && body.max_bitrate_kbps > 0 ? body.max_bitrate_kbps : Infinity;
+  const want = body.quality && body.quality !== "auto" ? rungs.find((r) => r.id === body.quality && r.available) : undefined;
+  const pick = want ?? rungs.find((r) => r.available && r.bitrate_kbps <= cap) ?? rungs[rungs.length - 1]!;
+  return {
+    quality: pick.id,
+    bitrate_kbps: pick.bitrate_kbps,
+    quality_options: [{ id: "auto", label: "Auto", bitrate_kbps: pick.bitrate_kbps, available: true }, ...rungs],
+  };
+}

@@ -737,3 +737,106 @@ html[data-input="key"] .pvol__bar:focus {
   outline: none;
   box-shadow: none;
 }
+
+/* ---------- Adaptive quality --------------------------------------------------------- */
+/* Last frame held while a new rung loads: no black flash between streams */
+.player__freeze {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  object-fit: contain;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 260ms var(--ease);
+}
+.player__freeze.is-on {
+  opacity: 1;
+  transition: none;
+}
+.qnotice {
+  position: absolute;
+  top: 6.4rem;
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  padding: 0.55rem 1rem 0.55rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(10, 11, 15, 0.86);
+  box-shadow: 0 0 0 1px rgba(243, 238, 228, 0.1), 0 0.6rem 1.6rem rgba(0, 0, 0, 0.45);
+  color: var(--ink);
+  font: 650 0.9rem/1 var(--font-body);
+  white-space: nowrap;
+  transform: translateX(-50%);
+  pointer-events: none;
+  animation: qnotice-in 260ms var(--ease-out) both;
+}
+.qnotice .spinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  margin-right: 0.6rem;
+  border-width: 2px;
+}
+@keyframes qnotice-in {
+  from { opacity: 0; transform: translate(-50%, -0.5rem); }
+}
+/* "Remember on this device" in the quality sheet */
+.sheet__switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.6rem 0.45rem 0.3rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink-2);
+  font: 600 0.92rem/1 var(--font-body);
+  cursor: pointer;
+}
+.sheet__switchbox {
+  position: relative;
+  width: 2.4rem;
+  height: 1.35rem;
+  margin-right: 0.7rem;
+  border-radius: 999px;
+  background: var(--ink-4);
+  transition: background-color var(--t) var(--ease);
+}
+.sheet__switchbox i {
+  position: absolute;
+  top: 0.18rem;
+  left: 0.18rem;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: transform var(--t) var(--ease-out);
+}
+.sheet__switch[aria-checked="true"] .sheet__switchbox {
+  background: var(--accent);
+}
+.sheet__switch[aria-checked="true"] .sheet__switchbox i {
+  transform: translateX(1.05rem);
+  background: var(--accent-ink);
+}
+.sheet__switch:focus {
+  outline: none;
+  background: var(--ink-5);
+  color: var(--ink);
+}
+html[data-input="key"] .sheet__switch:focus {
+  box-shadow: var(--focus-ring);
+}
+/* Narrow desktops: the quality value goes before the subtitle one */
+@media (max-width: 1360px) {
+  html:not(.tv) .pc__quality .ctl__val {
+    display: none;
+  }
+  html:not(.tv) .pc__quality.has-value {
+    width: 2.75rem;
+    padding: 0;
+  }
+}

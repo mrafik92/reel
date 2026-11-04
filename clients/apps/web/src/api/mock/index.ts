@@ -12,7 +12,7 @@ import { castOfTmdb, createQueue, mockPerson, mockReviews } from "./extras";
 import type { DownloadItem } from "../types";
 import { enrichSummaries, genreCounts, lanes, libraryRecs, matches, searchAll, sortRecs } from "./browse";
 import { searchVod, vodIdsFor } from "./vod";
-import { mockSelected } from "./select";
+import { mockSelected, mockQuality } from "./select";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const latency = () => sleep(120 + Math.random() * 220);
@@ -371,7 +371,7 @@ export function createMockApi(): MockApi {
         hwaccel: mode === "transcode" ? "vaapi" : "none", position_s: body.start_s ?? 0, progress: null,
         bitrate_kbps: null, started_at: nowS(), last_ping: nowS(), device_id: body.device_id, reasons, decision: res.decision,
       });
-      return Object.assign(res, { selected });
+      return Object.assign(res, { selected }, mockQuality(f, body as { quality?: string; max_bitrate_kbps?: number }));
     },
     async progress(sid, b) {
       const s = playback.get(sid);

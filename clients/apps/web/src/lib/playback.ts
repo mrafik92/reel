@@ -61,9 +61,18 @@ function fromBrowserProbe(r: Record<string, unknown>): DeviceProfileWire {
  */
 export async function decide(
   fileId: Id,
-  o: { itemId?: Id | null; audio?: number | null; subtitle?: number | null; start?: number; forCast?: "chromecast" | "airplay" },
+  o: {
+    itemId?: Id | null;
+    audio?: number | null;
+    subtitle?: number | null;
+    start?: number;
+    forCast?: "chromecast" | "airplay";
+    /** Adaptive quality: `auto` (default on the server) or a rung; plus the bandwidth hint. */
+    quality?: string;
+    maxBitrateKbps?: number | null;
+  },
 ): Promise<DecideResponse> {
-  const body: DecideRequest & { for_cast?: boolean } = {
+  const body: DecideRequest & { for_cast?: boolean; quality?: string; max_bitrate_kbps?: number } = {
     ...(o.forCast ? { preset: o.forCast } : decideProfile()),
     item_id: o.itemId ?? null,
     device_id: deviceId(),
@@ -72,6 +81,8 @@ export async function decide(
     start_s: o.start && o.start > 0 ? o.start : null,
   };
   if (o.forCast) body.for_cast = true;
+  if (o.quality) body.quality = o.quality;
+  if (o.maxBitrateKbps && o.maxBitrateKbps > 0) body.max_bitrate_kbps = Math.round(o.maxBitrateKbps);
   return api.decide(fileId, body);
 }
 

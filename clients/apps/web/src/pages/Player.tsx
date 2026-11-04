@@ -19,6 +19,10 @@ import { TV, href } from "../lib/mode";
 import { toast } from "../lib/toast";
 import { ErrorState } from "../components/States";
 import { CtlButton, Osd, Scrubber, Transport, Volume, useOsd, type ScrubberApi } from "../components/player/Controls";
+import {
+  AbrController, bandwidthEstimate, fmtMbps, hasEstimate, LADDER, preferredQuality, probeThroughput, QUALITY_NAME, qualityOf,
+  recordThroughput, rememberedQuality, setPreferredQuality, type QualityId, type QualityInfo,
+} from "../lib/abr";
 import { playHref, toPath } from "../lib/links";
 import { CastSheet } from "../components/casting/CastSheet";
 import { CastRemote } from "../components/casting/CastRemote";
@@ -74,6 +78,9 @@ export interface PlaySource {
     start: number;
     subtitleIndex?: number | null;
     forCast?: "chromecast" | "airplay";
+    /** Adaptive quality (send as `quality` / `max_bitrate_kbps` on vod play). */
+    quality?: QualityId;
+    maxBitrateKbps?: number | null;
   }) => Promise<DecideResponse>;
   /** DLNA "Play on TV": what the server should push (omit → DLNA TVs aren't offered). */
   dlna?: (o: { audio: number | null; subtitle: number | null; start: number }) => CastPlayBody;
@@ -149,7 +156,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     setVisible(true);
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
-      if (playing() && !picker() && scrub() == null && !info() && !quick() && !castSheet() && !speedSheet()) setVisible(false);
+      if (playing() && !picker() && scrub() == null && !info() && !quick() && !castSheet() && !speedSheet() && !qualitySheet()) setVisible(false);
     }, HIDE_AFTER);
   };
 
@@ -181,14 +188,37 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     setSession(undefined);
   };
 
+  // ---- adaptive quality ----------------------------------------------------------------
+  // Auto (default): ask for `auto` with a bandwidth hint (70 % of the measured link), then
+  // step down / up on real buffer health. A manual pick sticks for the session.
+  const [qPref, setQPref] = createSignal<QualityId>(preferredQuality());
+  const [qRemember, setQRemember] = createSignal(rememberedQuality());
+  const [qInfo, setQInfo] = createSignal<QualityInfo>();
+  const [qualitySheet, setQualitySheet] = createSignal(false);
+  /** Small notice while a quality switch loads ("Adjusting quality…"). */
+  const [qNotice, setQNotice] = createSignal("");
+  const [bufferAhead, setBufferAhead] = createSignal(0);
+  /** Auto's current rung after a step; undefined = let the server choose from the hint. */
+  let autoRung: QualityId | undefined;
+  let probed = false;
+  let switching = false;
+  let lastSeekAt = 0;
+  const abr = new AbrController();
+  const qRequest = (forCast?: string): { quality?: QualityId; maxBitrateKbps?: number | null } => {
+    if (forCast) return {};
+    if (qPref() !== "auto") return { quality: qPref() };
+    const est = bandwidthEstimate();
+    return { quality: autoRung ?? "auto", maxBitrateKbps: est ? est * 0.7 : null };
+  };
+
   /** Open a session (library decide or the page's source). */
-  const openSession = (o: CastOpen, forCast?: "chromecast" | "airplay"): Promise<DecideResponse> =>
+  const openSession = (o: CastOpen, forCast?: "chromecast" | "airplay", q = qRequest(forCast)): Promise<DecideResponse> =>
     props.source
-      ? props.source.decide({ audio: o.audio, subtitle: o.subtitle ?? -1, subtitleIndex: o.subtitle, start: o.start, forCast })
-      : decide(file!.id, { itemId: creditItem(file!, props.item.id), audio: o.audio, subtitle: o.subtitle, start: o.start, forCast });
+      ? props.source.decide({ audio: o.audio, subtitle: o.subtitle ?? -1, subtitleIndex: o.subtitle, start: o.start, forCast, ...q })
+      : decide(file!.id, { itemId: creditItem(file!, props.item.id), audio: o.audio, subtitle: o.subtitle, start: o.start, forCast, ...q });
 
   /** (Re)start playback: decide → load. Used on open and when audio/burn-in subs change. */
-  const start = async (at: number, forCast?: "airplay") => {
+  const start = async (at: number, forCast?: "airplay", switched = false) => {
     if (!file) return;
     setError(undefined);
     // The clock shows the start point until the first timeupdate (slow starts, remote seek).
@@ -197,7 +227,20 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     endSession();
     let d: DecideResponse;
     try {
-      d = await openSession({ audio: audio(), subtitle: subChosen ? sub() : null, start: at }, forCast);
+      const open: CastOpen = { audio: audio(), subtitle: subChosen ? sub() : null, start: at };
+      d = await openSession(open, forCast);
+      // First play on this device: measure the link on the real file (≈2 MB / 3 s) before
+      // committing to a bitrate it can't carry. HLS measures itself from its segments.
+      const q0 = qualityOf(d);
+      if (!forCast && q0 && qPref() === "auto" && !hasEstimate() && !probed && !/\.m3u8(\?|$)/i.test(d.url)) {
+        probed = true;
+        const kbps = await probeThroughput(mediaUrl(d.url)!);
+        if (kbps && kbps * 0.7 < q0.bitrate_kbps && !closed) {
+          const first = d;
+          d = await openSession(open, undefined, { quality: "auto", maxBitrateKbps: kbps * 0.7 });
+          if (first.session_id !== d.session_id) api.stopPlayback(first.session_id).catch(() => undefined);
+        }
+      }
       if (forCast && !/^https?:/i.test(d.url)) {
         // Source didn't honour for_cast: convert the session for the receiver.
         const c = await casting.castUrl(d.session_id);
@@ -213,6 +256,9 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       return;
     }
     setSession(d);
+    const qi = qualityOf(d);
+    setQInfo(qi);
+    abr.reset(qi, switched);
     const sel = selectedOf(d);
     if (sel) {
       setSelection(sel);
@@ -248,8 +294,13 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     applySubtitle(d);
   };
 
+  let hasPlayed = false;
+  /** The adapter reports segment throughput (hls.js); else estimate from buffer growth. */
+  let adapterMeasures = false;
   function wire(a: PlayerAdapter, startAt: number): void {
     let first = true;
+    hasPlayed = false;
+    adapterMeasures = false;
     offs.push(
       a.on("timeupdate", (t) => {
         // Stale resume point past the real end (file replaced, bad progress) → start over.
@@ -262,9 +313,22 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
         }
         setPos(t.positionSec);
         if (t.durationSec && isFinite(t.durationSec)) setDur(t.durationSec);
+        if (!hasPlayed && t.positionSec > 0 && video && !video.paused) {
+          hasPlayed = true;
+          // A quality switch is on screen: drop the held frame once the new stream moves.
+          if (switching) {
+            switching = false;
+            setFrozen(false);
+            setTimeout(() => setQNotice(""), 1200);
+          }
+        }
       }),
       a.on("ready", (r) => r.durationSec && isFinite(r.durationSec) && setDur(r.durationSec)),
       a.on("buffered", (b) => setBuffered(b.endSec)),
+      a.on("bandwidth", (b) => {
+        adapterMeasures = true;
+        recordThroughput(b.kbps);
+      }),
       a.on("play", () => {
         setPlaying(true);
         setBuffering(false);
@@ -275,7 +339,11 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
         setVisible(true);
         report(true);
       }),
-      a.on("buffering", (b) => setBuffering(b)),
+      a.on("buffering", (b) => {
+        setBuffering(b);
+        // An underrun while playing (not the start, not right after a seek) counts against the rung.
+        if (b && hasPlayed && Date.now() - lastSeekAt > 3000) abr.stall();
+      }),
       a.on("ended", () => {
         setPlaying(false);
         setVisible(true);
@@ -644,6 +712,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     poke();
   };
   const seekTo = (t: number) => {
+    lastSeekAt = Date.now();
     if (adapter) {
       adapter.seek(t);
       setPos(t);
@@ -690,6 +759,77 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     if (document.pictureInPictureElement) void document.exitPictureInPicture().catch(() => undefined);
     else if (document.pictureInPictureEnabled && v.requestPictureInPicture) void v.requestPictureInPicture().catch(() => undefined);
     else if (v.webkitSetPresentationMode) v.webkitSetPresentationMode(v.webkitPresentationMode === "picture-in-picture" ? "inline" : "picture-in-picture");
+  };
+
+  // ---- quality switches ----
+  let freezeCanvas: HTMLCanvasElement | undefined;
+  const [frozen, setFrozen] = createSignal(false);
+  /** Hold the current picture while the new stream loads (no black flash). */
+  const freezeFrame = () => {
+    if (!freezeCanvas || !video || !video.videoWidth || nativePlane()) return;
+    try {
+      freezeCanvas.width = video.videoWidth;
+      freezeCanvas.height = video.videoHeight;
+      freezeCanvas.getContext("2d")?.drawImage(video, 0, 0);
+      setFrozen(true);
+    } catch {
+      setFrozen(false); // cross-origin frame: a brief black is the fallback
+    }
+  };
+  const switchQuality = (notice: string) => {
+    if (switching || cast()) return;
+    switching = true;
+    freezeFrame();
+    setQNotice(notice);
+    void start(pos(), undefined, true).then(() => {
+      // Failed to start → nothing will clear the frame on play.
+      if (error()) {
+        switching = false;
+        setFrozen(false);
+        setQNotice("");
+      }
+    });
+  };
+  const chooseQuality = (q: QualityId) => {
+    setQPref(q);
+    setPreferredQuality(q, qRemember());
+    autoRung = undefined;
+    const cur = qInfo()?.quality;
+    if (q !== "auto" && q === cur) return;
+    switchQuality(q === "auto" ? "Switching to automatic quality…" : `Switching to ${QUALITY_NAME[q]}…`);
+  };
+  /** Once a second: buffer health, link estimate for non-hls.js streams, and Auto's decision. */
+  let lastEnd: number | undefined;
+  let lastAt = 0;
+  const qualityTick = () => {
+    if (!video || nativePlane() || !session() || cast()) return;
+    const t = video.currentTime;
+    const b = video.buffered;
+    let end = t;
+    for (let i = 0; i < b.length; i++) if (b.start(i) <= t + 0.5 && b.end(i) > end) end = b.end(i);
+    const ahead = Math.max(0, end - t);
+    setBufferAhead(ahead);
+    const now = Date.now();
+    const kbps = qInfo()?.bitrate_kbps;
+    // Direct play / native HLS: seconds of media buffered per second × stream bitrate.
+    if (!adapterMeasures && kbps && lastEnd != null && now - lastAt >= 2000) {
+      const grew = end - lastEnd;
+      if (grew > 0.5 && ahead < 120 && now - lastSeekAt > 3000) recordThroughput((grew * kbps) / ((now - lastAt) / 1000), 0.5);
+      lastEnd = end;
+      lastAt = now;
+    } else if (lastEnd == null || now - lastAt >= 2000) {
+      lastEnd = end;
+      lastAt = now;
+    }
+    if (qPref() !== "auto" || switching || !hasPlayed) return;
+    const step = abr.evaluate(ahead, playing(), bandwidthEstimate());
+    if (!step) return;
+    autoRung = step.target;
+    switchQuality(step.dir === "down" ? "Adjusting quality for your connection…" : `Improving quality to ${QUALITY_NAME[step.target]}…`);
+  };
+  const qualityValue = () => {
+    const q = qInfo()?.quality;
+    return q ? (q === "original" ? "Orig" : QUALITY_NAME[q]) : qPref() === "auto" ? "Auto" : QUALITY_NAME[qPref()];
   };
 
   // ---- next episode (same season) ----
@@ -823,9 +963,11 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     tickTimer = setInterval(() => {
       if (playing()) report(false);
     }, TICK_MS);
+    const qTimer = setInterval(qualityTick, 1000);
+    onCleanup(() => clearInterval(qTimer));
 
     const onKey = (e: KeyboardEvent) => {
-      if (picker() || castSheet() || speedSheet()) return;
+      if (picker() || castSheet() || speedSheet() || qualitySheet()) return;
       const k = e.key;
       const c = cast();
       if (c) {
@@ -931,7 +1073,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       return true;
     });
     const offBack = onBack(() => {
-      if (picker() || castSheet() || speedSheet()) return false;
+      if (picker() || castSheet() || speedSheet() || qualitySheet()) return false;
       // Back peels one layer at a time: seek preview → info → controls → leave.
       if (scrubApi?.cancel()) {
         poke();
@@ -1030,7 +1172,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       }}
       onMouseMove={poke}
       onMouseLeave={() => {
-        if (!playing() || picker() || castSheet() || speedSheet()) return;
+        if (!playing() || picker() || castSheet() || speedSheet() || qualitySheet()) return;
         if (hideTimer) clearTimeout(hideTimer);
         hideTimer = setTimeout(() => playing() && scrub() == null && setVisible(false), 700);
       }}
@@ -1048,6 +1190,14 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
         }}
         onDblClick={fullscreen}
       />
+
+      <canvas ref={freezeCanvas} class="player__freeze" classList={{ "is-on": frozen() }} aria-hidden="true" />
+      <Show when={qNotice()}>
+        <div class="qnotice" role="status">
+          <span class="spinner" aria-hidden="true" />
+          {qNotice()}
+        </div>
+      </Show>
 
       <Osd osd={osd()} />
 
@@ -1090,7 +1240,20 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       </Show>
 
       <Show when={info() && session()}>
-        {(s) => <StreamInfo session={s()} file={file} selection={selection()} onClose={() => setInfo(false)} />}
+        {(s) => (
+          <StreamInfo
+            session={s()}
+            file={file}
+            selection={selection()}
+            stats={{
+              quality: qInfo() ? `${QUALITY_NAME[qInfo()!.quality]}${qPref() === "auto" ? " (auto)" : ""}` : "—",
+              bitrate: fmtMbps(qInfo()?.bitrate_kbps),
+              link: bandwidthEstimate() ? `~${fmtMbps(bandwidthEstimate())}` : "measuring…",
+              buffer: `${bufferAhead().toFixed(1)} s ahead`,
+            }}
+            onClose={() => setInfo(false)}
+          />
+        )}
       </Show>
 
       <Show when={castBusy()}>
@@ -1193,6 +1356,16 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
                 disabled={!subList().length}
                 onClick={() => setPicker("sub")}
               />
+              <Show when={qInfo()}>
+                <CtlButton
+                  class="pc__quality"
+                  icon="quality"
+                  label={`Quality · ${qPref() === "auto" ? "Auto" : QUALITY_NAME[qPref()]}${qInfo() ? ` (${fmtMbps(qInfo()!.bitrate_kbps)})` : ""}`}
+                  value={qualityValue()}
+                  tag={qPref() === "auto" ? "Auto" : undefined}
+                  onClick={() => setQualitySheet(true)}
+                />
+              </Show>
               <Show when={htmlVideo()}>
                 <CtlButton class="pc__speed" icon="speed" label="Playback speed" value={speed() !== 1 ? `${speed()}×` : undefined} active={speed() !== 1} onClick={() => setSpeedSheet(true)} />
               </Show>
@@ -1216,6 +1389,57 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
           </div>
         </div>
       </div>
+
+      <Show when={qualitySheet()}>
+        <Sheet
+          title="Quality"
+          selected={qPref()}
+          description={
+            <>
+              Your connection: <strong>{bandwidthEstimate() ? `~${fmtMbps(bandwidthEstimate())}` : "measuring…"}</strong>
+            </>
+          }
+          options={[
+            {
+              value: "auto" as QualityId,
+              title: "Auto",
+              detail: `Adjusts to your connection${qInfo() ? ` · now ${QUALITY_NAME[qInfo()!.quality]}, ${fmtMbps(qInfo()!.bitrate_kbps)}` : ""}`,
+            },
+          ].concat(
+            LADDER.map((id) => {
+              const o = qInfo()?.options.find((x) => x.id === id);
+              return {
+                value: id,
+                title: QUALITY_NAME[id] + (id === "original" ? " — no re-encoding" : ""),
+                detail: o ? (o.available ? fmtMbps(o.bitrate_kbps) : `${fmtMbps(o.bitrate_kbps)} · not available`) : "Not available",
+                disabled: !o || !o.available,
+                tag: qInfo()?.quality === id ? "Now" : undefined,
+              };
+            }),
+          )}
+          onSelect={chooseQuality}
+          onClose={() => {
+            setQualitySheet(false);
+            poke();
+          }}
+          footer={
+            <button
+              type="button"
+              role="switch"
+              class="sheet__switch"
+              aria-checked={qRemember()}
+              onClick={() => {
+                const v = !qRemember();
+                setQRemember(v);
+                setPreferredQuality(qPref(), v);
+              }}
+            >
+              <span class="sheet__switchbox" aria-hidden="true"><i /></span>
+              Remember on this device
+            </button>
+          }
+        />
+      </Show>
 
       <Show when={speedSheet()}>
         <Sheet
@@ -1384,7 +1608,13 @@ function actionText(a: { type: string; codec?: string; channels?: number; width?
 }
 
 /** Debug overlay: how the server decided to deliver this stream, and why. */
-function StreamInfo(props: { session: DecideResponse; file?: MediaFile; selection?: Selected; onClose: () => void }): JSX.Element {
+function StreamInfo(props: {
+  session: DecideResponse;
+  file?: MediaFile;
+  selection?: Selected;
+  stats?: { quality: string; bitrate: string; link: string; buffer: string };
+  onClose: () => void;
+}): JSX.Element {
   const d = () => props.session.decision;
   return (
     <aside class="stream-info" aria-label="Stream info">
@@ -1402,6 +1632,20 @@ function StreamInfo(props: { session: DecideResponse; file?: MediaFile; selectio
         <Show when={props.file}>
           <dt>Source</dt>
           <dd>{props.file!.container.toUpperCase()}{props.file!.video ? ` · ${props.file!.video.codec.toUpperCase()} ${props.file!.video.width}×${props.file!.video.height}` : ""}</dd>
+        </Show>
+        <Show when={props.stats}>
+          {(st) => (
+            <>
+              <dt>Quality</dt>
+              <dd>{st().quality}</dd>
+              <dt>Stream bitrate</dt>
+              <dd>{st().bitrate}</dd>
+              <dt>Connection</dt>
+              <dd>{st().link}</dd>
+              <dt>Buffer</dt>
+              <dd>{st().buffer}</dd>
+            </>
+          )}
         </Show>
         <dt>Session</dt>
         <dd class="mono">{props.session.session_id.slice(0, 12)}</dd>

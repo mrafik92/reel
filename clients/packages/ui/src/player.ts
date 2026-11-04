@@ -44,6 +44,11 @@ export interface PlayerEventMap {
   tracks: PlayerTracks;
   /** Current subtitle cue rendered by the app (AVPlay); `null` text clears it. */
   cue: { text: string | null };
+  /**
+   * A media download finished (hls.js fragments): network throughput from first byte to last,
+   * so server-side segment generation time doesn't read as a slow link. Additive; optional.
+   */
+  bandwidth: { kbps: number; bytes: number; ms: number };
 }
 
 export type PlayerEventHandler<K extends keyof PlayerEventMap> = (data: PlayerEventMap[K]) => void;
@@ -127,6 +132,17 @@ export class HlsJsAdapter implements PlayerAdapter {
       this.hls = hls;
       hls.on(Hls.Events.ERROR, (_e, d) =>
         this.ev.emit("error", { message: d.details, fatal: d.fatal }));
+      hls.on(Hls.Events.FRAG_LOADED, (_e, d) => {
+        const st = d.frag.stats;
+        // Whole download, minus a little time-to-first-byte (segment generation / RTT). Some
+        // stacks deliver a slow body in one burst, so first→end alone can read as gigabits.
+        const ttfb = Math.max(0, (st.loading.first || st.loading.start) - st.loading.start);
+        const ms = st.loading.end - st.loading.start - Math.min(ttfb, 250);
+        // Tiny or instant (cached) loads say nothing about the link.
+        if (st.loaded > 128 * 1024 && ms > 20) {
+          this.ev.emit("bandwidth", { kbps: (st.loaded * 8) / ms, bytes: st.loaded, ms });
+        }
+      });
       hls.loadSource(url);
       hls.attachMedia(v);
     } else {

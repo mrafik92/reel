@@ -65,10 +65,14 @@ function source(kind: "movie" | "episode", id: VodId, back: string, eyebrow?: st
         id,
         ...decideProfile(),
         audio_index: o.audio,
-        subtitle_index: o.subtitle >= 0 ? o.subtitle : null,
+        // null = automatic (server preferences), -1 = off (newer players send subtitleIndex)
+        subtitle_index: o.subtitleIndex !== undefined ? o.subtitleIndex : o.subtitle >= 0 ? o.subtitle : null,
         start_s: o.start > 0 ? Math.floor(o.start) : null,
         ...(t ? { takeover: true } : {}),
-      });
+        // adaptive quality: rung + bandwidth hint (the server caps by the user's limit too)
+        ...(o.quality ? { quality: o.quality } : {}),
+        ...(o.maxBitrateKbps ? { max_bitrate_kbps: Math.round(o.maxBitrateKbps) } : {}),
+      } as Parameters<typeof vod.play>[0]);
     },
     error: (e) => vodPlayError(e, { takeover: () => (takeover = true) }),
     eyebrow,
