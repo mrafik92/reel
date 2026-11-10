@@ -50,7 +50,7 @@ jobs:
       - name: No debug info in CI (smaller caches, faster link)
         # Config (not env) because Cargo.toml sets `[profile.dev.package."*"] debug`, which env can't override.
         run: |
-          mkdir -p "$CARGO_HOME"
+          CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"; mkdir -p "$CARGO_HOME"
           cat >> "$CARGO_HOME/config.toml" <<'EOF'
           [profile.dev]
           debug = 0

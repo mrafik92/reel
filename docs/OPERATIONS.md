@@ -33,12 +33,20 @@
 
 ```
 git push main ──► GitHub Actions
-                   ├── ci.yml:    cargo fmt/clippy/test (rustc 1.86, ffmpeg installed), bun typecheck/build
+                   ├── ci.yml:    cargo fmt/clippy/nextest (rustc 1.86, ffmpeg, mold), bun typecheck/build
                    └── image.yml: docker buildx (deploy/Dockerfile) → ghcr.io/mrafik92/reel:latest + :sha-xxxx
                                   build args GIT_SHA / BUILD_DATE → shown in Settings → About
 CT 113:  Actions → deploy → Run workflow  (runner CT 116 → ssh forced command → compose pull/up/prune)
 ```
 
+- CI runs **once** per PR (`pull_request`) and once per push to `main`. The `server` job is skipped on PRs
+  that touch neither `server/**` nor `ci.yml` (the `clients` and `docs` checks still run). Tests run with
+  `cargo nextest run --workspace` (parallel across test binaries; no doctests exist), debug info is off
+  (a CARGO_HOME config written by the job) and linking uses mold. The Rust cache (`shared-key: reel`) is
+  saved only from `main`; PRs restore it read-only. Locally, plain `cargo test --workspace` still works.
+- `image.yml` keeps its Docker layer cache in the registry (`ghcr.io/mrafik92/reel:buildcache`), not the
+  Actions cache, so it can't evict the Rust cache (10 GB repo limit).
+- Not done yet (#73): caching generated test media, caching the ffmpeg apt install, sccache.
 - Server changes take ~10 min to build; web-only changes take ~1 min (cached Rust layer).
 - `image.yml` cancels in-flight builds on new pushes, so wait for the **latest** run.
 - Deploy (from the Mac):
