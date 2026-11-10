@@ -4,6 +4,7 @@ import { DEFAULT_PREFS, type PlaybackPrefs, type SubtitleMode } from "../api/pre
 import { loadPrefs, playbackPrefs, prefsSupported, savePrefs } from "../lib/prefs";
 import { previewSelection } from "../lib/tracks";
 import { usePageFocus } from "../lib/focus";
+import { chooseLiveDelivery, directAllowed, liveDelivery, type LiveDelivery } from "../lib/liveDelivery";
 import { Panel, Toggle } from "../components/AdminKit";
 import "../styles/prefs.css";
 
@@ -25,6 +26,19 @@ const MODES: { id: SubtitleMode; title: string; body: string }[] = [
     body: "On for a film in a language that isn't in your lists below; off otherwise.",
   },
   { id: "always", title: "Always", body: "Always on, in the first of your subtitle languages a title has." },
+];
+
+const DELIVERY: { id: LiveDelivery; title: string; body: string }[] = [
+  {
+    id: "server",
+    title: "Through Reel",
+    body: "The default. Channels are shared and zapping is fast, and your provider login never leaves the server.",
+  },
+  {
+    id: "direct",
+    title: "Straight from the provider",
+    body: "This device connects to the provider itself, so Reel carries no video. It still uses one of the provider's connections, and zapping is slower. The provider login is sent to this device.",
+  },
 ];
 
 const langLabel = (c: string) => (c === "original" ? "Original language" : languageName(c));
@@ -121,6 +135,34 @@ export default function SettingsPlayback(): JSX.Element {
               <Icon name="plus" /> <span>Add a language</span>
             </button>
           </Panel>
+
+          <Show when={directAllowed()}>
+            <Panel title="Live TV on this device" icon="tv">
+              <p class="panel__lede">
+                Where Live TV streams come from. Saved on this device only. If a channel can't play directly (browsers
+                often can't), Reel switches that channel to the server.
+              </p>
+              <div class="prefs__modes" role="radiogroup" aria-label="Where Live TV streams come from" data-nav-group>
+                <For each={DELIVERY}>
+                  {(m) => (
+                    <button
+                      type="button"
+                      role="radio"
+                      class="prefs__mode"
+                      aria-checked={liveDelivery() === m.id ? "true" : "false"}
+                      onClick={() => chooseLiveDelivery(m.id)}
+                    >
+                      <span class="prefs__radio" aria-hidden="true"><i /></span>
+                      <span class="prefs__modetext">
+                        <strong>{m.title}</strong>
+                        <small>{m.body}</small>
+                      </span>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Panel>
+          </Show>
 
           <Panel title="Subtitles" icon="cc">
             <div class="prefs__modes" role="radiogroup" aria-label="When to show subtitles" data-nav-group>

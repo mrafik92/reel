@@ -74,6 +74,10 @@ pub struct Config {
     /// Base URL TVs / Chromecasts use to reach this server (LAN address, e.g.
     /// `http://10.10.10.207:8420`). Used for cast URLs (`for_cast`, `POST /playback/{id}/cast-url`).
     pub cast_base_url: Option<String>,
+    /// `REEL_ALLOW_DIRECT_LIVE`: let clients play Live TV straight from the provider instead of
+    /// through Reel. Off by default: the tune response then carries the provider URL, which
+    /// contains the provider login.
+    pub allow_direct_live: bool,
     /// OMDb API key (`REEL_OMDB_API_KEY`): adds IMDb / Rotten Tomatoes / Metacritic scores.
     pub omdb_api_key: Option<String>,
     /// Trakt client id (`REEL_TRAKT_CLIENT_ID`): adds Trakt comments.
@@ -120,6 +124,7 @@ impl Default for Config {
             allow_private_fetch: true,
             allow_private_logo_fetch: false,
             cast_base_url: None,
+            allow_direct_live: false,
             omdb_api_key: None,
             trakt_client_id: None,
             libraries: Vec::new(),

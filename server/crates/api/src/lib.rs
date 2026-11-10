@@ -595,6 +595,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(iptv::tune))
         .routes(routes!(iptv::add_favorite, iptv::remove_favorite))
         .routes(routes!(iptv::stop_session))
+        .routes(routes!(iptv::keepalive_session))
         .routes(routes!(iptv::live_file))
         .routes(routes!(iptv::channel_logo))
         .routes(routes!(iptv::list_sources, iptv::create_source))

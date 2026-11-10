@@ -869,6 +869,12 @@ impl ChannelHub {
         Ok(())
     }
 
+    /// A channel's upstreams (primary first): what a client needs to play the channel without
+    /// going through the hub. `None` if the channel is unknown.
+    pub async fn channel_spec(&self, channel_id: i64) -> Result<Option<ChannelSpec>> {
+        self.inner.resolver.resolve(channel_id).await
+    }
+
     /// `(source id, connection limit)` of a channel's primary source, if limited.
     pub async fn channel_budget(&self, channel_id: i64) -> Result<Option<(i64, u32)>> {
         Ok(self

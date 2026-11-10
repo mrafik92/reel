@@ -7,6 +7,8 @@ import { AvPlayAdapter, createPlayerAdapter, detectDeviceProfile, mediaUrl, plat
 import { ApiError } from "../../api/http";
 import { iptv, type IptvChannel, type TuneBody, type TuneResponse } from "../../api/iptv";
 import { clientInfo } from "../../lib/device";
+import { wantsDirect } from "../../lib/liveDelivery";
+import { toast } from "../../lib/toast";
 
 export type TunePhase = "idle" | "tuning" | "playing" | "error";
 
@@ -42,6 +44,9 @@ export interface ZapSample {
   warm: boolean;
 }
 
+/** A direct session needs a heartbeat: the server never sees its video. It drops it after ~30 s of silence. */
+const HEARTBEAT_MS = 15_000;
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
@@ -73,7 +78,9 @@ function fromWebProbe(p: DeviceProfile): WireProfile {
  * Native TV players take the raw MPEG-TS (passthrough); browsers get HLS. Either way the real device
  * profile goes along so the server only transcodes what this device can't decode.
  */
-export function tuneBody(): TuneBody {
+export function tuneBody(o: { viaServer?: boolean } = {}): TuneBody {
+  // This device plays straight from the provider (Settings → Playback); the server only holds the slot.
+  if (!o.viaServer && wantsDirect()) return { mode: "direct" };
   let raw: ReturnType<typeof detectDeviceProfile> | undefined;
   try {
     raw = detectDeviceProfile();
@@ -159,7 +166,7 @@ export interface Tuner {
   unmute: () => void;
   nativePlane: () => boolean;
   samples: () => ZapSample[];
-  tune: (c: IptvChannel, o?: { takeover?: boolean }) => Promise<void>;
+  tune: (c: IptvChannel, o?: { takeover?: boolean; viaServer?: boolean }) => Promise<void>;
   /** `takeover`: admins stop the other users' streams holding the provider connections. */
   retry: (o?: { takeover?: boolean }) => void;
   stop: (keepalive?: boolean) => void;
@@ -178,6 +185,11 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
   let adapter: PlayerAdapter | undefined;
   let gen = 0;
   let last: IptvChannel | undefined;
+  let beat: ReturnType<typeof setInterval> | undefined;
+  const stopBeat = () => {
+    if (beat) clearInterval(beat);
+    beat = undefined;
+  };
   const seen = new Set<number>();
 
   const ensureAdapter = (): PlayerAdapter | undefined => {
@@ -191,6 +203,7 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     a.on("play", () => setBuffering(false));
     a.on("error", (e) => {
       if (!e.fatal || phase() === "idle") return;
+      if (session()?.mode === "direct" && fallBack()) return;
       setPhase("error");
       setBuffering(false);
       setError({ kind: "playback", retry: true, title: "The picture stopped", body: "The stream broke off. Try again, or pick another channel." });
@@ -198,7 +211,16 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     return a;
   };
 
+  /** Direct playback failed on this device (CORS, format, provider refused): use the server instead, once. */
+  const fallBack = (): boolean => {
+    if (!last) return false;
+    toast("Couldn't play directly from the provider on this device — using the server instead.", "info", 6000);
+    void tune(last, { viaServer: true });
+    return true;
+  };
+
   const endSession = (keepalive = false) => {
+    stopBeat();
     const s = session();
     setSession(undefined);
     if (s) forgetSession(s.session_id);
@@ -213,7 +235,7 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     return Promise.race([new Promise<void>((r) => v.requestVideoFrameCallback!(() => r())), sleep(4000)]);
   };
 
-  const tune = async (c: IptvChannel, o: { takeover?: boolean } = {}): Promise<void> => {
+  const tune = async (c: IptvChannel, o: { takeover?: boolean; viaServer?: boolean } = {}): Promise<void> => {
     const my = ++gen;
     const t0 = now();
     last = c;
@@ -226,7 +248,8 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     if (my !== gen) return;
     let r: TuneResponse;
     try {
-      r = await iptv.tune(c.id, o.takeover ? ({ ...tuneBody(), takeover: true } as TuneBody) : tuneBody());
+      const body = tuneBody({ viaServer: o.viaServer });
+      r = await iptv.tune(c.id, o.takeover ? ({ ...body, takeover: true } as TuneBody) : body);
     } catch (e) {
       if (my !== gen) return;
       // The previous session is already stopped: don't leave its last frames running.
@@ -247,6 +270,26 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     const apiMs = now() - t0;
     setSession(r);
     rememberSession(r);
+    if (r.mode === "direct") {
+      const sid = r.session_id;
+      beat = setInterval(() => {
+        iptv.keepalive(sid).catch((e) => {
+          // 404: the server ended it (taken over, or we were silent too long). Anything else: try again next beat.
+          if (!(e instanceof ApiError) || e.status !== 404 || session()?.session_id !== sid) return;
+          stopBeat();
+          setSession(undefined);
+          forgetSession(sid);
+          try {
+            video()?.pause();
+          } catch {
+            /* ignore */
+          }
+          setPhase("error");
+          setBuffering(false);
+          setError({ kind: "gone", retry: true, title: "Your stream was stopped", body: "Another viewer took over the provider connection, or this device lost touch with Reel. Try again." });
+        });
+      }, HEARTBEAT_MS);
+    }
     const a = ensureAdapter();
     if (!a) return;
     const v = video();
@@ -264,6 +307,7 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
           /* still blocked — the overlay offers a play button */
         }
       } else if (!(e instanceof Error && e.name === "AbortError")) {
+        if (r.mode === "direct" && fallBack()) return;
         setPhase("error");
         setBuffering(false);
         setError({ kind: "playback", retry: true, title: "Couldn't play this channel", body: e instanceof Error ? e.message : "The player refused the stream." });

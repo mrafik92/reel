@@ -271,3 +271,59 @@ async fn video_transcode_falls_back_to_software_when_the_hardware_encoder_fails(
     );
     live.shutdown().await;
 }
+
+#[tokio::test]
+async fn direct_sessions_hold_a_provider_slot_until_they_stop_heartbeating() {
+    let res = Arc::new(MapResolver::default());
+    res.add(
+        1,
+        "One",
+        vec![cand(
+            1,
+            10,
+            "http://provider.invalid/live/one".into(),
+            Some(1),
+        )],
+    );
+    let (live, _dir) = manager(res, Duration::from_millis(600));
+
+    let a = live
+        .tune(1, 1, LiveMode::Direct, &HlsOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(a.mode, LiveMode::Direct);
+    assert_eq!(
+        a.direct_url.as_deref(),
+        Some("http://provider.invalid/live/one")
+    );
+    assert!(live.hub().metrics().is_empty(), "no hub pipe is opened");
+    assert!(
+        live.session(&a.id).unwrap().direct_url.is_some(),
+        "kept for the owner's tune response only"
+    );
+    // another user can't get a second connection on the same one-slot source
+    let err = live
+        .tune(2, 1, LiveMode::Passthrough, &HlsOptions::default())
+        .await
+        .err()
+        .unwrap();
+    assert!(
+        matches!(err, Error::InUseByOthers { max: 1, .. }),
+        "{err:?}"
+    );
+    // heartbeats keep it alive well past the idle timeout
+    for _ in 0..6 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert!(live.keepalive(&a.id));
+    }
+    assert!(live.session(&a.id).is_some());
+    // no more heartbeats: the reaper closes it and the slot is free again
+    tokio::time::sleep(Duration::from_millis(1800)).await;
+    assert!(live.session(&a.id).is_none(), "timed out");
+    assert!(!live.keepalive(&a.id), "tells the client to re-tune");
+    live.tune(2, 1, LiveMode::Direct, &HlsOptions::default())
+        .await
+        .expect("the slot was released");
+    // direct sessions have nothing to stream from Reel
+    assert!(live.ts_stream("nope").await.is_err());
+}

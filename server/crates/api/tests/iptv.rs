@@ -1571,3 +1571,126 @@ async fn sources_take_a_list_of_guide_urls_with_per_guide_stats_and_a_legacy_ali
     let (_, l) = get(&e.admin, "/api/v1/admin/iptv/sources").await;
     assert!(l[0]["epg_urls"].is_array() && l[0]["epg_sources"].is_array());
 }
+
+#[tokio::test]
+async fn direct_live_is_opt_in_holds_the_provider_slot_and_needs_a_heartbeat() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let ts = dir.path().join("a.ts");
+    make_ts(&ts, 4);
+    let (prov, _) = Provider::start(&ts, 4).await;
+
+    // off by default: 403, and /me says so
+    let off = env(|_| {}).await;
+    add_source(&off, &prov, Some(1)).await;
+    let news = channel_id(&off, "UK News HD").await;
+    let (s, v) = send(
+        &off.admin,
+        "POST",
+        &format!("/api/v1/iptv/channels/{news}/tune"),
+        Some(json!({"mode":"direct"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
+    let (_, me) = get(&off.admin, "/api/v1/me").await;
+    assert_eq!(me["direct_live"], false);
+    off.state.iptv.shutdown().await;
+
+    let e = env(|c| c.allow_direct_live = true).await;
+    add_source(&e, &prov, Some(1)).await;
+    let (news, sport) = (
+        channel_id(&e, "UK News HD").await,
+        channel_id(&e, "UK Sport").await,
+    );
+    let (_, me) = get(&e.admin, "/api/v1/me").await;
+    assert_eq!(me["direct_live"], true);
+    let (bob, _) = user_app(&e, "bob").await;
+    let tune = |app: &Router, id: i64, body: Value| {
+        let app = app.clone();
+        async move {
+            send(
+                &app,
+                "POST",
+                &format!("/api/v1/iptv/channels/{id}/tune"),
+                Some(body),
+            )
+            .await
+        }
+    };
+
+    // the response carries the provider's own URL, not a Reel one, and no video flows through Reel
+    let (s, d) = tune(&e.admin, news, json!({"mode":"direct"})).await;
+    assert_eq!(s, 200, "{d}");
+    assert_eq!(d["mode"], "direct");
+    assert_eq!(d["url"], format!("{}/live/news", prov.base()));
+    assert!(d["hls"].is_null());
+    let sid = d["session_id"].as_str().unwrap().to_string();
+    assert!(
+        e.state.iptv.hub().metrics().is_empty(),
+        "the hub opened no upstream"
+    );
+    assert_eq!(
+        e.state
+            .iptv
+            .hub()
+            .connections_by_source()
+            .values()
+            .sum::<usize>(),
+        1,
+        "but the provider connection is counted against the budget"
+    );
+    // the provider URL (it holds the login) never shows up in the admin session list
+    let (_, live) = get(&e.admin, "/api/v1/admin/iptv/sessions").await;
+    assert!(live.to_string().contains(&sid), "{live}");
+    assert!(!live.to_string().contains("/live/news"), "{live}");
+
+    // the direct viewer holds the only provider slot: another user is refused …
+    let (s, v) = tune(&bob, sport, json!({"mode":"passthrough"})).await;
+    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    // … even for the very same channel (a hub pipe would be a second connection)
+    let (s, v) = tune(&bob, news, json!({"mode":"hls"})).await;
+    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    // … and a user can't use someone else's session
+    let (s, _) = send(
+        &bob,
+        "POST",
+        &format!("/api/v1/iptv/sessions/{sid}/keepalive"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // heartbeat keeps it alive
+    let (s, _) = send(
+        &e.admin,
+        "POST",
+        &format!("/api/v1/iptv/sessions/{sid}/keepalive"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    // there is nothing to stream from Reel for it
+    let (s, _) = send(
+        &e.admin,
+        "GET",
+        &format!("/api/v1/iptv/live/{sid}/stream.ts"),
+        None,
+    )
+    .await;
+    assert!(s.is_client_error() || s.is_server_error(), "{s}");
+
+    // stopping gives the slot back at once
+    let (s, _) = send(
+        &e.admin,
+        "DELETE",
+        &format!("/api/v1/iptv/sessions/{sid}"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, v) = tune(&bob, sport, json!({"mode":"passthrough"})).await;
+    assert_eq!(s, 200, "{v}");
+    e.state.iptv.shutdown().await;
+}

@@ -3201,6 +3201,38 @@
         }
       }
     },
+    "/api/v1/iptv/sessions/{id}/keepalive": {
+      "post": {
+        "summary": "Heartbeat of a `direct` session (the server doesn't see its video). Without one for 45 s the\nsession ends and its provider slot is released. 404 means the session is gone: tune again.",
+        "operationId": "keepalive_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Live session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Alive"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/items/{id}": {
       "get": {
         "summary": "Item detail with files, streams, cast and genres.",
@@ -8627,7 +8659,8 @@
         "type": "string",
         "enum": [
           "passthrough",
-          "hls"
+          "hls",
+          "direct"
         ]
       },
       "LiveSessionDto": {
@@ -8757,9 +8790,14 @@
           "username",
           "role",
           "limits",
-          "permissions"
+          "permissions",
+          "direct_live"
         ],
         "properties": {
+          "direct_live": {
+            "type": "boolean",
+            "description": "The server lets this user play Live TV directly from the provider\n(`REEL_ALLOW_DIRECT_LIVE` and IPTV access)."
+          },
           "id": {
             "type": "integer",
             "format": "int64"
@@ -10655,7 +10693,7 @@
               },
               {
                 "$ref": "#/components/schemas/LiveModeDto",
-                "description": "`hls` (default) or `passthrough`."
+                "description": "`hls` (default), `passthrough` or `direct` (403 unless the server allows it)."
               }
             ]
           },
@@ -10720,7 +10758,7 @@
           },
           "url": {
             "type": "string",
-            "description": "Signed URL: `stream.ts` (passthrough) or `index.m3u8` (HLS). Valid for the configured\nsigned-URL lifetime; the session itself ends shortly after the player disconnects."
+            "description": "Signed URL: `stream.ts` (passthrough) or `index.m3u8` (HLS). Valid for the configured\nsigned-URL lifetime; the session itself ends shortly after the player disconnects.\nFor `direct`: the provider's own URL (contains the provider login; never log it)."
           }
         }
       },
