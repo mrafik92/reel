@@ -26,6 +26,19 @@ const SECTIONS: { id: string; label: string; icon: IconName; blurb: string }[] =
   { id: "hardware", label: "Transcoding", icon: "chip", blurb: "Hardware acceleration" },
 ];
 
+/** Your own settings (every user): audio/subtitle choices and how Live TV plays on this device. */
+function PlaybackLink(): JSX.Element {
+  return (
+    <a class="admin__link" href={href("/settings/playback")}>
+      <Icon name="play" />
+      <span>
+        <strong>Playback</strong>
+        <small>Audio, subtitles, Live TV</small>
+      </span>
+    </a>
+  );
+}
+
 export default function Admin(): JSX.Element {
   const params = useParams<{ section?: string }>();
   const section = () => params.section ?? "libraries";
@@ -41,6 +54,9 @@ export default function Admin(): JSX.Element {
         when={isAdmin()}
         fallback={
           <>
+            <nav class="admin__nav" aria-label="Your settings" data-nav-group>
+              <PlaybackLink />
+            </nav>
             <p class="state__body">Only admins can change server settings.</p>
             <About />
           </>
@@ -48,6 +64,7 @@ export default function Admin(): JSX.Element {
       >
         <div class="admin__layout">
           <nav class="admin__nav" aria-label="Settings sections" data-nav-group>
+            <PlaybackLink />
             <For each={SECTIONS}>
               {(s) => (
                 <a class="admin__link" href={href(`/admin/${s.id}`)} aria-current={section() === s.id ? "page" : undefined} data-autofocus={section() === s.id ? "" : undefined}>
