@@ -5,6 +5,11 @@
 //! Feed it chunks as they arrive from the network; entries are emitted as soon as their URL line
 //! is complete.
 
+use crate::{
+    Error, Result,
+    limits::{M3U_MAX_LINE, MAX_CHANNELS, check_count},
+};
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Catchup {
     /// `default`, `append`, `shift`, `flussonic`, `xc`, …
@@ -99,25 +104,34 @@ impl M3uParser {
         Self::default()
     }
 
-    /// Feed raw bytes; completed entries are appended to `out`.
-    pub fn feed(&mut self, chunk: &[u8], out: &mut Vec<M3uEntry>) {
+    /// Feed raw bytes; completed entries are appended to `out`. Fails on a line longer than
+    /// [`M3U_MAX_LINE`] or more than [`MAX_CHANNELS`] entries.
+    pub fn feed(&mut self, chunk: &[u8], out: &mut Vec<M3uEntry>) -> Result<()> {
         self.buf.extend_from_slice(chunk);
         let mut start = 0;
         while let Some(nl) = self.buf[start..].iter().position(|b| *b == b'\n') {
+            if nl > M3U_MAX_LINE {
+                return Err(long_line());
+            }
             let line = String::from_utf8_lossy(&self.buf[start..start + nl]).into_owned();
             start += nl + 1;
             self.line(&line, out);
         }
         self.buf.drain(..start);
+        if self.buf.len() > M3U_MAX_LINE {
+            return Err(long_line());
+        }
+        check_count("the playlist has too many entries", out.len(), MAX_CHANNELS)
     }
 
     /// Flush a trailing line without newline.
-    pub fn finish(&mut self, out: &mut Vec<M3uEntry>) {
+    pub fn finish(&mut self, out: &mut Vec<M3uEntry>) -> Result<()> {
         if !self.buf.is_empty() {
             let line = String::from_utf8_lossy(&self.buf).into_owned();
             self.buf.clear();
             self.line(&line, out);
         }
+        check_count("the playlist has too many entries", out.len(), MAX_CHANNELS)
     }
 
     fn line(&mut self, raw: &str, out: &mut Vec<M3uEntry>) {
@@ -212,13 +226,20 @@ impl M3uParser {
     }
 }
 
-/// Parse a whole playlist (tests / small inputs).
-pub fn parse(text: &str) -> (Vec<M3uEntry>, Option<String>) {
+fn long_line() -> Error {
+    Error::Parse(format!(
+        "the playlist has a line longer than {} KiB (is this an M3U file?)",
+        M3U_MAX_LINE / 1024
+    ))
+}
+
+/// Parse a whole playlist (already in memory).
+pub fn parse(text: &str) -> Result<(Vec<M3uEntry>, Option<String>)> {
     let mut p = M3uParser::new();
     let mut out = Vec::new();
-    p.feed(text.as_bytes(), &mut out);
-    p.finish(&mut out);
-    (out, p.epg_url)
+    p.feed(text.as_bytes(), &mut out)?;
+    p.finish(&mut out)?;
+    Ok((out, p.epg_url))
 }
 
 #[cfg(test)]
@@ -241,7 +262,7 @@ http://p/4";
 
     #[test]
     fn parses_attributes_groups_and_headers() {
-        let (e, epg) = parse(SAMPLE);
+        let (e, epg) = parse(SAMPLE).unwrap();
         assert_eq!(epg.as_deref(), Some("http://epg.example/guide.xml.gz"));
         assert_eq!(e.len(), 4);
         let a = &e[0];
@@ -279,19 +300,42 @@ http://p/4";
 
     #[test]
     fn streaming_in_odd_chunks_matches_whole_parse() {
-        let whole = parse(SAMPLE).0;
+        let whole = parse(SAMPLE).unwrap().0;
         let mut p = M3uParser::new();
         let mut out = vec![];
         for chunk in SAMPLE.as_bytes().chunks(7) {
-            p.feed(chunk, &mut out);
+            p.feed(chunk, &mut out).unwrap();
         }
-        p.finish(&mut out);
+        p.finish(&mut out).unwrap();
         assert_eq!(out, whole);
     }
 
     #[test]
     fn group_from_extgrp_when_missing() {
-        let (e, _) = parse("#EXTM3U\n#EXTINF:-1,X\n#EXTGRP:Movies\nhttp://a/1\n");
+        let (e, _) = parse("#EXTM3U\n#EXTINF:-1,X\n#EXTGRP:Movies\nhttp://a/1\n").unwrap();
         assert_eq!(e[0].group.as_deref(), Some("Movies"));
+    }
+
+    #[test]
+    fn overlong_line_is_refused_even_when_streamed() {
+        let mut p = M3uParser::new();
+        let mut out = vec![];
+        p.feed(b"#EXTM3U\n#EXTINF:-1,A\nhttp://a/1\n", &mut out)
+            .unwrap();
+        let junk = vec![b'x'; 8 * 1024];
+        let mut err = None;
+        for _ in 0..16 {
+            if let Err(e) = p.feed(&junk, &mut out) {
+                err = Some(e);
+                break;
+            }
+        }
+        let e = err.expect("a 128 KiB line without newline must fail");
+        assert!(e.to_string().contains("line longer"), "{e}");
+        // a complete long line inside one chunk fails too
+        let mut long = b"#EXTINF:-1,".to_vec();
+        long.extend(vec![b'y'; M3U_MAX_LINE + 1]);
+        long.push(b'\n');
+        assert!(parse(&String::from_utf8(long).unwrap()).is_err());
     }
 }

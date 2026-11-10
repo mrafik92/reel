@@ -225,6 +225,16 @@ impl Ingest {
             );
             return Ok(0);
         };
+        crate::limits::check_count(
+            "the provider's VOD category list",
+            cats.len(),
+            crate::limits::MAX_CATEGORIES,
+        )?;
+        crate::limits::check_count(
+            "the provider's VOD list",
+            items.len(),
+            crate::limits::MAX_VOD_ITEMS,
+        )?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let mut cat_ids: HashMap<String, i64> = HashMap::new();
         for c in &cats {
