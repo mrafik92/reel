@@ -62,7 +62,7 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 **Still open (must be done before any public exposure):**
 
 1. Upgrade `quick-xml` to ≥ 0.41 (RUSTSEC-2026-0194, reachable through XMLTV/DLNA); build sqlx with only the sqlite feature.
-2. IPTV/EPG ingestion budgets: bytes, gzip expansion, line/token sizes, record counts, deadlines.
+2. ~~IPTV/EPG ingestion budgets: bytes, gzip expansion, line/token sizes, record counts, deadlines~~ Fixed in code (#8, 🧪): playlist, guide and Xtream API downloads have byte caps and deadlines, gunzipped guides an expanded-size cap, M3U lines and XML events/attributes/texts length caps, channel/programme/VOD/category lists count caps, and downloaded guides are deleted on every exit path. Limits in `server/crates/iptv/src/limits.rs` (ARCHITECTURE A21). Counts as done once deployed and a full playlist + guide + VOD refresh still succeeds on the real provider.
 3. Logo/TMDB image fetches: streaming size cutoff, single-flight, cache size budget.
 4. ~~Local artwork: canonicalize under the library roots + magic-byte sniff~~ Fixed in code (#10, 🧪): the image route resolves symlinks, requires a library root, caps size and sniffs magic bytes. Counts as done once deployed and checked on the real library.
 5. SSRF guard gaps (IPv4-compatible v6, `64:ff9b::/96`, `2002::/16`, `192.0.0.0/24`); route **live IPTV** HLS upstreams through the upstream proxy.

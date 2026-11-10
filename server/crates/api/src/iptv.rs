@@ -1347,11 +1347,20 @@ async fn run_test(
                     resp.status().as_u16()
                 ));
             }
-            let body = match resp.bytes().await {
+            let body = match reel_iptv::limits::read_body(
+                resp,
+                "the playlist",
+                reel_iptv::limits::PLAYLIST_MAX_BYTES,
+            )
+            .await
+            {
                 Ok(b) => b,
-                Err(e) => return fail(format!("download failed: {}", e.without_url())),
+                Err(e) => return fail(format!("download failed: {e}")),
             };
-            let (entries, epg) = reel_iptv::m3u::parse(&String::from_utf8_lossy(&body));
+            let (entries, epg) = match reel_iptv::m3u::parse(&String::from_utf8_lossy(&body)) {
+                Ok(r) => r,
+                Err(e) => return fail(e.to_string()),
+            };
             if entries.is_empty() {
                 return fail("the playlist contains no channels (is this an M3U URL?)".into());
             }

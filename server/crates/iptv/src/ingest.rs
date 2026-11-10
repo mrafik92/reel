@@ -14,6 +14,7 @@ use tracing::{info, warn};
 use crate::{
     Error, Result,
     epg::{self, norm_name},
+    limits::{self, TempFile},
     m3u::{M3uEntry, M3uParser},
     store::{Source, SourceKind},
     xmltv::{self, Programme, XmlChannel, XmlMsg},
@@ -107,10 +108,17 @@ impl Ingest {
         let mut parser = M3uParser::new();
         let mut out = Vec::new();
         if let Some(p) = local_path(&src.url) {
-            parser.feed(&tokio::fs::read(p).await?, &mut out);
+            if tokio::fs::metadata(&p).await?.len() > limits::PLAYLIST_MAX_BYTES {
+                return Err(limits::too_large(
+                    "the playlist",
+                    limits::PLAYLIST_MAX_BYTES,
+                ));
+            }
+            parser.feed(&tokio::fs::read(p).await?, &mut out)?;
         } else {
             let resp = self
                 .request(&src.url, src.user_agent.as_deref())?
+                .timeout(limits::PLAYLIST_DEADLINE)
                 .send()
                 .await?;
             if !resp.status().is_success() {
@@ -119,12 +127,22 @@ impl Ingest {
                     resp.status().as_u16()
                 )));
             }
+            limits::check_content_length(&resp, "the playlist", limits::PLAYLIST_MAX_BYTES)?;
+            let mut total = 0u64;
             let mut s = resp.bytes_stream();
             while let Some(chunk) = s.next().await {
-                parser.feed(&chunk?, &mut out);
+                let chunk = chunk?;
+                total += chunk.len() as u64;
+                if total > limits::PLAYLIST_MAX_BYTES {
+                    return Err(limits::too_large(
+                        "the playlist",
+                        limits::PLAYLIST_MAX_BYTES,
+                    ));
+                }
+                parser.feed(&chunk, &mut out)?;
             }
         }
-        parser.finish(&mut out);
+        parser.finish(&mut out)?;
         Ok((out, parser.epg_url))
     }
 
@@ -188,11 +206,20 @@ impl Ingest {
                         account.status.as_deref().unwrap_or("unknown status")
                     )));
                 }
-                let cats: HashMap<String, String> =
-                    x.live_categories().await?.into_iter().collect();
-                let list = x
-                    .live_streams()
-                    .await?
+                let cats = x.live_categories().await?;
+                limits::check_count(
+                    "the provider's live category list",
+                    cats.len(),
+                    limits::MAX_CATEGORIES,
+                )?;
+                let cats: HashMap<String, String> = cats.into_iter().collect();
+                let streams = x.live_streams().await?;
+                limits::check_count(
+                    "the provider's live stream list",
+                    streams.len(),
+                    limits::MAX_CHANNELS,
+                )?;
+                let list = streams
                     .into_iter()
                     .map(|s| Incoming {
                         ext_id: s.stream_id.to_string(),
@@ -338,6 +365,8 @@ impl Ingest {
 
     /// Fetch a guide to a temp file. Only the provider's own guide goes through the provider's
     /// politeness gate and User-Agent; external hosts get one plain download per refresh.
+    /// A downloaded file comes back as a [`TempFile`] (removed when dropped, on every path);
+    /// a local guide (`file://` or an absolute path) is read in place.
     async fn epg_file(
         &self,
         url: &str,
@@ -345,9 +374,9 @@ impl Ingest {
         id: i64,
         rank: i64,
         provider: bool,
-    ) -> Result<(PathBuf, bool)> {
+    ) -> Result<(PathBuf, Option<TempFile>)> {
         if let Some(p) = local_path(url) {
-            return Ok((p, false));
+            return Ok((p, None));
         }
         tokio::fs::create_dir_all(&self.work_dir).await?;
         let dest = self.work_dir.join(format!("epg-{id}-{rank}.tmp"));
@@ -358,6 +387,7 @@ impl Ingest {
         }
         let resp = self
             .request(url, if provider { ua } else { None })?
+            .timeout(limits::EPG_DEADLINE)
             .send()
             .await?;
         if provider {
@@ -369,13 +399,24 @@ impl Ingest {
                 resp.status().as_u16()
             )));
         }
+        limits::check_content_length(&resp, "the guide", limits::EPG_MAX_DOWNLOAD_BYTES)?;
+        let temp = TempFile::new(dest.clone());
         let mut f = tokio::fs::File::create(&dest).await?;
+        let mut total = 0u64;
         let mut s = resp.bytes_stream();
         while let Some(chunk) = s.next().await {
-            f.write_all(&chunk?).await?;
+            let chunk = chunk?;
+            total += chunk.len() as u64;
+            if total > limits::EPG_MAX_DOWNLOAD_BYTES {
+                return Err(limits::too_large(
+                    "the guide",
+                    limits::EPG_MAX_DOWNLOAD_BYTES,
+                ));
+            }
+            f.write_all(&chunk).await?;
         }
         f.flush().await?;
-        Ok((dest, true))
+        Ok((dest, Some(temp)))
     }
 
     async fn flush_epg_channels(
@@ -641,19 +682,14 @@ impl Ingest {
         rank: i64,
         claimed: &mut HashSet<String>,
     ) -> Result<(EpgReport, HashSet<String>, usize)> {
-        let (path, temp) = self
+        // `_temp` lives until this function returns: the download is removed on every path
+        let (path, _temp) = self
             .epg_file(url, src.user_agent.as_deref(), src.id, rank, provider)
             .await?;
         let sniff_path = path.clone();
-        let verdict = tokio::task::spawn_blocking(move || xmltv::sniff_guide(&sniff_path))
+        tokio::task::spawn_blocking(move || xmltv::sniff_guide(&sniff_path))
             .await
-            .map_err(|e| Error::Unavailable(format!("guide check crashed: {e}")))?;
-        if let Err(e) = verdict {
-            if temp {
-                let _ = tokio::fs::remove_file(&path).await;
-            }
-            return Err(e);
-        }
+            .map_err(|e| Error::Unavailable(format!("guide check crashed: {e}")))??;
         let now = now_unix();
         let window = (now - self.epg_back_secs, now + self.epg_fwd_secs);
         let before_max: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM epg_programs")
@@ -714,9 +750,6 @@ impl Ingest {
         let stats = parser
             .await
             .map_err(|e| Error::Unavailable(format!("EPG parser crashed: {e}")))??;
-        if temp {
-            let _ = tokio::fs::remove_file(&path).await;
-        }
         if wanted.is_none() {
             report.channels_mapped = epg::map_channels(&self.pool).await?;
         }
