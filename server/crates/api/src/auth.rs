@@ -445,6 +445,9 @@ pub struct Me {
     pub limits: LimitsDto,
     /// Effective permissions (all true for admins).
     pub permissions: PermissionsDto,
+    /// The server lets this user play Live TV directly from the provider
+    /// (`REEL_ALLOW_DIRECT_LIVE` and IPTV access).
+    pub direct_live: bool,
     /// Visible library ids; absent = all libraries (admin).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub library_ids: Option<Vec<i64>>,
@@ -457,6 +460,7 @@ async fn me_dto(st: &AppState, u: &User) -> ApiResult<Me> {
         role: u.role.into(),
         limits: u.limits.clone().into(),
         permissions: effective(u),
+        direct_live: st.config.allow_direct_live && u.can_iptv(),
         library_ids: st.visible(u).await?,
     })
 }

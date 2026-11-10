@@ -28,6 +28,9 @@ pub enum LiveMode {
     Passthrough,
     /// fMP4 HLS for browsers.
     Hls,
+    /// The client plays the provider's stream itself. Reel only holds the provider connection
+    /// slot (so the budget stays honest) and carries no video.
+    Direct,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,6 +53,10 @@ pub struct LiveSessionInfo {
     pub idle_s: u64,
     pub connections: usize,
     pub hls: Option<HlsDetail>,
+    /// Provider URL a [`LiveMode::Direct`] client plays. Contains the provider login: never
+    /// serialized, only handed to the session's owner by the tune call.
+    #[serde(skip)]
+    pub direct_url: Option<String>,
 }
 
 struct Session {
@@ -70,10 +77,17 @@ struct Session {
     cancel: CancellationToken,
     /// A player has connected at least once (passthrough).
     connected: std::sync::atomic::AtomicBool,
+    /// Direct sessions: the provider connection this session holds while its client plays.
+    _slot: Option<crate::hub::ExternalSlot>,
+    direct_url: Option<String>,
 }
 
 /// HLS sessions with no playlist/segment request for this long are closed (slot released).
 const HLS_IDLE: Duration = Duration::from_secs(15);
+/// A direct session is closed when its client has not sent a keepalive for this long (or the
+/// manager's idle timeout, if shorter). The
+/// server never sees the video, so the heartbeat is the only sign the viewer is still there.
+pub const DIRECT_IDLE: Duration = Duration::from_secs(45);
 /// A passthrough session whose player disconnected is closed after this (reconnect hiccups).
 const PASSTHROUGH_GRACE: Duration = Duration::from_secs(2);
 
@@ -210,6 +224,7 @@ impl LiveManager {
                     let seen = v.last_seen.lock().unwrap().elapsed();
                     match v.mode {
                         LiveMode::Hls => seen < idle.min(HLS_IDLE),
+                        LiveMode::Direct => seen < idle.min(DIRECT_IDLE),
                         LiveMode::Passthrough if v.connected.load(Relaxed) => {
                             seen < PASSTHROUGH_GRACE.min(idle)
                         }
@@ -250,6 +265,9 @@ impl LiveManager {
         opts: &HlsOptions,
         takeover: bool,
     ) -> Result<LiveSessionInfo> {
+        if mode == LiveMode::Direct {
+            return self.tune_direct(user_id, channel_id, takeover).await;
+        }
         let source = self.make_room(user_id, channel_id, takeover).await?;
         let (pre, lease, name) = match mode {
             LiveMode::Passthrough => {
@@ -259,6 +277,7 @@ impl LiveManager {
                 let name = sub.pipe_metrics().name;
                 (Some(sub), None, name)
             }
+            LiveMode::Direct => unreachable!("handled by tune_direct"),
             LiveMode::Hls => {
                 let lease = self
                     .hls
@@ -288,10 +307,71 @@ impl LiveManager {
             source,
             cancel: CancellationToken::new(),
             connected: std::sync::atomic::AtomicBool::new(false),
+            _slot: None,
+            direct_url: None,
         });
         let info = self.info_of(&s);
         self.sessions.lock().unwrap().insert(s.id.clone(), s);
         Ok(info)
+    }
+
+    /// [`LiveMode::Direct`]: the client will open its own connection to the provider, so this
+    /// claims a full provider slot (never shares a hub pipe: that would be a second connection)
+    /// under the usual policy and returns the provider URL. The slot is held until the session
+    /// is stopped or the client stops sending [`Self::keepalive`].
+    async fn tune_direct(
+        &self,
+        user_id: i64,
+        channel_id: i64,
+        takeover: bool,
+    ) -> Result<LiveSessionInfo> {
+        let spec = self
+            .hub
+            .channel_spec(channel_id)
+            .await?
+            .ok_or_else(|| Error::NotFound("channel".into()))?;
+        let cand = spec
+            .candidates
+            .first()
+            .ok_or_else(|| Error::NotFound("channel".into()))?;
+        let max = cand.max_connections.filter(|m| *m > 0);
+        if let Some(max) = max {
+            self.make_room_for(user_id, cand.source_id, max, i64::MIN, takeover)
+                .await?;
+        }
+        let slot = self.hub.external_slot(cand.source_id, max)?;
+        let s = Arc::new(Session {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id,
+            channel_id,
+            name: spec.name.clone(),
+            mode: LiveMode::Direct,
+            started_at: now_unix(),
+            last_seen: Mutex::new(Instant::now()),
+            ts_active: AtomicUsize::new(0),
+            pre: Mutex::new(None),
+            lease: None,
+            source: max.map(|_| cand.source_id),
+            cancel: CancellationToken::new(),
+            connected: std::sync::atomic::AtomicBool::new(false),
+            _slot: Some(slot),
+            direct_url: Some(cand.url.clone()),
+        });
+        let info = self.info_of(&s);
+        self.sessions.lock().unwrap().insert(s.id.clone(), s);
+        Ok(info)
+    }
+
+    /// Heartbeat of a direct session. `false` if the session is gone (stopped, taken over or
+    /// timed out), which tells the client to re-tune.
+    pub fn keepalive(&self, id: &str) -> bool {
+        match self.get(id) {
+            Ok(s) => {
+                *s.last_seen.lock().unwrap() = Instant::now();
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     /// Wait (bounded) until a provider slot is free or evictable.
@@ -541,6 +621,7 @@ impl LiveManager {
                 audio: l.pipe().audio,
                 encoder: l.pipe().encoder,
             }),
+            direct_url: s.direct_url.clone(),
         }
     }
 
@@ -623,7 +704,9 @@ impl LiveManager {
     ) -> Result<impl Stream<Item = io::Result<Bytes>> + Send + use<>> {
         let s = self.get(id)?;
         if s.mode != LiveMode::Passthrough {
-            return Err(Error::Invalid("this session is HLS; use index.m3u8".into()));
+            return Err(Error::Invalid(
+                "this session is not passthrough; use its own URL".into(),
+            ));
         }
         let pre = s.pre.lock().unwrap().take();
         let sub = match pre {
@@ -650,7 +733,7 @@ impl LiveManager {
         let lease = s
             .lease
             .as_ref()
-            .ok_or_else(|| Error::Invalid("this session is passthrough; use stream.ts".into()))?;
+            .ok_or_else(|| Error::Invalid("this session has no HLS output".into()))?;
         if !valid_hls_file(name) {
             return Err(Error::NotFound("file".into()));
         }

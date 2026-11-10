@@ -71,6 +71,8 @@ export interface IptvApi {
   favorite(id: number, on: boolean): Promise<void>;
   tune(id: number, body: TuneBody): Promise<TuneResponse>;
   stop(sessionId: string, keepalive?: boolean): Promise<void>;
+  /** Heartbeat of a `direct` session (404 = the server ended it). */
+  keepalive(sessionId: string): Promise<void>;
 
   // Admin
   sources(): Promise<SourceDto[]>;
@@ -100,6 +102,7 @@ const httpIptv: IptvApi = {
   favorite: (id, on) => (on ? http.post(`/iptv/channels/${id}/favorite`) : http.del(`/iptv/channels/${id}/favorite`)),
   tune: (id, body) => http.post(`/iptv/channels/${id}/tune`, body),
   stop: (sid, keepalive) => http.del(`/iptv/sessions/${encodeURIComponent(sid)}`, { keepalive }),
+  keepalive: (sid) => http.post(`/iptv/sessions/${encodeURIComponent(sid)}/keepalive`),
 
   sources: () => http.get("/admin/iptv/sources"),
   source: (id) => http.get(`/admin/iptv/sources/${id}`),

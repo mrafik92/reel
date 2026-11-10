@@ -31,6 +31,7 @@ const lim = (p: Partial<Limits> = {}): Limits => ({
 const ADMIN: Me = {
   id: 1, username: "rafik", role: "admin",
   limits: lim({ auto_approve: true }),
+  direct_live: true,
 };
 
 interface Sim {

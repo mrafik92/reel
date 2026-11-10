@@ -122,7 +122,17 @@ provider ──(1 connection per channel, rate-limited)──► hub upstream ta
      ├── MPEG-TS ring buffer + GOP cache (latest keyframe)
      ├── passthrough /iptv/live/{sid}/stream.ts   (TV native players, zero CPU)
      └── shared HLS packager (ffmpeg -c copy, or VAAPI transcode) → browsers
+
+provider ──(the device opens its own connection)──► device      mode "direct" (opt-in)
+     Reel holds only the budget slot (an `ExternalSlot`) and expects a heartbeat
 ```
+
+- **Direct mode.** With `REEL_ALLOW_DIRECT_LIVE`, `POST /iptv/channels/{id}/tune {"mode":"direct"}` claims a
+  provider slot under the usual policy (own sessions: newest wins; others: 429; admins: takeover) and returns the
+  provider URL instead of a signed Reel URL. It never shares a hub pipe, because a second viewer on the same
+  channel would be a second provider connection. The device calls `POST /iptv/sessions/{id}/keepalive` every 15 s;
+  after about 30 s of silence (or `DELETE /iptv/sessions/{id}`) the session ends and the slot returns. The provider
+  URL is never serialized in session lists and the tune is audited (`iptv_direct`).
 
 - **Budget.** A per-source connection budget enforces the provider's `max_connections`. If the same user tunes
   again, their older session is stopped first.
@@ -179,6 +189,7 @@ because they load from `file://`.
 | A16 | **Internal upstream proxy for ffmpeg** | ffmpeg ignores the app's SSRF checks and puts credentials in argv; the proxy enforces both | One more hop for VOD reads |
 | A18 | **Deploy from GitHub via a self-hosted runner on the LAN, gated by a manual "Run workflow"** | GitHub can't reach CT 113 and there are no inbound ports; the runner only connects outbound. The click is the gate (works on any GitHub plan; no surprise restarts mid-movie); full audit trail in Actions; tickets move to Deployed in the same job | One more CT to maintain. The runner holds a deploy key (pinned on minix to a two-verb forced command) and a PAT with `repo`+`project`. The repo must stay private |
 | A19 | **Local artwork is confined at serve time, not at scan time** | A poster that is a symlink (`poster.jpg -> signing.key`) was streamed raw. The image route now canonicalizes the `file://` path (symlinks and `..` resolved), requires it to sit under a `libraries.paths_json` root, caps the size (32 MB) and sniffs JPEG/PNG/WebP magic bytes. Checking on every request also covers rows written before the fix and symlinks swapped in after a scan. `ImageCache::get` refuses `file://` outright; only `get_in` with roots allows it | One extra `canonicalize` + 12-byte read per uncached request. A library whose `paths_json` is empty or stale gets no local artwork (404) |
+| A20 | **Direct Live TV playback is opt-in per server (`REEL_ALLOW_DIRECT_LIVE`) and per device, and still counts against the connection budget** | Saves server CPU/bandwidth and can be faster on slow remote paths; some players do better against the provider than against Reel's relay | The provider URL carries the provider login, so it reaches the device, which breaks the "credentials never leave the server" rule for anyone who turns this on. Reel can't see the stream, so it relies on a heartbeat. No GOP cache or shared upstream, so zapping is slower. Browsers mostly can't play it (falls back to the server) |
 
 ## 6. Data model (essentials)
 

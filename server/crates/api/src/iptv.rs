@@ -342,6 +342,11 @@ pub enum LiveModeDto {
     Passthrough,
     /// fMP4 HLS (`index.m3u8`) for browsers: video copied, audio re-encoded to AAC only if needed.
     Hls,
+    /// The client plays the provider's own stream. `url` in the tune response is the provider URL
+    /// (it contains the provider login) and the client must call `POST /iptv/sessions/{id}/keepalive`
+    /// about every 15 s. Needs `REEL_ALLOW_DIRECT_LIVE`; the connection still counts against the
+    /// provider's budget.
+    Direct,
 }
 
 impl From<LiveModeDto> for LiveMode {
@@ -349,6 +354,7 @@ impl From<LiveModeDto> for LiveMode {
         match m {
             LiveModeDto::Passthrough => LiveMode::Passthrough,
             LiveModeDto::Hls => LiveMode::Hls,
+            LiveModeDto::Direct => LiveMode::Direct,
         }
     }
 }
@@ -358,13 +364,14 @@ impl From<LiveMode> for LiveModeDto {
         match m {
             LiveMode::Passthrough => LiveModeDto::Passthrough,
             LiveMode::Hls => LiveModeDto::Hls,
+            LiveMode::Direct => LiveModeDto::Direct,
         }
     }
 }
 
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub struct TuneBody {
-    /// `hls` (default) or `passthrough`.
+    /// `hls` (default), `passthrough` or `direct` (403 unless the server allows it).
     pub mode: Option<LiveModeDto>,
     /// Built-in device preset (decides which codecs HLS may copy).
     pub preset: Option<String>,
@@ -393,6 +400,7 @@ pub struct TuneResponse {
     pub mode: LiveModeDto,
     /// Signed URL: `stream.ts` (passthrough) or `index.m3u8` (HLS). Valid for the configured
     /// signed-URL lifetime; the session itself ends shortly after the player disconnects.
+    /// For `direct`: the provider's own URL (contains the provider login; never log it).
     pub url: String,
     pub channel_id: i64,
     pub channel_name: String,
@@ -463,6 +471,18 @@ pub async fn tune(
         audio_copy: p.audio.iter().map(|a| a.codec.clone()).collect(),
     });
     let mode: LiveMode = b.mode.unwrap_or(LiveModeDto::Hls).into();
+    if mode == LiveMode::Direct {
+        if !st.config.allow_direct_live {
+            return Err(ApiError::Forbidden(
+                "Direct Live TV is not enabled on this server (REEL_ALLOW_DIRECT_LIVE)".into(),
+            ));
+        }
+        if cast.is_some() {
+            return Err(ApiError::BadRequest(
+                "direct playback can't be combined with for_cast".into(),
+            ));
+        }
+    }
     let takeover = u.is_admin() && b.takeover.unwrap_or(false);
     let s = match st
         .iptv
@@ -492,24 +512,37 @@ pub async fn tune(
         )
         .await;
     }
-    let (file, q) = match mode {
-        LiveMode::Passthrough => ("stream.ts", "stream.ts"),
-        LiveMode::Hls => ("index.m3u8", "index.m3u8"),
-    };
-    let _ = q;
-    let url = st.signer(u.id()).url(
-        &format!("/api/v1/iptv/live/{}/{file}", s.id),
-        &format!("live:{}", s.id),
-        if cast.is_some() {
-            crate::prefs::Cast::ttl(&st)
-        } else {
-            st.media_ttl()
-        },
-        1,
-    );
-    let url = match &cast {
-        Some(c) => c.abs(&url),
-        None => url,
+    let url = match (mode, s.direct_url.clone()) {
+        (LiveMode::Direct, Some(provider_url)) => {
+            st.audit(
+                &u.user,
+                "iptv_direct",
+                Some(id.to_string()),
+                json!({"channel_id": id}),
+            )
+            .await;
+            provider_url
+        }
+        _ => {
+            let file = match mode {
+                LiveMode::Hls => "index.m3u8",
+                _ => "stream.ts",
+            };
+            let url = st.signer(u.id()).url(
+                &format!("/api/v1/iptv/live/{}/{file}", s.id),
+                &format!("live:{}", s.id),
+                if cast.is_some() {
+                    crate::prefs::Cast::ttl(&st)
+                } else {
+                    st.media_ttl()
+                },
+                1,
+            );
+            match &cast {
+                Some(c) => c.abs(&url),
+                None => url,
+            }
+        }
     };
     Ok(Json(TuneResponse {
         session_id: s.id,
@@ -586,6 +619,30 @@ pub async fn stop_session(
     // the provider slot goes back at once (no grace) when the provider has a connection limit
     st.iptv.live.stop_and_release(&id).await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Heartbeat of a `direct` session (the server doesn't see its video). Without one for 45 s the
+/// session ends and its provider slot is released. 404 means the session is gone: tune again.
+#[utoipa::path(
+    post,
+    path = "/iptv/sessions/{id}/keepalive",
+    params(("id" = String, Path, description = "Live session id")),
+    responses((status = 204, description = "Alive"), (status = 404, body = ErrorBody))
+)]
+pub async fn keepalive_session(
+    State(st): State<AppState>,
+    u: AuthUser,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let s = st.iptv.live.session(&id).ok_or(ApiError::NotFound)?;
+    if s.user_id != u.id() {
+        return Err(ApiError::NotFound);
+    }
+    if st.iptv.live.keepalive(&id) {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound)
+    }
 }
 
 /// Live output of a session: `stream.ts` (MPEG-TS passthrough) or the HLS playlist / init /

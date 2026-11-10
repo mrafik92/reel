@@ -33,6 +33,8 @@ services:
       REEL_PUBLIC_URL: ${REEL_PUBLIC_URL:-}
       # LAN address TVs / Chromecasts use to fetch media, e.g. http://10.10.10.207:8420 (casting)
       REEL_CAST_BASE_URL: ${REEL_CAST_BASE_URL:-}
+      # let devices play Live TV straight from the IPTV provider (sends them the provider login in the stream URL)
+      REEL_ALLOW_DIRECT_LIVE: ${REEL_ALLOW_DIRECT_LIVE:-false}
       # set true when a reverse proxy (Caddy/nginx) is in front: per-IP rate limits use X-Forwarded-For
       REEL_TRUST_PROXY_HEADERS: ${REEL_TRUST_PROXY_HEADERS:-false}
       # SSRF hardening for server-side fetches of admin-supplied URLs (see README)

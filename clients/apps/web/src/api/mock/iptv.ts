@@ -389,6 +389,10 @@ export function createMockIptv(): IptvApi {
       if (x) setTimeout(() => !Array.from(sessions.values()).some((y) => y.channel_id === x.channel_id) && warm.delete(x.channel_id), 45_000);
     },
 
+    async keepalive(s) {
+      if (!sessions.has(s)) throw new ApiError(404, "Live session not found");
+    },
+
     // ---- admin ----------------------------------------------------------------
     async sources() {
       await latency();

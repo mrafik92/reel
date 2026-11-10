@@ -2177,7 +2177,7 @@ export interface components {
             request_quota_tv: number | null;
         };
         /** @enum {string} */
-        LiveModeDto: "passthrough" | "hls";
+        LiveModeDto: "passthrough" | "hls" | "direct";
         LiveSessionDto: {
             /** Format: int64 */
             channel_id: number;
@@ -2219,6 +2219,9 @@ export interface components {
         };
         /** @description The signed-in user. */
         Me: {
+            /** @description The server lets this user play Live TV directly from the provider
+             *     (`REEL_ALLOW_DIRECT_LIVE` and IPTV access). */
+            direct_live?: boolean;
             /** Format: int64 */
             id: number;
             /** @description Visible library ids; absent = all libraries (admin). */
