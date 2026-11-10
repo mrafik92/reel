@@ -61,19 +61,54 @@ pub struct VodSession {
     pub url: String,
     pub container: String,
     pub duration_s: Option<f64>,
+    /// The source's configured User-Agent (`None`: the default one).
+    pub user_agent: Option<String>,
+}
+
+impl VodSession {
+    fn ua(&self) -> &str {
+        self.user_agent
+            .as_deref()
+            .filter(|ua| !ua.trim().is_empty())
+            .unwrap_or(reel_iptv::net::DEFAULT_UA)
+    }
+}
+
+/// A running VOD playback plus its stop signal: dropping the sender (the session is forgotten,
+/// stopped, taken over or reaped) ends every in-flight direct-play response, so a paused or
+/// abandoned client cannot keep holding the provider's connection.
+struct VodEntry {
+    session: VodSession,
+    stop: tokio::sync::watch::Sender<()>,
 }
 
 #[derive(Default)]
 pub struct VodRuntime {
-    sessions: Mutex<HashMap<String, VodSession>>,
+    sessions: Mutex<HashMap<String, VodEntry>>,
 }
 
 impl VodRuntime {
     pub fn get(&self, id: &str) -> Option<VodSession> {
-        self.sessions.lock().unwrap().get(id).cloned()
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|e| e.session.clone())
+    }
+    /// The session plus a receiver whose `changed()` fails once the session is gone.
+    fn subscribe(&self, id: &str) -> Option<(VodSession, tokio::sync::watch::Receiver<()>)> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|e| (e.session.clone(), e.stop.subscribe()))
     }
     pub fn insert(&self, id: &str, s: VodSession) {
-        self.sessions.lock().unwrap().insert(id.to_string(), s);
+        let (stop, _) = tokio::sync::watch::channel(());
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), VodEntry { session: s, stop });
     }
     pub fn forget(&self, id: &str) {
         self.sessions.lock().unwrap().remove(id);
@@ -1266,6 +1301,7 @@ async fn vod_play_inner(
         url: target.url.clone(),
         container: target.container.clone(),
         duration_s: file.duration_s,
+        user_agent: target.user_agent.clone(),
     };
     // automatic audio/subtitle choice (client indexes override)
     let prefs = crate::prefs::load(st, u.id()).await;
@@ -1345,6 +1381,7 @@ async fn vod_play_inner(
             start_position_s: req.start_s.unwrap_or(0.0).max(0.0),
             user_max_streams: limits.max_streams.and_then(|v| usize::try_from(v).ok()),
             user_max_transcodes: limits.max_transcodes.and_then(|v| usize::try_from(v).ok()),
+            user_agent: target.user_agent.clone(),
         })
         .await?;
     let sg = st.signer(u.id());
@@ -1471,7 +1508,7 @@ pub async fn vod_direct(
     let user = st
         .media_user(req.headers(), &sq, &format!("vod:{sid}"))
         .await?;
-    let vs = st.vod.get(&sid).ok_or(ApiError::NotFound)?;
+    let (vs, stop) = st.vod.subscribe(&sid).ok_or(ApiError::NotFound)?;
     if vs.user_id != user.id && !user.is_admin() {
         return Err(ApiError::NotFound);
     }
@@ -1481,7 +1518,7 @@ pub async fn vod_direct(
         .ingest
         .http
         .get(&vs.url)
-        .header(header::USER_AGENT, reel_iptv::net::DEFAULT_UA)
+        .header(header::USER_AGENT, vs.ua())
         .header(header::ACCEPT, "*/*");
     if let Some(r) = req.headers().get(header::RANGE) {
         up = up.header(header::RANGE, r.clone());
@@ -1519,8 +1556,42 @@ pub async fn vod_direct(
     if resp.headers().get(header::ACCEPT_RANGES).is_none() {
         out = out.header(header::ACCEPT_RANGES, "bytes");
     }
-    out.body(Body::from_stream(resp.bytes_stream()))
+    // the provider connection lives exactly as long as the playback session: a stop, takeover or
+    // idle reap ends the body and drops the upstream response. A task owns the upstream so this
+    // also happens while the client is paused (no body polling under backpressure).
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, reqwest::Error>>(4);
+    tokio::spawn(pump_until_stopped(resp, tx, stop));
+    let body =
+        futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|c| (c, rx)) });
+    out.body(Body::from_stream(body))
         .map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+/// Copy `resp` into `tx` until it ends, the client goes away or `stop` fires (sender dropped).
+async fn pump_until_stopped(
+    resp: reqwest::Response,
+    tx: tokio::sync::mpsc::Sender<Result<bytes::Bytes, reqwest::Error>>,
+    mut stop: tokio::sync::watch::Receiver<()>,
+) {
+    use futures_util::StreamExt;
+    let mut up = Box::pin(resp.bytes_stream());
+    loop {
+        let chunk = tokio::select! {
+            biased;
+            _ = stop.changed() => return,
+            _ = tx.closed() => return,
+            c = up.next() => match c {
+                Some(c) => c,
+                None => return,
+            },
+        };
+        let failed = chunk.is_err();
+        tokio::select! {
+            biased;
+            _ = stop.changed() => return,
+            r = tx.send(chunk) => if r.is_err() || failed { return },
+        }
+    }
 }
 
 fn sub_cache_name(vs: &VodSession, idx: i64) -> String {
@@ -1642,7 +1713,7 @@ pub async fn vod_subs(
         ));
     }
     st.playback.touch_session(&sid);
-    let out = reel_playback::subtitles::to_vtt_with(
+    let out = reel_playback::subtitles::to_vtt_with_ua(
         st.playback.media(),
         &st.playback.config().ffmpeg_path,
         &reel_playback::subtitles::SubtitleSource::Embedded {
@@ -1651,6 +1722,7 @@ pub async fn vod_subs(
         },
         &st.config.data_dir.join("subs"),
         &sub_cache_name(&vs, idx),
+        vs.user_agent.as_deref(),
     )
     .await
     .map_err(|e| ApiError::BadGateway(reel_iptv::net::redact_text(&e.to_string())))?;

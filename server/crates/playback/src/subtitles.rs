@@ -144,6 +144,22 @@ pub async fn to_vtt_with(
     cache_dir: &Path,
     key: &str,
 ) -> Result<PathBuf, PlaybackError> {
+    to_vtt_with_ua(media, ffmpeg, src, cache_dir, key, None).await
+}
+
+/// [`to_vtt_with`] with the User-Agent the proxy sends for a remote source (`None`:
+/// [`crate::ffmpeg::REMOTE_UA`]), e.g. an IPTV source's configured one.
+pub async fn to_vtt_with_ua(
+    media: &crate::media::MediaCtx,
+    ffmpeg: &str,
+    src: &SubtitleSource,
+    cache_dir: &Path,
+    key: &str,
+    user_agent: Option<&str>,
+) -> Result<PathBuf, PlaybackError> {
+    let ua = user_agent
+        .filter(|ua| !ua.trim().is_empty())
+        .unwrap_or(crate::ffmpeg::REMOTE_UA);
     let safe = safe_key(key);
     let out = cache_dir.join(format!("{safe}.vtt"));
     if cached(&out).await {
@@ -158,8 +174,7 @@ pub async fn to_vtt_with(
     tokio::fs::create_dir_all(cache_dir).await?;
     let (resolved, _lease) = match src {
         SubtitleSource::Embedded { path, stream_index } => {
-            let (p, l) =
-                media.proxied_input(path, crate::ffmpeg::REMOTE_UA, Duration::from_secs(300))?;
+            let (p, l) = media.proxied_input(path, ua, Duration::from_secs(300))?;
             (
                 SubtitleSource::Embedded {
                     path: p,
@@ -169,8 +184,7 @@ pub async fn to_vtt_with(
             )
         }
         SubtitleSource::External { path } => {
-            let (p, l) =
-                media.proxied_input(path, crate::ffmpeg::REMOTE_UA, Duration::from_secs(300))?;
+            let (p, l) = media.proxied_input(path, ua, Duration::from_secs(300))?;
             (SubtitleSource::External { path: p }, l)
         }
     };

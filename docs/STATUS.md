@@ -1,4 +1,4 @@
-# Status: 2026-11-10
+# Status: 2026-11-11
 
 Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
@@ -24,7 +24,21 @@ Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafi
 
 - **webOS/Tizen apps:** never installed on a TV. Packaging CLIs aren't installed; the Tizen package id is a placeholder.
 - **Casting:** AirPlay and Chromecast never tested with devices. **DLNA** needs the TV IPs + a CT 113 firewall rule.
-- **IPTV VOD playback** through the upstream proxy, against the real provider.
+- **IPTV VOD playback** through the upstream proxy, against the real provider (#3). Reviewed in code and
+  covered by CI tests with local fake providers (2026-11-11):
+  - Movie and series episode, direct play (proxied through `/vod/direct` with `Range`) and remux/transcode (ffmpeg
+    reads a loopback proxy URL, `Range` passed through).
+  - A remux seek restarts ffmpeg without ever holding two provider connections, and stopping closes the connection
+    (`remote_remux_seek_and_stop_keep_a_single_provider_connection`).
+  - Takeover, stop or idle reap now also closes a **paused** direct-play stream (it used to keep the provider
+    connection open until the browser let go).
+  - The source's configured User-Agent is now used for every VOD request (probe, direct play, ffmpeg, subtitles);
+    before, only the probe used it.
+  - No provider URL or login in ffmpeg/ffprobe argv, client errors or the proxy's logs.
+  - Live, read-only (2026-11-11, build `99b0deb`): CT 113 container logs (30 days) and `ps` had no provider login,
+    Xtream credential paths or `username=`/`password=` values; the only provider URL in the logs is a masked
+    guide URL (`username=***&password=***`); the running ffmpeg reads `pipe:0`. **Playback was not tried live**:
+    someone was watching live TV, and the provider allows one connection.
 - **Direct (local) Live TV playback** (#77): built and tested in CI, not yet tried on a TV or against the real provider. Off until `REEL_ALLOW_DIRECT_LIVE` is set on CT 113.
 - **Notifications** (Discord/Telegram/webhook).
 
@@ -78,7 +92,7 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 1. Adaptive quality in the player (bandwidth probe, auto step, quality menu), then remove the admin's 6 Mbps cap.
 2. Close the security items above.
 3. Verify webOS/Tizen on real TVs; DLNA with the TV IPs; AirPlay/Chromecast.
-4. IPTV VOD playback check on the provider; live HLS quality ladder.
+4. IPTV VOD playback check on the provider (#3, owner); live HLS quality ladder.
 5. OMDb key for IMDb/RT scores.
 6. Trickplay thumbnails (the scrubber already has the slot), intro/credits skip.
 7. Android TV / phone app (needs the Android SDK), iOS later.

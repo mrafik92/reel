@@ -147,7 +147,11 @@ The catalog (categories, streams, series) is imported during the source refresh.
 time someone opens a title (`get_vod_info` / `get_series_info`) and are enriched with TMDB data when the
 provider supplies an id. Playback goes through the same decision engine. ffmpeg reads the provider through a
 **loopback upstream proxy** that holds the credentials, applies the SSRF policy and rewrites HLS manifests, so
-provider URLs never show up in argv, logs or client responses.
+provider URLs never show up in argv, logs or client responses. Direct play is proxied by `/vod/direct` (with
+`Range`). Every VOD request uses the source's configured User-Agent. A VOD playback holds one slot of the
+provider's connection budget (shared with live TV); when the session ends (stop, takeover, idle reap), its
+in-flight direct-play responses are cut by a per-session stop signal, so a paused client can't keep the
+provider connection open.
 
 ## 4. Clients
 
@@ -190,6 +194,7 @@ because they load from `file://`.
 | A18 | **Deploy from GitHub via a self-hosted runner on the LAN, gated by a manual "Run workflow"** | GitHub can't reach CT 113 and there are no inbound ports; the runner only connects outbound. The click is the gate (works on any GitHub plan; no surprise restarts mid-movie); full audit trail in Actions; tickets move to Deployed in the same job | One more CT to maintain. The runner holds a deploy key (pinned on minix to a two-verb forced command) and a PAT with `repo`+`project`. The repo must stay private |
 | A19 | **Local artwork is confined at serve time, not at scan time** | A poster that is a symlink (`poster.jpg -> signing.key`) was streamed raw. The image route now canonicalizes the `file://` path (symlinks and `..` resolved), requires it to sit under a `libraries.paths_json` root, caps the size (32 MB) and sniffs JPEG/PNG/WebP magic bytes. Checking on every request also covers rows written before the fix and symlinks swapped in after a scan. `ImageCache::get` refuses `file://` outright; only `get_in` with roots allows it | One extra `canonicalize` + 12-byte read per uncached request. A library whose `paths_json` is empty or stale gets no local artwork (404) |
 | A20 | **Direct Live TV playback is opt-in per server (`REEL_ALLOW_DIRECT_LIVE`) and per device, and still counts against the connection budget** | Saves server CPU/bandwidth and can be faster on slow remote paths; some players do better against the provider than against Reel's relay | The provider URL carries the provider login, so it reaches the device, which breaks the "credentials never leave the server" rule for anyone who turns this on. Reel can't see the stream, so it relies on a heartbeat. No GOP cache or shared upstream, so zapping is slower. Browsers mostly can't play it (falls back to the server) |
+| A21 | **A VOD direct-play response lives only as long as its playback session** | On a one-connection provider, a paused or abandoned browser tab would otherwise hold the provider connection after a takeover or stop, and the new viewer would get HTTP 46x | A task per direct-play response pumps the provider body; a long `bytes=0-` stream is cut once the session is idle-reaped (the web player keeps it alive with progress reports) |
 
 ## 6. Data model (essentials)
 

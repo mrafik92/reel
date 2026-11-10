@@ -121,6 +121,7 @@ fn request(path: &Path, encode: bool) -> StartRequest {
         start_position_s: 86.9,
         user_max_streams: None,
         user_max_transcodes: None,
+        user_agent: None,
     }
 }
 

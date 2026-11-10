@@ -5,7 +5,7 @@ use std::{
     process::Command,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU16, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering::SeqCst},
     },
     time::Duration,
 };
@@ -74,6 +74,12 @@ struct Xt {
     block_info: AtomicU16,
     info_calls: AtomicUsize,
     media_hits: AtomicUsize,
+    /// User-Agent of every media request
+    media_uas: Mutex<Vec<String>>,
+    /// serve movies slowly (1 KiB / 50 ms) so a response stays open
+    slow_media: AtomicBool,
+    /// media responses whose body is still open (dropped = provider connection closed)
+    media_active: AtomicUsize,
     live_active: AtomicUsize,
     mp4: PathBuf,
     mkv: PathBuf,
@@ -158,6 +164,13 @@ async fn serve_movie(
     req: Request<Body>,
 ) -> Response {
     x.media_hits.fetch_add(1, SeqCst);
+    if let Some(ua) = req
+        .headers()
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+    {
+        x.media_uas.lock().unwrap().push(ua.to_string());
+    }
     if let Some(r) = req
         .headers()
         .get(header::RANGE)
@@ -171,11 +184,46 @@ async fn serve_movie(
         1003 => x.mkv_subs.clone(),
         _ => x.mp4.clone(),
     };
+    if x.slow_media.load(SeqCst) {
+        x.media_active.fetch_add(1, SeqCst);
+        let g = MediaGuard(x.clone());
+        let data = bytes::Bytes::from(std::fs::read(p).unwrap());
+        let len = data.len();
+        let s = futures_util::stream::unfold(
+            (g, 0usize, tokio::time::interval(Duration::from_millis(50))),
+            move |(g, pos, mut t)| {
+                let data = data.clone();
+                async move {
+                    if pos >= data.len() {
+                        return None;
+                    }
+                    t.tick().await;
+                    let n = 1024usize.min(data.len() - pos);
+                    Some((
+                        Ok::<_, std::io::Error>(data.slice(pos..pos + n)),
+                        (g, pos + n, t),
+                    ))
+                }
+            },
+        );
+        return Response::builder()
+            .header(header::CONTENT_TYPE, "video/mp4")
+            .header(header::CONTENT_LENGTH, len)
+            .body(Body::from_stream(s))
+            .unwrap();
+    }
     ServeFile::new(p)
         .oneshot(req)
         .await
         .unwrap()
         .into_response()
+}
+
+struct MediaGuard(Arc<Xt>);
+impl Drop for MediaGuard {
+    fn drop(&mut self) {
+        self.0.media_active.fetch_sub(1, SeqCst);
+    }
 }
 
 struct Guard(Arc<Xt>);
@@ -1331,4 +1379,154 @@ async fn vod_embedded_subtitles_are_selected_extracted_and_cached_when_the_provi
             .contains("single-connection"),
         "{d}"
     );
+}
+
+#[tokio::test]
+async fn the_sources_user_agent_reaches_the_provider_on_every_vod_path() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let e = env(|_| {}, 2).await;
+    sqlx::query("UPDATE iptv_sources SET user_agent = 'ReelTestUA/1.0' WHERE id = ?")
+        .bind(e.source_id)
+        .execute(&e.state.db)
+        .await
+        .unwrap();
+    // direct play (probe + proxied range request)
+    let (_, p) = get(&e.admin, "/api/v1/vod/movies?q=dune").await;
+    let id = p["items"][0]["id"].as_i64().unwrap();
+    let (s, d) = send(
+        &e.admin,
+        "POST",
+        "/api/v1/vod/play",
+        Some(json!({"kind":"movie","id":id,"preset":"web_chrome"})),
+    )
+    .await;
+    assert_eq!(
+        (s, d["mode"].as_str()),
+        (StatusCode::OK, Some("direct_play"))
+    );
+    let res = raw_get(&e.raw, d["url"].as_str().unwrap(), Some("bytes=0-99")).await;
+    assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
+    let sid = d["session_id"].as_str().unwrap().to_string();
+    send(&e.admin, "DELETE", &format!("/api/v1/playback/{sid}"), None).await;
+
+    // ffmpeg session through the loopback proxy
+    let (_, p) = get(&e.admin, "/api/v1/vod/movies?q=amelie").await;
+    let id = p["items"][0]["id"].as_i64().unwrap();
+    let before = e.x.media_hits.load(SeqCst);
+    let (s, d) = send(
+        &e.admin,
+        "POST",
+        "/api/v1/vod/play",
+        Some(json!({"kind":"movie","id":id,"preset":"web_chrome"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{d}");
+    assert_ne!(d["mode"], "direct_play");
+    let res = raw_get(&e.raw, d["url"].as_str().unwrap(), None).await;
+    assert_eq!(res.status(), 200);
+    for _ in 0..100 {
+        if e.x.media_hits.load(SeqCst) >= before + 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        e.x.media_hits.load(SeqCst) >= before + 2,
+        "ffmpeg read the provider"
+    );
+    send(
+        &e.admin,
+        "DELETE",
+        &format!("/api/v1/playback/{}", d["session_id"].as_str().unwrap()),
+        None,
+    )
+    .await;
+    let uas = e.x.media_uas.lock().unwrap().clone();
+    assert!(uas.len() >= 4, "{uas:?}");
+    assert!(
+        uas.iter().all(|u| u == "ReelTestUA/1.0"),
+        "every provider request uses the source's User-Agent: {uas:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_stopped_or_taken_over_direct_play_releases_the_provider_connection() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let e = env(|_| {}, 1).await;
+    let (_, p) = get(&e.admin, "/api/v1/vod/movies?q=dune").await;
+    let id = p["items"][0]["id"].as_i64().unwrap();
+    let (alice, _) = user_app(&e, "alice").await;
+    let play = |app: &Router, body: Value| {
+        let app = app.clone();
+        async move { send(&app, "POST", "/api/v1/vod/play", Some(body)).await }
+    };
+    // probe first (fast), then make the provider slow so the media response stays open
+    let (s, d) = play(&alice, json!({"kind":"movie","id":id})).await;
+    assert_eq!(
+        (s, d["mode"].as_str()),
+        (StatusCode::OK, Some("direct_play"))
+    );
+    e.x.slow_media.store(true, SeqCst);
+    let open_body = |url: String| {
+        let raw = e.raw.clone();
+        async move {
+            let res = raw_get(&raw, &url, None).await;
+            assert_eq!(res.status(), 200);
+            let mut body = res.into_body();
+            // read one chunk, then sit on the response like a paused <video> element
+            let first = body.frame().await.unwrap().unwrap();
+            assert!(first.data_ref().is_some_and(|b| !b.is_empty()));
+            body
+        }
+    };
+    let wait_closed = |what: &'static str| {
+        let x = e.x.clone();
+        async move {
+            for _ in 0..60 {
+                if x.media_active.load(SeqCst) == 0 {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            panic!("{what}: provider connection still open");
+        }
+    };
+    let drained = |mut body: Body| async move {
+        // the client sees its stream end (no hang) once the session is gone
+        tokio::time::timeout(Duration::from_secs(3), async move {
+            while let Some(f) = body.frame().await {
+                if f.is_err() {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("stream ended");
+    };
+
+    // 1. an admin takes over alice's provider slot while her player is paused
+    let body = open_body(d["url"].as_str().unwrap().to_string()).await;
+    assert_eq!(e.x.media_active.load(SeqCst), 1);
+    let (s, a) = play(&e.admin, json!({"kind":"movie","id":id,"takeover":true})).await;
+    assert_eq!(s, StatusCode::OK, "{a}");
+    wait_closed("takeover").await;
+    drained(body).await;
+
+    // 2. the admin's own paused stream ends when they stop playback
+    let body = open_body(a["url"].as_str().unwrap().to_string()).await;
+    assert_eq!(e.x.media_active.load(SeqCst), 1);
+    let sid = a["session_id"].as_str().unwrap();
+    assert_eq!(
+        send(&e.admin, "DELETE", &format!("/api/v1/playback/{sid}"), None)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    wait_closed("stop").await;
+    drained(body).await;
+    assert_eq!(e.state.iptv.live.vod_lease_count(), 0);
 }

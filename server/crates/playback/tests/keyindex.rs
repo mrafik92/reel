@@ -210,6 +210,7 @@ fn request(path: &Path, duration: f64) -> StartRequest {
         start_position_s: 0.0,
         user_max_streams: None,
         user_max_transcodes: None,
+        user_agent: None,
     }
 }
 
