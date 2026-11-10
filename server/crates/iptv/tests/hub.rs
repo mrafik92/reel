@@ -436,6 +436,128 @@ async fn hls_providers_are_pulled_through_ffmpeg_into_the_same_pipeline() {
     hub2.shutdown();
 }
 
+/// HLS upstreams reach ffmpeg only as a loopback proxy URL: the provider URL (login in the path)
+/// is in no process's argv, the source's user agent and referrer are still sent on every request,
+/// and the proxy tokens disappear with the connection.
+#[tokio::test]
+async fn hls_upstreams_go_through_the_loopback_proxy_without_credentials_in_argv() {
+    use axum::{
+        Router,
+        extract::{Path as AxPath, State},
+        http::{HeaderMap, StatusCode, header},
+        response::IntoResponse,
+        routing::get,
+    };
+    use std::sync::atomic::AtomicUsize;
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    make_hls(dir.path(), 6);
+    #[derive(Clone)]
+    struct Prov {
+        dir: std::path::PathBuf,
+        ok: Arc<AtomicUsize>,
+        refused: Arc<AtomicUsize>,
+    }
+    let prov = Prov {
+        dir: dir.path().to_path_buf(),
+        ok: Arc::default(),
+        refused: Arc::default(),
+    };
+    let app = Router::new()
+        .route(
+            "/live/bob/s3cret/{file}",
+            get(
+                |State(p): State<Prov>, AxPath(file): AxPath<String>, h: HeaderMap| async move {
+                    let hv = |k| h.get(k).and_then(|v| v.to_str().ok()).unwrap_or("");
+                    if hv(header::USER_AGENT) != "TestUA/1"
+                        || hv(header::REFERER) != "https://portal.example/"
+                        || file.contains("..")
+                    {
+                        p.refused.fetch_add(1, SeqCst);
+                        return StatusCode::FORBIDDEN.into_response();
+                    }
+                    p.ok.fetch_add(1, SeqCst);
+                    match std::fs::read(p.dir.join(&file)) {
+                        Ok(b) => {
+                            let ct = if file.ends_with(".m3u8") {
+                                "application/vnd.apple.mpegurl"
+                            } else {
+                                "video/mp2t"
+                            };
+                            ([(header::CONTENT_TYPE, ct)], b).into_response()
+                        }
+                        Err(_) => StatusCode::NOT_FOUND.into_response(),
+                    }
+                },
+            ),
+        )
+        .with_state(prov.clone());
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+
+    let mut c = cand(
+        1,
+        10,
+        format!("http://{addr}/live/bob/s3cret/index.m3u8"),
+        None,
+    );
+    c.user_agent = Some("TestUA/1".into());
+    c.referrer = Some("https://portal.example/".into());
+    let res = Arc::new(MapResolver::default());
+    res.add(1, "Proxied", vec![c]);
+    let hub = ChannelHub::new(
+        HubConfig {
+            stall_after: Duration::from_secs(10),
+            ..fast_cfg()
+        },
+        res,
+    );
+    hub.spawn_reaper();
+    let mut sub = hub.subscribe(1, None).await.unwrap();
+    let got = read_bytes(&mut sub, 40_000).await;
+    assert!(got >= 40_000, "{got}");
+    assert!(prov.ok.load(SeqCst) >= 2, "playlist + segments fetched");
+    assert_eq!(prov.refused.load(SeqCst), 0, "UA/referrer on every request");
+    assert!(hub.proxy_tokens() >= 2, "root + segments registered");
+
+    // while ffmpeg runs: our child ffmpeg was given a loopback proxy URL and nothing else
+    let ps = std::process::Command::new("ps")
+        .args(["-A", "-ww", "-o", "ppid=,args="])
+        .output()
+        .unwrap();
+    let me = std::process::id().to_string();
+    let ps = String::from_utf8_lossy(&ps.stdout);
+    let children: Vec<&str> = ps
+        .lines()
+        .filter_map(|l| {
+            let (ppid, args) = l.trim_start().split_once(' ')?;
+            (ppid == me && args.contains("ffmpeg")).then_some(args)
+        })
+        .collect();
+    assert!(
+        children.iter().any(|a| a.contains("/internal/upstream/")),
+        "ffmpeg reads from the proxy: {children:?}"
+    );
+    for a in &children {
+        for x in ["s3cret", "TestUA/1", "portal.example", &addr.to_string()] {
+            assert!(!a.contains(x), "{x} in ffmpeg argv: {a}");
+        }
+    }
+
+    // the connection closes after the grace period and takes its tokens with it
+    drop(sub);
+    let end = Instant::now() + Duration::from_secs(5);
+    while (hub.proxy_tokens() > 0 || hub.is_open(1)) && Instant::now() < end {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(!hub.is_open(1));
+    assert_eq!(hub.proxy_tokens(), 0);
+    hub.shutdown();
+}
+
 #[tokio::test]
 async fn strict_mode_refuses_private_upstreams() {
     let res = Arc::new(MapResolver::default());
