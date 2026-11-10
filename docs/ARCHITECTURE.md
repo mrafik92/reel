@@ -123,6 +123,8 @@ provider ──(1 connection per channel, rate-limited)──► hub upstream ta
      ├── passthrough /iptv/live/{sid}/stream.ts   (TV native players, zero CPU)
      └── shared HLS packager (ffmpeg -c copy, or VAAPI transcode) → browsers
 
+provider HLS (.m3u8) ──► upstream proxy (127.0.0.1, guarded client) ──► ffmpeg -c copy → MPEG-TS ──► hub
+
 provider ──(the device opens its own connection)──► device      mode "direct" (opt-in)
      Reel holds only the budget slot (an `ExternalSlot`) and expects a heartbeat
 ```
@@ -134,6 +136,14 @@ provider ──(the device opens its own connection)──► device      mode "
   after about 30 s of silence (or `DELETE /iptv/sessions/{id}`) the session ends and the slot returns. The provider
   URL is never serialized in session lists and the tune is audited (`iptv_direct`).
 
+- **HLS upstreams.** A channel whose provider URL is HLS (`.m3u8` path or an `mpegurl` content type) is remuxed
+  to MPEG-TS by ffmpeg before it enters the hub. ffmpeg gets only a lease on the hub's own loopback upstream
+  proxy (`http://127.0.0.1:{port}/internal/upstream/{token}/f.m3u8`, protocols `http,tcp,crypto`). The proxy
+  sends the source's user agent and referrer, applies the SSRF policy to every playlist, segment and key, and
+  rewrites each nested URI to a token. Live leases use a sliding expiry (120 s after last use), a reloaded
+  playlist maps the same segment to the same token, and a redirected playlist is reloaded from its redirect
+  target the way a player would. Dropping the connection kills ffmpeg and revokes every token of the lease.
+  Raw MPEG-TS channels are read by the hub's guarded HTTP client directly; direct mode bypasses the hub.
 - **Budget.** A per-source connection budget enforces the provider's `max_connections`. If the same user tunes
   again, their older session is stopped first.
 - **Guide.** Reel imports the provider's XMLTV (empty for this provider), then each external guide URL in
@@ -186,10 +196,12 @@ because they load from `file://`.
 | A13 | **Opaque session tokens (hashed at rest), not JWT** | Instant revocation, small surface | Every request looks the token up in the DB (cached) |
 | A14 | **Private by default, reached over Tailscale** | Unaudited new code; casting and IPTV are home-network features | Remote speed depends on the Tailscale path (now direct, 9–15 Mbps) |
 | A15 | **Image build in GitHub Actions → GHCR (private) → pulled on CT 113** | The N100 doesn't spend time building; reproducible images; pull-only token on the server | ~10 min per server change (web-only changes take ~1 min thanks to layer caching) |
-| A16 | **Internal upstream proxy for ffmpeg** | ffmpeg ignores the app's SSRF checks and puts credentials in argv; the proxy enforces both | One more hop for VOD reads |
+| A16 | **Internal upstream proxy for ffmpeg** (VOD, remote probes/subtitles and live HLS upstreams) | ffmpeg ignores the app's SSRF checks and puts credentials in argv; the proxy enforces both | One more hop for VOD reads and live HLS segments |
 | A18 | **Deploy from GitHub via a self-hosted runner on the LAN, gated by a manual "Run workflow"** | GitHub can't reach CT 113 and there are no inbound ports; the runner only connects outbound. The click is the gate (works on any GitHub plan; no surprise restarts mid-movie); full audit trail in Actions; tickets move to Deployed in the same job | One more CT to maintain. The runner holds a deploy key (pinned on minix to a two-verb forced command) and a PAT with `repo`+`project`. The repo must stay private |
 | A19 | **Local artwork is confined at serve time, not at scan time** | A poster that is a symlink (`poster.jpg -> signing.key`) was streamed raw. The image route now canonicalizes the `file://` path (symlinks and `..` resolved), requires it to sit under a `libraries.paths_json` root, caps the size (32 MB) and sniffs JPEG/PNG/WebP magic bytes. Checking on every request also covers rows written before the fix and symlinks swapped in after a scan. `ImageCache::get` refuses `file://` outright; only `get_in` with roots allows it | One extra `canonicalize` + 12-byte read per uncached request. A library whose `paths_json` is empty or stale gets no local artwork (404) |
 | A20 | **Direct Live TV playback is opt-in per server (`REEL_ALLOW_DIRECT_LIVE`) and per device, and still counts against the connection budget** | Saves server CPU/bandwidth and can be faster on slow remote paths; some players do better against the provider than against Reel's relay | The provider URL carries the provider login, so it reaches the device, which breaks the "credentials never leave the server" rule for anyone who turns this on. Reel can't see the stream, so it relies on a heartbeat. No GOP cache or shared upstream, so zapping is slower. Browsers mostly can't play it (falls back to the server) |
+
+| A21 | **Live HLS upstreams use the upstream proxy with sliding, lease-scoped tokens** (#11) | Before, the hub gave ffmpeg the provider URL: the login sat in argv and `/proc`, and ffmpeg fetched segments and redirects with no SSRF check. A live playlist is reloaded every few seconds, so fixed-expiry tokens would expire mid-stream and fresh tokens per reload would fill the token map; reusing a token per (lease, URL) and expiring it 120 s after last use keeps the map bounded. Reloading from the redirect target matches what ffmpeg did itself, so the provider doesn't see a new login per reload | One more loopback hop per segment. The proxy has no politeness gate of its own (the hub paces the connect, ffmpeg does the reloads). A provider whose redirect target expires makes ffmpeg fail and the hub reconnect, as before |
 
 ## 6. Data model (essentials)
 
@@ -219,8 +231,11 @@ Migrations are in `server/crates/core/migrations` and applied on startup.
   - The stream guard decodes the session id and checks the owner.
   - Playback errors are generic (diagnostics are redacted server-side).
 - **Outbound.**
-  - The SSRF guard applies at connect time, including DNS and redirects.
-  - ffmpeg is mediated by the upstream proxy.
+  - The SSRF guard applies at connect time, including DNS and redirects. IPv6 forms that carry an IPv4
+    address (mapped, translated, NAT64, 6to4, Teredo) are judged by that IPv4 address; IPv4-compatible
+    `::a.b.c.d` is refused. Redirects don't send the previous URL as `Referer` (it can hold the provider login).
+  - ffmpeg is mediated by the upstream proxy: VOD, remote probes and subtitles, and live HLS upstreams. No
+    ffmpeg command line holds a provider URL or credential.
   - IPTV and guide ingestion have size budgets *(see STATUS for what's still open)*.
 - **Container.** Non-root, `cap_drop: ALL`, read-only rootfs, read-only media, memory/PID/CPU limits. CT 113's
   Proxmox firewall blocks LAN egress apart from the Arr hosts and qBittorrent.

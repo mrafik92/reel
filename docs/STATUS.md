@@ -1,4 +1,4 @@
-# Status: 2026-11-10
+# Status: 2026-11-11
 
 Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
@@ -26,6 +26,7 @@ Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafi
 - **Casting:** AirPlay and Chromecast never tested with devices. **DLNA** needs the TV IPs + a CT 113 firewall rule.
 - **IPTV VOD playback** through the upstream proxy, against the real provider.
 - **Direct (local) Live TV playback** (#77): built and tested in CI, not yet tried on a TV or against the real provider. Off until `REEL_ALLOW_DIRECT_LIVE` is set on CT 113.
+- **Live TV HLS upstreams through the upstream proxy** (#11): built and tested in CI with local HLS fixtures, not yet deployed. Only channels whose provider URL is HLS (`.m3u8` or an HLS content type) go through ffmpeg and the proxy; raw MPEG-TS channels are read by the hub directly, as before.
 - **Notifications** (Discord/Telegram/webhook).
 
 ## Known gaps / bugs
@@ -64,7 +65,7 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 2. IPTV/EPG ingestion budgets: bytes, gzip expansion, line/token sizes, record counts, deadlines.
 3. Logo/TMDB image fetches: streaming size cutoff, single-flight, cache size budget.
 4. ~~Local artwork: canonicalize under the library roots + magic-byte sniff~~ Fixed in code (#10, 🧪): the image route resolves symlinks, requires a library root, caps size and sniffs magic bytes. Counts as done once deployed and checked on the real library.
-5. SSRF guard gaps (IPv4-compatible v6, `64:ff9b::/96`, `2002::/16`, `192.0.0.0/24`); route **live IPTV** HLS upstreams through the upstream proxy.
+5. ~~SSRF guard gaps (IPv4-compatible v6, `64:ff9b::/96`, `2002::/16`, `192.0.0.0/24`); route **live IPTV** HLS upstreams through the upstream proxy~~ Fixed in code (#11, 🧪): `net.rs` judges NAT64, 6to4, Teredo and IPv4-translated addresses by the IPv4 address they carry, refuses `::a.b.c.d`, `64:ff9b:1::/48`, `192.0.0.0/24`, `100::/64` and `fec0::/10`, and the guarded client no longer sends the previous (login) URL as `Referer` on redirects. The live hub hands ffmpeg only a loopback proxy URL. Counts as done once deployed and checked on the real provider.
 6. DLNA discovery trust: bind control URLs to the responding IP, cap body sizes, setting to disable discovery.
 7. Live IPTV transcodes counted against the user's `max_transcodes`.
 8. Signing key / data dir permissions created atomically (0600/0700).
