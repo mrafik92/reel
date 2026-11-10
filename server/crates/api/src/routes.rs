@@ -781,11 +781,23 @@ pub async fn image(
         _ => return Err(ApiError::NotFound),
     };
     let source = source.ok_or(ApiError::NotFound)?;
+    // Local artwork (`file://`) may only be served from inside a library root.
+    let roots = if source.starts_with("file://") {
+        library_roots(&st.db).await?
+    } else {
+        Vec::new()
+    };
     let path = st
         .images
-        .get(ik, &source, q.w.unwrap_or(0))
+        .get_in(ik, &source, q.w.unwrap_or(0), &roots)
         .await
         .map_err(|e| match e {
+            reel_metadata::Error::Io(ref io)
+                if io.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                tracing::warn!(%source, "local image rejected: {io}");
+                ApiError::NotFound
+            }
             reel_metadata::Error::Io(_) | reel_metadata::Error::Status(404) => ApiError::NotFound,
             e => {
                 tracing::warn!(%source, "image fetch failed: {e}");
@@ -793,6 +805,18 @@ pub async fn image(
             }
         })?;
     respond_file(path, &headers).await
+}
+
+/// All configured library root directories (from `libraries.paths_json`).
+async fn library_roots(db: &sqlx::SqlitePool) -> ApiResult<Vec<std::path::PathBuf>> {
+    let rows: Vec<String> = sqlx::query_scalar("SELECT paths_json FROM libraries")
+        .fetch_all(db)
+        .await?;
+    Ok(rows
+        .iter()
+        .flat_map(|j| serde_json::from_str::<Vec<String>>(j).unwrap_or_default())
+        .map(std::path::PathBuf::from)
+        .collect())
 }
 
 /// Serve a cached image file with ETag / long-lived cache headers.

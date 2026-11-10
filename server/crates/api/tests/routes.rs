@@ -371,7 +371,8 @@ async fn image_served_with_cache_headers() {
             .success()
     );
     let db = reel_core::db::connect_url("sqlite::memory:").await.unwrap();
-    sqlx::query("INSERT INTO libraries (id, name, kind) VALUES (1, 'M', 'movies')")
+    sqlx::query("INSERT INTO libraries (id, name, kind, paths_json) VALUES (1, 'M', 'movies', ?)")
+        .bind(serde_json::json!([dir.path().to_str().unwrap()]).to_string())
         .execute(&db)
         .await
         .unwrap();

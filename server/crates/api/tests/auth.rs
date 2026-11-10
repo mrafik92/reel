@@ -996,6 +996,61 @@ async fn signed_urls_valid_expired_tampered() {
     assert_eq!(res.status(), 401);
 }
 
+#[tokio::test]
+async fn local_artwork_cannot_escape_the_library_roots() {
+    let e = env().await;
+    let (lib, item, _) = seed_library(&e, "Alpha").await;
+    let root = e.dir.path().join("media");
+    std::fs::create_dir_all(&root).unwrap();
+    sqlx::query("UPDATE libraries SET paths_json = ? WHERE id = ?")
+        .bind(json!([root.to_str().unwrap()]).to_string())
+        .bind(lib)
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    // A secret outside the library, and a symlinked "poster" pointing at it.
+    let secret = e.dir.path().join("signing.key");
+    std::fs::write(&secret, "TOP-SECRET-SIGNING-KEY-MATERIAL").unwrap();
+    let evil = root.join("poster.jpg");
+    std::os::unix::fs::symlink(&secret, &evil).unwrap();
+    // An honest poster inside the library.
+    let good = root.join("folder.jpg");
+    std::fs::write(
+        &good,
+        [0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F', b'I', b'F'],
+    )
+    .unwrap();
+
+    let url_for = |src: &Path| {
+        let (state, pool) = (e.admin.clone(), e.pool.clone());
+        let src = format!("file://{}", src.display());
+        async move {
+            sqlx::query("UPDATE media_items SET poster = ? WHERE id = ?")
+                .bind(src)
+                .bind(item)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let (_, d) = get(&state, &format!("/api/v1/items/{item}")).await;
+            let u = d["poster_url"].as_str().unwrap().to_string();
+            // ask for the untouched original, the path that used to stream raw bytes
+            u.replace("w=342", "w=0")
+        }
+    };
+
+    let u = url_for(&evil).await;
+    assert!(u.contains("w=0"), "{u}");
+    let res = raw_call(&e.raw, Request::get(&u).body(Body::empty()).unwrap()).await;
+    assert_eq!(res.status(), 404);
+    let body = body_of(res).await;
+    assert!(!String::from_utf8_lossy(&body).contains("TOP-SECRET"));
+
+    let u = url_for(&good).await;
+    let res = raw_call(&e.raw, Request::get(&u).body(Body::empty()).unwrap()).await;
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.headers()[header::CONTENT_TYPE], "image/jpeg");
+}
+
 fn make_video(path: &Path, acodec: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let ok = Command::new("ffmpeg")
