@@ -7,7 +7,11 @@ use std::{
     path::Path,
 };
 
-use quick_xml::{Reader, events::Event};
+use quick_xml::{
+    Reader, XmlVersion,
+    escape::resolve_predefined_entity,
+    events::{BytesRef, Event},
+};
 
 use crate::{Error, Result};
 
@@ -172,6 +176,21 @@ enum Field {
 }
 
 /// Parse `reader`; `window` = (earliest stop, latest start) in unix seconds.
+/// Append the text an entity/character reference (`&amp;`, `&#233;`) stands for. Unknown named
+/// entities (no DTD support) are kept verbatim instead of failing the whole guide.
+fn push_ref(text: &mut String, r: &BytesRef<'_>) -> std::result::Result<(), quick_xml::Error> {
+    if let Some(c) = r.resolve_char_ref()? {
+        text.push(c);
+    } else if let Some(v) = resolve_predefined_entity(r) {
+        text.push_str(v);
+    } else {
+        text.push('&');
+        text.push_str(r);
+        text.push(';');
+    }
+    Ok(())
+}
+
 /// `sink` receives messages and returns `false` to abort. Programmes are batched `batch` at a time.
 pub fn parse_reader<R: BufRead>(
     reader: R,
@@ -179,8 +198,10 @@ pub fn parse_reader<R: BufRead>(
     batch: usize,
     mut sink: impl FnMut(XmlMsg) -> bool,
 ) -> Result<ParseStats> {
+    // No reader-level trim_text: quick-xml reports `&amp;` etc. as separate `GeneralRef`
+    // events, so trimming each text chunk would eat the spaces around them
+    // ("News &amp; Weather" → "News&Weather"). Field text is trimmed once at its end tag.
     let mut rd = Reader::from_reader(reader);
-    rd.config_mut().trim_text(true);
     let mut buf = Vec::new();
     let mut stats = ParseStats::default();
     let mut out: Vec<Programme> = Vec::with_capacity(batch);
@@ -192,8 +213,12 @@ pub fn parse_reader<R: BufRead>(
     let attr = |e: &quick_xml::events::BytesStart<'_>, name: &str| -> Option<String> {
         e.attributes()
             .flatten()
-            .find(|a| a.key.as_ref() == name.as_bytes())
-            .and_then(|a| a.unescape_value().ok().map(|v| v.into_owned()))
+            .find(|a| a.key.as_ref() == name)
+            .and_then(|a| {
+                a.normalized_value(XmlVersion::Implicit1_0)
+                    .ok()
+                    .map(|v| v.into_owned())
+            })
     };
 
     loop {
@@ -205,7 +230,7 @@ pub fn parse_reader<R: BufRead>(
             Event::Start(ref e) | Event::Empty(ref e) => {
                 let is_empty = matches!(ev, Event::Empty(_));
                 match e.name().as_ref() {
-                    b"channel" => {
+                    "channel" => {
                         chan = attr(e, "id").map(|id| XmlChannel {
                             id,
                             names: vec![],
@@ -215,7 +240,7 @@ pub fn parse_reader<R: BufRead>(
                             chan = None;
                         }
                     }
-                    b"programme" => {
+                    "programme" => {
                         stats.programmes_seen += 1;
                         let start = attr(e, "start").and_then(|s| parse_xmltv_time(&s));
                         let stop = attr(e, "stop").and_then(|s| parse_xmltv_time(&s));
@@ -244,7 +269,7 @@ pub fn parse_reader<R: BufRead>(
                             _ => None,
                         };
                     }
-                    b"icon" => {
+                    "icon" => {
                         if let Some(src) = attr(e, "src") {
                             if let Some(p) = prog.as_mut() {
                                 p.icon.get_or_insert(src);
@@ -255,12 +280,12 @@ pub fn parse_reader<R: BufRead>(
                     }
                     n => {
                         field = match (n, chan.is_some(), prog.is_some()) {
-                            (b"display-name", true, _) => Field::DisplayName,
-                            (b"title", _, true) => Field::Title,
-                            (b"sub-title", _, true) => Field::SubTitle,
-                            (b"desc", _, true) => Field::Desc,
-                            (b"category", _, true) => Field::Category,
-                            (b"episode-num", _, true) => Field::EpisodeNum,
+                            ("display-name", true, _) => Field::DisplayName,
+                            ("title", _, true) => Field::Title,
+                            ("sub-title", _, true) => Field::SubTitle,
+                            ("desc", _, true) => Field::Desc,
+                            ("category", _, true) => Field::Category,
+                            ("episode-num", _, true) => Field::EpisodeNum,
                             _ => Field::None,
                         };
                         text.clear();
@@ -268,13 +293,16 @@ pub fn parse_reader<R: BufRead>(
                 }
             }
             Event::Text(ref t) if field != Field::None => {
-                text.push_str(&t.unescape().map_err(|e| Error::Parse(e.to_string()))?);
+                text.push_str(&t.xml10_content());
+            }
+            Event::GeneralRef(ref r) if field != Field::None => {
+                push_ref(&mut text, r).map_err(|e| Error::Parse(format!("xmltv: {e}")))?;
             }
             Event::CData(ref t) if field != Field::None => {
-                text.push_str(&String::from_utf8_lossy(t));
+                text.push_str(&t.xml10_content());
             }
             Event::End(ref e) => match e.name().as_ref() {
-                b"channel" => {
+                "channel" => {
                     if let Some(c) = chan.take() {
                         stats.channels += 1;
                         if !sink(XmlMsg::Channel(c)) {
@@ -282,7 +310,7 @@ pub fn parse_reader<R: BufRead>(
                         }
                     }
                 }
-                b"programme" => {
+                "programme" => {
                     if let Some(p) = prog.take() {
                         if !p.title.is_empty() {
                             stats.programmes_kept += 1;
@@ -453,5 +481,41 @@ mod tests {
         let b = run(open_maybe_gz(&gz).unwrap(), 100);
         assert_eq!(a.2, b.2);
         assert_eq!(b.0.programmes_kept, 3);
+    }
+
+    #[test]
+    fn references_keep_surrounding_spaces() {
+        // quick-xml ≥ 0.38 reports references as separate events; the spaces around them and
+        // character references must survive, and unknown entities must not abort the guide.
+        let xml = r#"<tv><channel id="a&amp;b"><display-name>Tom &amp; Jerry &#233;t&#xE9;</display-name></channel>
+<programme start="20240101120000 +0000" stop="20240101130000 +0000" channel="a&amp;b">
+  <title> Fish &lt; Chips &nbsp; </title><desc>
+    Line one
+    &quot;two&quot; </desc></programme></tv>"#;
+        let (st, ch, pr, _) = run(Cursor::new(xml), 10);
+        assert_eq!(st.channels, 1);
+        assert_eq!(ch[0].id, "a&b");
+        assert_eq!(ch[0].names, vec!["Tom & Jerry été"]);
+        assert_eq!(pr[0].channel, "a&b");
+        assert_eq!(pr[0].title, "Fish < Chips &nbsp;");
+        assert_eq!(pr[0].description.as_deref(), Some("Line one\n    \"two\""));
+    }
+
+    #[test]
+    fn many_attributes_parse_quickly() {
+        // RUSTSEC-2026-0194: quick-xml < 0.41 checked duplicate attribute names in O(n²).
+        // `id` comes last so the lookup walks (and duplicate-checks) every attribute.
+        let attrs: String = (0..20_000).map(|i| format!(" a{i}=\"x\"")).collect();
+        let xml =
+            format!(r#"<tv><channel{attrs} id="c"><display-name>C</display-name></channel></tv>"#);
+        let t = std::time::Instant::now();
+        let (st, ch, _, _) = run(Cursor::new(xml), 10);
+        assert_eq!(st.channels, 1);
+        assert_eq!(ch[0].id, "c");
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            t.elapsed()
+        );
     }
 }

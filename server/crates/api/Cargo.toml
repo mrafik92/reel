@@ -39,7 +39,7 @@ tower.workspace = true
 base64 = "0.22"
 rand = "0.8"
 form_urlencoded = "1"
-quick-xml = "0.37"
+quick-xml = "0.42"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 async-trait = "0.1"
 
