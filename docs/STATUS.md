@@ -1,4 +1,4 @@
-# Status: 2026-11-04
+# Status: 2026-11-10
 
 Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
@@ -62,7 +62,7 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 1. Upgrade `quick-xml` to ≥ 0.41 (RUSTSEC-2026-0194, reachable through XMLTV/DLNA); build sqlx with only the sqlite feature.
 2. IPTV/EPG ingestion budgets: bytes, gzip expansion, line/token sizes, record counts, deadlines.
 3. Logo/TMDB image fetches: streaming size cutoff, single-flight, cache size budget.
-4. Local artwork: canonicalize under the library roots + magic-byte sniff (symlinked `poster.jpg` → arbitrary file read).
+4. ~~Local artwork: canonicalize under the library roots + magic-byte sniff~~ Fixed in code (#10, 🧪): the image route resolves symlinks, requires a library root, caps size and sniffs magic bytes. Counts as done once deployed and checked on the real library.
 5. SSRF guard gaps (IPv4-compatible v6, `64:ff9b::/96`, `2002::/16`, `192.0.0.0/24`); route **live IPTV** HLS upstreams through the upstream proxy.
 6. DLNA discovery trust: bind control URLs to the responding IP, cap body sizes, setting to disable discovery.
 7. Live IPTV transcodes counted against the user's `max_transcodes`.

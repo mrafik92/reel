@@ -70,11 +70,24 @@ impl ImageCache {
         }
     }
 
-    /// Return a cached file for `source` at `width`. `source` is a TMDB path
-    /// (`/abc.jpg`) or a `file:///abs/path` local image. Width is clamped to
-    /// [`WIDTHS`]; `0`/large → the original file.
+    /// Return a cached file for a TMDB `source` (`/abc.jpg`) at `width`. Width is
+    /// clamped to [`WIDTHS`]; `0`/large → the original file. `file://` sources are
+    /// refused: use [`ImageCache::get_in`], which confines them to library roots.
     pub async fn get(&self, kind: ImageKind, source: &str, width: u32) -> Result<PathBuf> {
-        let orig = self.original(kind, source).await?;
+        self.get_in(kind, source, width, &[]).await
+    }
+
+    /// Like [`ImageCache::get`], but `file:///abs/path` local artwork is allowed when
+    /// its fully resolved path (symlinks followed) lies under one of `roots` and the
+    /// file starts with JPEG/PNG/WebP magic bytes. Anything else is `PermissionDenied`.
+    pub async fn get_in(
+        &self,
+        kind: ImageKind,
+        source: &str,
+        width: u32,
+        roots: &[PathBuf],
+    ) -> Result<PathBuf> {
+        let orig = self.original(kind, source, roots).await?;
         let Some(w) = clamp_width(width) else {
             return Ok(orig);
         };
@@ -107,17 +120,9 @@ impl ImageCache {
         self.locks.entry(key).or_default().clone()
     }
 
-    async fn original(&self, kind: ImageKind, source: &str) -> Result<PathBuf> {
+    async fn original(&self, kind: ImageKind, source: &str, roots: &[PathBuf]) -> Result<PathBuf> {
         if let Some(p) = source.strip_prefix("file://") {
-            let p = PathBuf::from(p);
-            return if p.is_file() {
-                Ok(p)
-            } else {
-                Err(Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "local image missing",
-                )))
-            };
+            return confine_local(Path::new(p), roots).await;
         }
         let path = self
             .root
@@ -141,6 +146,55 @@ impl ImageCache {
         write_atomic(&path, &bytes).await?;
         Ok(path)
     }
+}
+
+/// Largest local artwork file we will serve (it is read into memory whole).
+const MAX_LOCAL_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+
+fn denied(msg: &'static str) -> Error {
+    Error::Io(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        msg,
+    ))
+}
+
+/// Resolve a local artwork path and make sure it is safe to serve: after following
+/// every symlink it must be a regular file under one of `roots` (also resolved),
+/// no larger than [`MAX_LOCAL_IMAGE_BYTES`], and start with image magic bytes.
+/// Returns the resolved path.
+async fn confine_local(path: &Path, roots: &[PathBuf]) -> Result<PathBuf> {
+    use tokio::io::AsyncReadExt;
+
+    let real = tokio::fs::canonicalize(path).await?;
+    let mut inside = false;
+    for r in roots {
+        if let Ok(r) = tokio::fs::canonicalize(r).await {
+            if real.starts_with(&r) {
+                inside = true;
+                break;
+            }
+        }
+    }
+    if !inside {
+        return Err(denied("local image outside the library roots"));
+    }
+    let mut f = tokio::fs::File::open(&real).await?;
+    let meta = f.metadata().await?;
+    if !meta.is_file() || meta.len() > MAX_LOCAL_IMAGE_BYTES {
+        return Err(denied("local image is not a regular file of sane size"));
+    }
+    let mut head = [0u8; 12];
+    let n = f.read(&mut head).await?;
+    if !is_image_magic(&head[..n]) {
+        return Err(denied("local image is not a JPEG/PNG/WebP file"));
+    }
+    Ok(real)
+}
+
+fn is_image_magic(h: &[u8]) -> bool {
+    h.starts_with(&[0xFF, 0xD8, 0xFF])
+        || h.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
+        || (h.len() >= 12 && &h[..4] == b"RIFF" && &h[8..12] == b"WEBP")
 }
 
 /// Filesystem-safe key for a source string.
@@ -261,13 +315,128 @@ mod tests {
     #[tokio::test]
     async fn local_files_resize() {
         let dir = tempfile::tempdir().unwrap();
-        let f = dir.path().join("poster.jpg");
+        let lib = dir.path().join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        let f = lib.join("poster.jpg");
         std::fs::write(&f, jpeg_bytes(600, 900)).unwrap();
         let c = ImageCache::with_base_url(dir.path(), "http://127.0.0.1:1");
         let out = c
-            .get(ImageKind::Poster, &format!("file://{}", f.display()), 185)
+            .get_in(
+                ImageKind::Poster,
+                &format!("file://{}", f.display()),
+                185,
+                &[lib.clone()],
+            )
             .await
             .unwrap();
         assert_eq!(image::open(out).unwrap().width(), 185);
+        // Original (w=0) is served too, as the resolved path.
+        let orig = c
+            .get_in(
+                ImageKind::Poster,
+                &format!("file://{}", f.display()),
+                0,
+                &[lib],
+            )
+            .await
+            .unwrap();
+        assert_eq!(orig, std::fs::canonicalize(&f).unwrap());
+    }
+
+    fn is_denied(r: Result<PathBuf>) -> bool {
+        matches!(r, Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::PermissionDenied)
+    }
+
+    #[tokio::test]
+    async fn local_art_is_confined_to_library_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = dir.path().join("lib");
+        let secret = dir.path().join("data");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::create_dir_all(&secret).unwrap();
+        std::fs::write(secret.join("signing.key"), b"super secret key material").unwrap();
+        std::fs::write(secret.join("other.jpg"), jpeg_bytes(50, 50)).unwrap();
+        std::fs::write(lib.join("real.jpg"), jpeg_bytes(50, 50)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink(secret.join("signing.key"), lib.join("poster.jpg")).unwrap();
+            symlink(secret.join("other.jpg"), lib.join("folder.jpg")).unwrap();
+            symlink(&lib, secret.join("alias")).unwrap();
+        }
+        let c = ImageCache::with_base_url(dir.path(), "http://127.0.0.1:1");
+        let roots = [lib.clone()];
+        let url = |p: &Path| format!("file://{}", p.display());
+
+        // Plain file under the root works.
+        assert!(
+            c.get_in(ImageKind::Poster, &url(&lib.join("real.jpg")), 0, &roots)
+                .await
+                .is_ok()
+        );
+        #[cfg(unix)]
+        {
+            // Symlink to a non-image outside the roots: denied, for raw and resized.
+            for w in [0, 185] {
+                assert!(is_denied(
+                    c.get_in(ImageKind::Poster, &url(&lib.join("poster.jpg")), w, &roots)
+                        .await
+                ));
+            }
+            // Symlink to a real image outside the roots: denied too.
+            assert!(is_denied(
+                c.get_in(ImageKind::Poster, &url(&lib.join("folder.jpg")), 0, &roots)
+                    .await
+            ));
+            // `..` traversal out of the root: denied.
+            let sneaky = format!("{}/../data/other.jpg", lib.display());
+            assert!(is_denied(
+                c.get_in(ImageKind::Poster, &format!("file://{sneaky}"), 0, &roots)
+                    .await
+            ));
+        }
+        // Absolute path elsewhere, and no roots at all: denied.
+        assert!(is_denied(
+            c.get_in(
+                ImageKind::Poster,
+                &url(&secret.join("other.jpg")),
+                0,
+                &roots
+            )
+            .await
+        ));
+        assert!(is_denied(
+            c.get(ImageKind::Poster, &url(&lib.join("real.jpg")), 0)
+                .await
+        ));
+    }
+
+    #[tokio::test]
+    async fn local_art_must_look_like_an_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = dir.path().join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        let fake = lib.join("poster.jpg");
+        std::fs::write(&fake, b"not an image at all, just text").unwrap();
+        let c = ImageCache::with_base_url(dir.path(), "http://127.0.0.1:1");
+        assert!(is_denied(
+            c.get_in(
+                ImageKind::Poster,
+                &format!("file://{}", fake.display()),
+                0,
+                &[lib]
+            )
+            .await
+        ));
+    }
+
+    #[test]
+    fn magic_bytes() {
+        assert!(is_image_magic(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 0]));
+        assert!(is_image_magic(b"\x89PNG\r\n\x1a\n\0\0\0\0"));
+        assert!(is_image_magic(b"RIFF\x00\x00\x00\x00WEBPVP8 "));
+        assert!(!is_image_magic(b"RIFF\x00\x00\x00\x00WAVEfmt "));
+        assert!(!is_image_magic(b"GIF89a"));
+        assert!(!is_image_magic(b""));
     }
 }
