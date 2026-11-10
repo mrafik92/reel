@@ -1,32 +1,81 @@
 name: ci
 
+# Once per PR (not push + pull_request), and once per push to main — main's run also writes the shared
+# Rust cache that PRs restore.
 on:
   push:
+    branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+  pull-requests: read   # dorny/paths-filter lists the PR's files
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ github.event_name != 'pull_request' || steps.filter.outputs.server == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name != 'pull_request'
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            server:
+              - 'server/**'
+              - '.github/workflows/ci.yml'
+
   server:
+    needs: changes
+    # Web/docs-only PRs skip this job (a skipped job counts as passing for branch protection).
+    if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: server
+    env:
+      CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.86
         with:
           components: rustfmt, clippy
+      - name: No debug info in CI (smaller caches, faster link)
+        # Config (not env) because Cargo.toml sets `[profile.dev.package."*"] debug`, which env can't override.
+        run: |
+          mkdir -p "$CARGO_HOME"
+          cat >> "$CARGO_HOME/config.toml" <<'EOF'
+          [profile.dev]
+          debug = 0
+          [profile.dev.package."*"]
+          debug = 0
+          EOF
+      - uses: rui314/setup-mold@v1
+      - uses: taiki-e/install-action@nextest
       - name: ffmpeg (tests generate media with it)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: server
+          shared-key: reel
+          # PRs restore main's warm cache but don't upload multi-GB copies of their own.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # nextest runs tests from all binaries in parallel; the crates have no doctests (the one in
+      # playback/src/lib.rs is `ignore`d), so there is no `cargo test --doc` step.
+      - run: cargo nextest run --workspace --locked
       - name: OpenAPI spec is up to date
         run: |
-          cargo run -q -p reel-api --bin export-openapi > /tmp/openapi.json
-          diff -u openapi.json /tmp/openapi.json
+          cargo run --locked -q -p reel-api --bin export-openapi > "$RUNNER_TEMP/openapi.json"
+          diff -u openapi.json "$RUNNER_TEMP/openapi.json"
 
   clients:
     runs-on: ubuntu-latest
