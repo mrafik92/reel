@@ -1,4 +1,4 @@
-# Status: 2026-11-10
+# Status: 2026-11-11
 
 Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
@@ -38,6 +38,7 @@ Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafi
 | IPTV | Live HLS has no quality ladder (live transcode is fixed) |
 | Library | Episodes of a multi-episode file all start at 0:00 (no per-episode offsets) |
 | Downloads | "Common Side Effects" is stuck in Sonarr ("episodes not imported"). That's a Sonarr-side import problem, not Reel |
+| Requests | **Torrent searches fail in bursts, outside Reel** (#66). Root cause: gluetun's DNS-over-TLS to Cloudflare (1.1.1.1:853) times out or gets reset. Prowlarr runs inside gluetun, so every indexer fails at the same moment (`EAI_AGAIN`: 119 of 165 indexer errors from 2026-10-30 to 11-10). The same DoT path feeds gluetun's health check, which caused VPN reconnect loops of 4 h (11-03) and 3 h (11-05). Prowlarr's backoff then reaches Radarr/Sonarr as HTTP 429, and they escalate their own backoff up to 12 h. Requests made in that window search with **0 active indexers**, and Reel marks them `not_found`. There are no Cloudflare/VPN-IP blocks, and Prowlarr↔Arr sync is fine. Fix awaiting owner approval (CT 105): switch gluetun to Proton's in-tunnel DNS, then Retry the 8 `not_found` requests (releases exist for them). Surfacing this in Reel is covered by #67 |
 | Toolchain | rustc pinned to 1.86 (some crates pinned for it, e.g. wiremock 0.6.4) |
 
 ## Security posture
