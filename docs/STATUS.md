@@ -1,4 +1,4 @@
-# Status: 2026-11-10
+# Status: 2026-11-11
 
 Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
@@ -38,7 +38,7 @@ Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafi
 | IPTV | Live HLS has no quality ladder (live transcode is fixed) |
 | Library | Episodes of a multi-episode file all start at 0:00 (no per-episode offsets) |
 | Downloads | "Common Side Effects" is stuck in Sonarr ("episodes not imported"). That's a Sonarr-side import problem, not Reel |
-| Toolchain | rustc pinned to 1.86 (some crates pinned for it, e.g. wiremock 0.6.4) |
+| Toolchain | rustc pinned to 1.86 (some crates pinned for it, e.g. wiremock 0.6.4). sqlx 0.9 needs 1.94, so sqlx stays on 0.8 and its bundled SQLite advisory (RUSTSEC-2026-0459, #80) is open |
 
 ## Security posture
 
@@ -60,7 +60,7 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 
 **Still open (must be done before any public exposure):**
 
-1. Upgrade `quick-xml` to ≥ 0.41 (RUSTSEC-2026-0194, reachable through XMLTV/DLNA); build sqlx with only the sqlite feature.
+1. ~~Upgrade `quick-xml` to ≥ 0.41; sqlx with sqlite only~~ Fixed in code (#7, 🧪): `quick-xml` 0.42 (RUSTSEC-2026-0194/-0195 gone) in the XMLTV and DLNA parsers. sqlx was already built SQLite-only; every crate now uses the one workspace entry and CI fails if `sqlx-mysql`, `sqlx-postgres` or `rsa` enter the build graph. `rsa` (RUSTSEC-2023-0071) stays listed in `Cargo.lock` only, because cargo records disabled optional deps, and is ignored with that reason in `server/.cargo/audit.toml`. Counts as done once deployed and an EPG refresh and a DLNA discovery have been checked. A fresh `cargo audit` also found RUSTSEC-2026-0459 (bundled SQLite in `libsqlite3-sys` 0.30), tracked in #80: the fix needs sqlx 0.9, which needs rustc 1.94.
 2. IPTV/EPG ingestion budgets: bytes, gzip expansion, line/token sizes, record counts, deadlines.
 3. Logo/TMDB image fetches: streaming size cutoff, single-flight, cache size budget.
 4. ~~Local artwork: canonicalize under the library roots + magic-byte sniff~~ Fixed in code (#10, 🧪): the image route resolves symlinks, requires a library root, caps size and sniffs magic bytes. Counts as done once deployed and checked on the real library.
