@@ -68,6 +68,14 @@ jobs:
           # PRs restore main's warm cache but don't upload multi-GB copies of their own.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --check
+      - name: sqlx builds SQLite only (no MySQL/Postgres driver, no rsa)
+        # sqlx-mysql and rsa stay in Cargo.lock (cargo lists disabled optional deps), so cargo-audit
+        # still names RUSTSEC-2023-0071; this proves they are not compiled. See server/.cargo/audit.toml.
+        run: |
+          for c in sqlx-mysql sqlx-postgres rsa; do
+            out=$(cargo tree --locked --workspace --target all -e normal,build -i "$c" 2>/dev/null)
+            if [ -n "$out" ]; then echo "::error::$c is in the build graph"; echo "$out"; exit 1; fi
+          done
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # nextest runs tests from all binaries in parallel; the crates have no doctests (the one in
       # playback/src/lib.rs is `ignore`d), so there is no `cargo test --doc` step.

@@ -23,6 +23,8 @@ figment = { version = "0.10", features = ["toml", "env"] }
 http-body-util = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# SQLite only: no default features, so the MySQL/Postgres drivers (and `rsa`, RUSTSEC-2023-0071) are
+# never built. Every crate uses this entry (`sqlx.workspace = true`); CI checks the build graph.
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync"] }

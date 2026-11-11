@@ -14,7 +14,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use quick_xml::{Reader, events::Event};
+use quick_xml::{Reader, escape::resolve_predefined_entity, events::Event};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::net::UdpSocket;
@@ -162,9 +162,11 @@ fn resolve(base: &str, rel: &str) -> Option<String> {
 
 /// Parse a UPnP device description. `None` when it is not a renderer with AVTransport.
 pub fn parse_description(xml: &str, location: &str) -> Option<Device> {
+    // No trim_text: references (`&amp;`) arrive as separate events, so text is collected per
+    // element and trimmed when the element ends.
     let mut r = Reader::from_str(xml);
-    r.config_mut().trim_text(true);
     let mut stack: Vec<String> = vec![];
+    let mut text = String::new();
     let (mut name, mut model, mut manu, mut udn, mut icon, mut urlbase) =
         (None, None, None, None, None, None::<String>);
     let (mut st, mut ctl) = (None::<String>, None::<String>);
@@ -172,9 +174,43 @@ pub fn parse_description(xml: &str, location: &str) -> Option<Device> {
     loop {
         match r.read_event() {
             Ok(Event::Start(e)) => {
-                stack.push(String::from_utf8_lossy(e.local_name().as_ref()).into_owned())
+                stack.push(e.local_name().as_ref().to_owned());
+                text.clear();
             }
+            Ok(Event::Text(t)) => text.push_str(&t.xml10_content()),
+            Ok(Event::CData(t)) => text.push_str(&t.xml10_content()),
+            Ok(Event::GeneralRef(g)) => match g.resolve_char_ref() {
+                Ok(Some(c)) => text.push(c),
+                _ => match resolve_predefined_entity(&g) {
+                    Some(v) => text.push_str(v),
+                    None => {
+                        text.push('&');
+                        text.push_str(&g);
+                        text.push(';');
+                    }
+                },
+            },
             Ok(Event::End(_)) => {
+                let txt = std::mem::take(&mut text).trim().to_string();
+                if !txt.is_empty() {
+                    let n = stack.len();
+                    let cur = stack.last().map(String::as_str).unwrap_or("");
+                    let parent = n
+                        .checked_sub(2)
+                        .and_then(|i| stack.get(i))
+                        .map(String::as_str);
+                    match cur {
+                        "friendlyName" if name.is_none() => name = Some(txt),
+                        "modelName" if model.is_none() => model = Some(txt),
+                        "manufacturer" if manu.is_none() => manu = Some(txt),
+                        "UDN" if udn.is_none() => udn = Some(txt),
+                        "URLBase" if urlbase.is_none() => urlbase = Some(txt),
+                        "serviceType" => st = Some(txt),
+                        "controlURL" => ctl = Some(txt),
+                        "url" if parent == Some("icon") && icon.is_none() => icon = Some(txt),
+                        _ => {}
+                    }
+                }
                 if stack.pop().as_deref() == Some("service") {
                     if let (Some(t), Some(c)) = (st.take(), ctl.take()) {
                         if t.contains(":AVTransport:") {
@@ -183,27 +219,6 @@ pub fn parse_description(xml: &str, location: &str) -> Option<Device> {
                             rc = rc.or(Some((t, c)));
                         }
                     }
-                }
-            }
-            Ok(Event::Text(t)) => {
-                let Ok(txt) = t.unescape() else { continue };
-                let txt = txt.to_string();
-                let n = stack.len();
-                let cur = stack.last().map(String::as_str).unwrap_or("");
-                let parent = n
-                    .checked_sub(2)
-                    .and_then(|i| stack.get(i))
-                    .map(String::as_str);
-                match cur {
-                    "friendlyName" if name.is_none() => name = Some(txt),
-                    "modelName" if model.is_none() => model = Some(txt),
-                    "manufacturer" if manu.is_none() => manu = Some(txt),
-                    "UDN" if udn.is_none() => udn = Some(txt),
-                    "URLBase" if urlbase.is_none() => urlbase = Some(txt),
-                    "serviceType" => st = Some(txt),
-                    "controlURL" => ctl = Some(txt),
-                    "url" if parent == Some("icon") && icon.is_none() => icon = Some(txt),
-                    _ => {}
                 }
             }
             Ok(Event::Eof) | Err(_) => break,
