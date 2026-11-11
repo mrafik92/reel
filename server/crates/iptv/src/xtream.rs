@@ -116,7 +116,7 @@ impl XtreamClient {
                 "User-Agent",
                 self.ua.as_deref().unwrap_or(crate::net::DEFAULT_UA),
             )
-            .timeout(Duration::from_secs(120))
+            .timeout(crate::limits::XTREAM_DEADLINE)
             .send()
             .await?;
         if let Some(g) = &self.gate {
@@ -128,7 +128,12 @@ impl XtreamClient {
                 resp.status().as_u16()
             )));
         }
-        let body = resp.bytes().await?;
+        let body = crate::limits::read_body(
+            resp,
+            "the provider's answer",
+            crate::limits::XTREAM_JSON_MAX_BYTES,
+        )
+        .await?;
         serde_json::from_slice(&body).map_err(|e| Error::Parse(format!("not JSON: {e}")))
     }
 

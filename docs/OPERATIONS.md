@@ -12,7 +12,7 @@
 | Media | `/mnt/media/media` → container `/data` (ro) | Same paths as Radarr/Sonarr (`/data/media/...`), so webhooks need no path mapping |
 | TLS / name | Caddy **CT 107** (10.10.10.73), LAN block `*.rafikii.co` → `@reel host reel.rafikii.co` → `10.10.10.207:8420` (`flush_interval -1`) | LAN only. Backups: `/etc/caddy/Caddyfile.pre-reel-*` |
 | DNS | Technitium `10.10.10.2` zone `reel.rafikii.co` → A `10.10.10.73` | API token at `/root/.technitium-token` on minix |
-| Arr stack | **CT 105** (10.10.10.122): Radarr :7878, Sonarr :8989, Sonarr Anime :8990, qBittorrent :8200 (via gluetun) | Each Arr has a "Reel" webhook connection |
+| Arr stack | **CT 105** (10.10.10.122): Radarr :7878, Sonarr :8989, Sonarr Anime :8990, Prowlarr :9696, qBittorrent :8200 | Each Arr has a "Reel" webhook connection. Compose: `/mnt/stacks/docker-compose-{vpn,media}.yaml` (project `mediastack`). **Only Prowlarr** runs inside gluetun's network namespace (Proton WireGuard, NL); Radarr/Sonarr reach it at `10.10.10.122:9696`. qBittorrent has been on the plain `mediastack` network (direct WAN) since 2026-10-30, a temporary exception the owner asked for (see the comment in the compose file) |
 | Firewall | CT 113 Proxmox firewall drops LAN egress apart from the Arr ports and **qBittorrent :8200** (added for Reel) | Backup: `/root/113.fw.bak-*` |
 | Remote access | Tailscale; OPNsense has a static-port outbound NAT + WAN UDP 41641 pass (Firewall → Automation, "Tailscale: …") | Config backup `/conf/backup/config-pre-tailscale-static-port-20261103T165802Z.xml` |
 | Image registry | `ghcr.io/mrafik92/reel` (private) | CT 113 is logged in with a **pull-only** PAT (`read:packages`) |
@@ -104,6 +104,29 @@ Settings → Live TV → Providers → Guides: ordered list, per-guide stats, "S
 
 **qBittorrent**
 URL must be `http://10.10.10.122:8200` (the CT 113 firewall allows only that). qBittorrent 5 cookies (`QBT_SID_*`) are supported.
+
+**Torrent search finds nothing / requests end in `not_found`** (analysis: #66)
+All read-only. Run from the Mac: `ssh minix-local` → `pct exec 105 -- …`. Never print API keys; read them inside
+the container (`sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' /config/config.xml`).
+1. **Radarr/Sonarr health:** `GET /api/v3/health` and `GET /api/v3/indexerstatus` (`disabledTill` per indexer).
+   "All search-capable indexers are temporarily unavailable" means searches run with **0 active indexers**, and
+   Reel marks those requests `not_found` even though releases exist.
+2. **Prowlarr:** `GET /api/v1/indexerstatus` and the log (`/config/logs/prowlarr.txt`). When Prowlarr has backed
+   off an indexer, it answers Radarr/Sonarr with **HTTP 429** and a `Retry-After`. The Arr then disables the
+   "(Prowlarr)" indexer for that long and escalates its own backoff (1 min → 5 → 15 → 30 min → 1 h → 3 h → 6 h → 12 h).
+3. **Read the exception, not the summary.** Prowlarr logs "Unable to connect to indexer … DNS/SSL issues" for
+   every network error. The stack trace after it tells them apart. `Resource temporarily unavailable` from
+   `Dns.GetHostEntry…` means **gluetun's DNS timed out**. An HTTP 5xx (`521`, `500`) means the site's origin is down.
+4. **gluetun:** `docker logs --timestamps gluetun`. Look for `[dns] … TLS handshake with 1.1.1.1:853 … connection
+   reset by peer` (DNS-over-TLS to Cloudflare failing) and `restarting VPN because it failed to pass the
+   healthcheck` loops. The health check resolves `github.com`/`cloudflare.com` through the same DoT path, so a
+   DoT outage makes gluetun reconnect every ~6 s.
+5. **Time zones differ:** Prowlarr/Radarr/Sonarr log files use local time (CET, `TZ=Europe/Amsterdam`). Docker
+   `--timestamps` and the Prowlarr history API use UTC.
+6. **DNS from inside the VPN:** `docker exec prowlarr getent ahostsv4 nyaa.si`, and compare
+   `nslookup <name> 127.0.0.1` (gluetun DoT) with `nslookup <name> 10.2.0.1` (Proton's resolver inside the tunnel).
+7. After the cause is fixed: Reel → Requests → **Retry** on each `not_found` request. Radarr doesn't search old
+   missing movies again by itself; RSS only picks up new releases.
 
 **Adding a DLNA TV** (pending)
 1. Get the TV's IP and model.

@@ -7,6 +7,7 @@ pub mod gate;
 pub mod hls;
 pub mod hub;
 pub mod ingest;
+pub mod limits;
 pub mod live;
 pub mod m3u;
 pub mod net;
