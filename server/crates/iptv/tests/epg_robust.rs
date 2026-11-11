@@ -344,3 +344,78 @@ async fn blocked_user_agent_error_has_no_credentials() {
         );
     }
 }
+
+/// Files left in the ingest work dir (downloaded guides must never outlive a refresh).
+fn leftovers(ing: &Ingest) -> Vec<String> {
+    std::fs::read_dir(&ing.work_dir)
+        .map(|d| {
+            d.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn downloaded_guides_are_removed_on_success_and_on_every_failure() {
+    let (prov, url) = start().await;
+    let (pool, sid, ing, _d) = setup(&url, None).await;
+    let src = store::get_source(&pool, sid).await.unwrap();
+    let good = guide(now() / 600 * 600);
+    let truncated = good[..good.len() / 2].to_string();
+    // one oversized text node: refused by the XML token budget, not read into memory
+    let endless = format!(
+        "{}<programme start=\"20240101000000\" stop=\"20240101010000\" channel=\"x\"><title>{}</title></programme></tv>",
+        &good[..good.len() - "</tv>".len()],
+        "x".repeat(3 * 1024 * 1024)
+    );
+    let cases: Vec<(&str, Vec<u8>, Option<&str>)> = vec![
+        ("ok", good.clone().into_bytes(), None),
+        ("html", b"<html>nope</html>".to_vec(), Some("HTML page")),
+        ("truncated", truncated.into_bytes(), Some("")),
+        ("token", endless.into_bytes(), Some("larger than")),
+        ("gz-garbage", vec![0x1f, 0x8b, 1, 2, 3, 4, 5], Some("")),
+    ];
+    for (name, body, want_err) in cases {
+        *prov.guide.lock().unwrap() = body;
+        let r = ing.refresh_source(&src).await.unwrap();
+        match want_err {
+            None => assert!(r.epg_error.is_none(), "{name}: {:?}", r.epg_error),
+            Some(w) => {
+                let e = r
+                    .epg_error
+                    .unwrap_or_else(|| panic!("{name}: expected an error"));
+                assert!(e.contains(w), "{name}: {e}");
+            }
+        }
+        assert!(leftovers(&ing).is_empty(), "{name}: {:?}", leftovers(&ing));
+    }
+}
+
+#[tokio::test]
+async fn a_playlist_with_an_endless_line_fails_cleanly() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("list.m3u");
+    let mut body = b"#EXTM3U\n#EXTINF:-1,A\nhttp://a/1\n#EXTINF:-1,".to_vec();
+    body.extend(vec![b'n'; 256 * 1024]);
+    std::fs::write(&file, &body).unwrap();
+    let (pool, _sid, ing, _d) = setup("http://unused", None).await;
+    let sid: i64 = sqlx::query_scalar(
+        "INSERT INTO iptv_sources (name, kind, url) VALUES ('File','m3u',?) RETURNING id",
+    )
+    .bind(file.to_string_lossy().as_ref())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let src = store::get_source(&pool, sid).await.unwrap();
+    let e = ing.refresh_source(&src).await.unwrap_err();
+    assert!(e.to_string().contains("line longer"), "{e}");
+    let (n, err): (i64, Option<String>) =
+        sqlx::query_as("SELECT channel_count, last_error FROM iptv_sources WHERE id = ?")
+            .bind(sid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(n, 0, "nothing half-imported");
+    assert!(err.unwrap().contains("line longer"));
+}

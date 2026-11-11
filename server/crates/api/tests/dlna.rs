@@ -348,6 +348,17 @@ fn xml_and_time_helpers() {
         .is_none(),
         "no AVTransport → not a renderer"
     );
+    // References arrive as separate quick-xml events: spaces around them must survive.
+    let d = reel_api::cast::parse_description(
+        r#"<root><device><friendlyName> Tom &amp; Jerry&#39;s TV </friendlyName>
+<manufacturer>A&lt;B</manufacturer><serviceList><service>
+<serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
+<controlURL>/ctl?a=1&amp;b=2</controlURL></service></serviceList></device></root>"#,
+        "http://10.0.0.6:80/d.xml",
+    )
+    .unwrap();
+    assert_eq!(d.name, "Tom & Jerry's TV");
+    assert_eq!(d.av_control, "http://10.0.0.6/ctl?a=1&b=2");
     let m = reel_api::cast::didl(
         "A & B",
         "http://x/y?a=1&b=2",

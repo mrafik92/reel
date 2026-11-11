@@ -1,0 +1,8 @@
+# cargo-audit settings for the server workspace (`cd server && cargo audit`).
+[advisories]
+ignore = [
+  # rsa (Marvin attack). Only in Cargo.lock: sqlx 0.8 lists its optional MySQL driver there even
+  # though it is disabled (rust-lang/cargo#10801). Reel builds sqlx with SQLite only, and CI fails if
+  # sqlx-mysql or rsa ever enter the build graph. sqlx 0.9 drops the entry but needs rustc 1.94.
+  "RUSTSEC-2023-0071",
+]
