@@ -1,12 +1,18 @@
 //! Loopback upstream proxy: ffmpeg/ffprobe subprocesses never see provider URLs.
 //!
-//! Callers register an upstream URL (+ user agent) and get back a loopback URL
+//! Callers register an upstream URL (+ user agent, optional referer) and get back a loopback URL
 //! `http://127.0.0.1:{port}/internal/upstream/{token}/f.{ext}`. The proxy fetches the real URL
 //! through a caller-supplied, SSRF-guarded `reqwest::Client` (connect-time DNS checks and redirect
 //! checks live in that client, see `reel_iptv::net::client`), streams the body back with `Range`
 //! passthrough, and rewrites HLS playlists so every nested URI (segments, keys, maps, child
-//! playlists) becomes a fresh token. Tokens are unguessable (128 bit), expire, and are revoked
-//! with their owner (the playback session). The listener only binds 127.0.0.1.
+//! playlists) becomes a token of its own. Tokens are unguessable (128 bit), expire, and are revoked
+//! with their owner (the playback session, or the [`Lease`] they were derived from). The listener
+//! only binds 127.0.0.1.
+//!
+//! Live HLS (the IPTV channel hub) uses [`UpstreamOpts::idle`]: tokens then expire a while after
+//! their last use instead of at a fixed time, a reloaded playlist maps the same upstream URL to the
+//! same token (so the token map does not grow with every reload), and a redirected playlist is
+//! reloaded from where it was redirected to, like a player would.
 //!
 //! This also keeps provider credentials out of subprocess argv and `/proc`.
 
@@ -20,6 +26,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
@@ -31,9 +38,29 @@ const MAX_ENTRIES: usize = 50_000;
 const MAX_PLAYLIST: usize = 4 * 1024 * 1024;
 const HEADER_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How a registered URL is fetched and how long its token lives.
+#[derive(Debug, Clone, Default)]
+pub struct UpstreamOpts {
+    pub user_agent: String,
+    /// Sent as `Referer` on every upstream request (the URL itself and everything nested in it).
+    pub referer: Option<String>,
+    /// Sliding expiry for live streams: every request through a token keeps it (and the tokens
+    /// derived from it) alive for this long. `None`: fixed expiry.
+    pub idle: Option<Duration>,
+}
+
+impl UpstreamOpts {
+    pub fn ua(user_agent: &str) -> Self {
+        UpstreamOpts {
+            user_agent: user_agent.to_string(),
+            ..Default::default()
+        }
+    }
+}
+
 struct Entry {
     url: String,
-    ua: String,
+    opts: UpstreamOpts,
     expires: Instant,
     owner: Option<String>,
 }
@@ -41,6 +68,8 @@ struct Entry {
 struct Inner {
     client: reqwest::Client,
     check: UrlCheck,
+    /// Keys the deterministic tokens of nested playlist URIs.
+    secret: String,
     entries: Mutex<HashMap<String, Entry>>,
     port: Mutex<Option<u16>>,
 }
@@ -48,7 +77,8 @@ struct Inner {
 #[derive(Clone)]
 pub struct UpstreamProxy(Arc<Inner>);
 
-/// A registered URL that is revoked when dropped (for one-shot subprocesses).
+/// A registered URL that is revoked when dropped (for one-shot subprocesses and live upstreams),
+/// together with every token derived from it (segments, keys, child playlists).
 pub struct Lease {
     proxy: UpstreamProxy,
     token: String,
@@ -64,7 +94,13 @@ impl Lease {
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        self.proxy.0.entries.lock().unwrap().remove(&self.token);
+        let t = &self.token;
+        self.proxy
+            .0
+            .entries
+            .lock()
+            .unwrap()
+            .retain(|k, e| k != t && e.owner.as_deref() != Some(t.as_str()));
     }
 }
 
@@ -94,6 +130,7 @@ impl UpstreamProxy {
         UpstreamProxy(Arc::new(Inner {
             client,
             check,
+            secret: new_token(),
             entries: Mutex::new(HashMap::new()),
             port: Mutex::new(None),
         }))
@@ -134,12 +171,28 @@ impl UpstreamProxy {
         Ok(p)
     }
 
+    /// Token of a nested URI: stable per (owner, URL), so a live playlist that is reloaded every
+    /// few seconds maps its segments onto the same tokens instead of minting new ones.
+    fn child_token(&self, owner: &str, url: &str) -> String {
+        let mut h = Sha256::new();
+        h.update(self.0.secret.as_bytes());
+        h.update([0]);
+        h.update(owner.as_bytes());
+        h.update([0]);
+        h.update(url.as_bytes());
+        h.finalize()[..16]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
     fn register_inner(
         &self,
         url: &str,
-        ua: &str,
-        ttl: Duration,
+        opts: &UpstreamOpts,
+        expires: Instant,
         owner: Option<&str>,
+        token: Option<String>,
     ) -> Result<(String, String), PlaybackError> {
         let parsed = reqwest::Url::parse(url)
             .map_err(|_| PlaybackError::Invalid("invalid upstream URL".into()))?;
@@ -150,12 +203,17 @@ impl UpstreamProxy {
         }
         (self.0.check)(url).map_err(|e| PlaybackError::ffmpeg(format!("upstream refused: {e}")))?;
         let port = self.ensure_started()?;
-        let token = new_token();
+        let token = token.unwrap_or_else(new_token);
         let local = format!(
             "http://127.0.0.1:{port}/internal/upstream/{token}/{}",
             local_name(&parsed)
         );
         let mut map = self.0.entries.lock().unwrap();
+        if let Some(e) = map.get_mut(&token) {
+            // same URI seen again (playlist reload): keep the entry, extend its life
+            e.expires = e.expires.max(expires);
+            return Ok((token, local));
+        }
         if map.len() >= MAX_ENTRIES / 2 {
             let now = Instant::now();
             map.retain(|_, e| e.expires > now);
@@ -167,8 +225,8 @@ impl UpstreamProxy {
             token.clone(),
             Entry {
                 url: url.to_string(),
-                ua: ua.to_string(),
-                expires: Instant::now() + ttl,
+                opts: opts.clone(),
+                expires,
                 owner: owner.map(str::to_string),
             },
         );
@@ -183,13 +241,37 @@ impl UpstreamProxy {
         ttl: Duration,
         owner: Option<&str>,
     ) -> Result<String, PlaybackError> {
-        self.register_inner(url, ua, ttl, owner)
-            .map(|(_, local)| local)
+        self.register_inner(
+            url,
+            &UpstreamOpts::ua(ua),
+            Instant::now() + ttl,
+            owner,
+            None,
+        )
+        .map(|(_, local)| local)
     }
 
-    /// One-shot registration, revoked when the lease is dropped.
+    /// One-shot registration, revoked (with everything derived from it) when the lease is dropped.
     pub fn lease(&self, url: &str, ua: &str, ttl: Duration) -> Result<Lease, PlaybackError> {
-        let (token, local) = self.register_inner(url, ua, ttl, None)?;
+        self.lease_with(url, &UpstreamOpts::ua(ua), ttl)
+    }
+
+    /// Like [`UpstreamProxy::lease`] with a referer and/or a sliding expiry
+    /// ([`UpstreamOpts::idle`]; `ttl` then only bounds the time until the first request).
+    pub fn lease_with(
+        &self,
+        url: &str,
+        opts: &UpstreamOpts,
+        ttl: Duration,
+    ) -> Result<Lease, PlaybackError> {
+        let token = new_token();
+        let (token, local) = self.register_inner(
+            url,
+            opts,
+            Instant::now() + ttl,
+            Some(&token),
+            Some(token.clone()),
+        )?;
         Ok(Lease {
             proxy: self.clone(),
             token,
@@ -235,11 +317,15 @@ async fn serve(
     if !host_ok {
         return gone();
     }
-    let (url, ua, expires, owner) = {
-        let map = inner.entries.lock().unwrap();
-        match map.get(&token) {
-            Some(e) if e.expires > Instant::now() => {
-                (e.url.clone(), e.ua.clone(), e.expires, e.owner.clone())
+    let (url, opts, expires, owner) = {
+        let mut map = inner.entries.lock().unwrap();
+        let now = Instant::now();
+        match map.get_mut(&token) {
+            Some(e) if e.expires > now => {
+                if let Some(idle) = e.opts.idle {
+                    e.expires = e.expires.max(now + idle);
+                }
+                (e.url.clone(), e.opts.clone(), e.expires, e.owner.clone())
             }
             _ => return gone(),
         }
@@ -248,7 +334,13 @@ async fn serve(
         tracing::warn!(reason = %redact_text(&e), "upstream request refused by policy");
         return StatusCode::FORBIDDEN.into_response();
     }
-    let mut rb = inner.client.get(&url).header(header::USER_AGENT, &ua);
+    let mut rb = inner
+        .client
+        .get(&url)
+        .header(header::USER_AGENT, &opts.user_agent);
+    if let Some(r) = &opts.referer {
+        rb = rb.header(header::REFERER, r);
+    }
     if let Some(r) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()) {
         if r.starts_with("bytes=") && r.len() < 128 {
             rb = rb.header(header::RANGE, r);
@@ -287,11 +379,28 @@ async fn serve(
                 Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
             }
         }
+        // live playlists are reloaded from where they were redirected to, like a player does
+        // (re-requesting the original URL can open a new provider session on every reload)
+        if opts.idle.is_some()
+            && final_url.as_str() != url
+            && (inner.check)(final_url.as_str()).is_ok()
+        {
+            if let Some(e) = inner.entries.lock().unwrap().get_mut(&token) {
+                e.url = final_url.to_string();
+            }
+        }
         let text = String::from_utf8_lossy(&body);
         let proxy = UpstreamProxy(inner.clone());
-        let ttl = expires.saturating_duration_since(Instant::now());
+        let child_expires = match opts.idle {
+            Some(idle) => Instant::now() + idle,
+            None => expires,
+        };
         let rewritten = rewrite_playlist(&text, &final_url, &mut |abs| {
-            proxy.register(abs, &ua, ttl, owner.as_deref()).ok()
+            let tok = owner.as_deref().map(|o| proxy.child_token(o, abs));
+            proxy
+                .register_inner(abs, &opts, child_expires, owner.as_deref(), tok)
+                .ok()
+                .map(|(_, local)| local)
         });
         return Response::builder()
             .status(StatusCode::OK)

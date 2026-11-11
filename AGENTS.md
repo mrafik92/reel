@@ -60,6 +60,7 @@ cd clients && bun install && bun run typecheck && bun run build
 #   apps/web: src/api/openapi.d.ts from server/openapi.json (see the package scripts)
 ```
 
+- **Security audit:** `cd server && cargo audit`. Exceptions go in `server/.cargo/audit.toml`, each with a reason; never ignore an advisory without one. Keep sqlx on the single workspace entry (SQLite only); CI fails if a MySQL/Postgres driver or `rsa` gets built.
 - **Always commit `server/Cargo.lock`** when dependencies change. The image build uses `--locked` and fails otherwise.
 - Tests that generate media need `ffmpeg` (installed locally and in CI).
 - `server/target` can grow past 25 GB. Run `cargo clean` if disk space gets low.

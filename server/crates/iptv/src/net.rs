@@ -20,15 +20,15 @@ use reqwest::{
 use crate::{Error, Result};
 
 /// True for addresses a server-side fetch must not reach in strict mode.
+///
+/// IPv6 forms that carry an IPv4 address (mapped `::ffff:a.b.c.d`, translated `::ffff:0:a.b.c.d`,
+/// NAT64 `64:ff9b::a.b.c.d`, 6to4 `2002:AABB:CCDD::`, Teredo `2001:0::`) are judged by the
+/// embedded IPv4 address, so `64:ff9b::127.0.0.1` on a NAT64 network cannot reach loopback.
+/// Deprecated IPv4-compatible `::a.b.c.d` and local-use NAT64 `64:ff9b:1::/48` are refused outright.
 pub fn is_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => blocked_v4(v4),
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return blocked_v4(v4);
-            }
-            blocked_v6(v6)
-        }
+        IpAddr::V6(v6) => blocked_v6(v6),
     }
 }
 
@@ -43,17 +43,46 @@ fn blocked_v4(ip: Ipv4Addr) -> bool {
         || ip.is_documentation()
         || (o[0] == 100 && (o[1] & 0xC0) == 64) // 100.64.0.0/10 carrier-grade NAT / Tailscale
         || o[0] == 0
+        || (o[0] == 192 && o[1] == 0 && o[2] == 0) // 192.0.0.0/24 IETF protocol assignments
         || (o[0] == 198 && (o[1] == 18 || o[1] == 19)) // benchmarking
         || o[0] >= 240
 }
 
+fn v4_from(hi: u16, lo: u16) -> Ipv4Addr {
+    let [a, b] = hi.to_be_bytes();
+    let [c, d] = lo.to_be_bytes();
+    Ipv4Addr::new(a, b, c, d)
+}
+
 fn blocked_v6(ip: Ipv6Addr) -> bool {
     let seg = ip.segments();
+    // ::ffff:a.b.c.d (mapped) and ::ffff:0:a.b.c.d (translated, RFC 2765)
+    if seg[..4] == [0; 4]
+        && ((seg[4] == 0 && seg[5] == 0xFFFF) || (seg[4] == 0xFFFF && seg[5] == 0))
+    {
+        return blocked_v4(v4_from(seg[6], seg[7]));
+    }
+    // 64:ff9b::/96 well-known NAT64 prefix (RFC 6052): the IPv4 address it translates to
+    if seg[..6] == [0x64, 0xFF9B, 0, 0, 0, 0] {
+        return blocked_v4(v4_from(seg[6], seg[7]));
+    }
+    // 2002::/16 6to4: the IPv4 address of the relay router
+    if seg[0] == 0x2002 {
+        return blocked_v4(v4_from(seg[1], seg[2]));
+    }
+    // 2001:0::/32 Teredo: server address in clear, client address bit-inverted
+    if seg[0] == 0x2001 && seg[1] == 0 {
+        return blocked_v4(v4_from(seg[2], seg[3])) || blocked_v4(v4_from(!seg[6], !seg[7]));
+    }
     ip.is_loopback()
         || ip.is_unspecified()
         || ip.is_multicast()
+        || seg[..6] == [0; 6] // ::/96 IPv4-compatible (deprecated): never a legitimate peer
+        || (seg[0] == 0x64 && seg[1] == 0xFF9B && seg[2] == 1) // 64:ff9b:1::/48 local-use NAT64
+        || (seg[0] == 0x0100 && seg[1..4] == [0; 3]) // 100::/64 discard-only
         || (seg[0] & 0xFE00) == 0xFC00 // unique local fc00::/7
         || (seg[0] & 0xFFC0) == 0xFE80 // link-local fe80::/10
+        || (seg[0] & 0xFFC0) == 0xFEC0 // site-local fec0::/10 (deprecated)
         || (seg[0] == 0x2001 && seg[1] == 0x0DB8) // documentation
 }
 
@@ -210,7 +239,11 @@ pub fn client(allow_private: bool) -> reqwest::Client {
     let mut b = reqwest::Client::builder()
         .user_agent(DEFAULT_UA)
         .connect_timeout(Duration::from_secs(15))
-        .tcp_nodelay(true);
+        .tcp_nodelay(true)
+        // reqwest would send the previous URL as `Referer` on a redirect: that URL often carries
+        // the provider login (`/live/USER/PASS/…`, `?username=…`), and it would also replace a
+        // source's configured referrer
+        .referer(false);
     b = if allow_private {
         b.redirect(redirect::Policy::limited(10))
     } else {
@@ -256,6 +289,32 @@ mod tests {
             "::ffff:127.0.0.1",
             "::ffff:10.0.0.1",
             "ff02::1",
+            // IPv4-compatible (deprecated) ::a.b.c.d, whatever it embeds
+            "::127.0.0.1",
+            "::10.0.0.1",
+            "::8.8.8.8",
+            "::2",
+            // translated ::ffff:0:a.b.c.d
+            "::ffff:0:127.0.0.1",
+            // NAT64 64:ff9b::/96 to a blocked IPv4 address, and local-use NAT64
+            "64:ff9b::127.0.0.1",
+            "64:ff9b::a9fe:a9fe",
+            "64:ff9b::192.168.1.1",
+            "64:ff9b:1::8.8.8.8",
+            // 6to4 2002::/16 around a blocked IPv4 address
+            "2002:7f00:1::1",
+            "2002:c0a8:101::1",
+            "2002:a9fe:a9fe::",
+            // Teredo with a loopback server / a private (bit-inverted) client
+            "2001:0:7f00:1::1",
+            "2001:0:808:808::f5ff:fffe", // client 10.0.0.1
+            // 192.0.0.0/24 IETF protocol assignments (e.g. 192.0.0.170 NAT64 discovery)
+            "192.0.0.1",
+            "192.0.0.170",
+            "::ffff:192.0.0.8",
+            // discard-only, site-local
+            "100::1",
+            "fec0::1",
         ] {
             assert!(is_blocked_ip(ip.parse().unwrap()), "{ip} should be blocked");
         }
@@ -267,6 +326,14 @@ mod tests {
             "100.128.0.1",
             "2606:4700::1111",
             "::ffff:8.8.8.8",
+            // NAT64 / 6to4 / Teredo to public IPv4 hosts stay reachable (IPv6-only networks)
+            "64:ff9b::8.8.8.8",
+            "64:ff9b::101:101",
+            "2002:808:808::1",
+            "2001:0:808:808::f7f7:f7f7",
+            // neighbours of 192.0.0.0/24
+            "192.0.1.1",
+            "191.255.255.255",
         ] {
             assert!(
                 !is_blocked_ip(ip.parse().unwrap()),
@@ -319,6 +386,11 @@ mod tests {
         assert!(check_url("http://127.0.0.1:8080/x", false).is_err());
         assert!(check_url("http://localhost/x", false).is_err());
         assert!(check_url("http://[::1]/x", false).is_err());
+        assert!(check_url("http://[::127.0.0.1]/x", false).is_err());
+        assert!(check_url("http://[64:ff9b::7f00:1]/x", false).is_err());
+        assert!(check_url("http://[2002:7f00:1::]/x", false).is_err());
+        assert!(check_url("http://192.0.0.8/x", false).is_err());
+        assert!(check_url("http://[64:ff9b::808:808]/x", false).is_ok());
         assert!(check_url("http://169.254.169.254/latest/meta-data", false).is_err());
         assert!(check_url("http://nas.local/list.m3u", false).is_err());
         assert!(check_url("https://example.com/list.m3u", false).is_ok());
@@ -379,5 +451,43 @@ mod tests {
             "ok"
         );
         assert!(check_url(&format!("http://127.0.0.1:{port}/"), false).is_err());
+    }
+
+    #[tokio::test]
+    async fn redirects_do_not_leak_the_login_url_as_referer() {
+        use axum::{Router, http::HeaderMap, response::Redirect, routing::get};
+        let app = Router::new()
+            .route(
+                "/live/bob/s3cret/1.m3u8",
+                get(|| async { Redirect::temporary("/lb/1.m3u8") }),
+            )
+            .route(
+                "/lb/1.m3u8",
+                get(|h: HeaderMap| async move {
+                    h.get("referer")
+                        .map(|v| v.to_str().unwrap_or("?").to_string())
+                        .unwrap_or_else(|| "none".into())
+                }),
+            );
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        let url = format!("http://{addr}/live/bob/s3cret/1.m3u8");
+        let c = client(true);
+        assert_eq!(
+            c.get(&url).send().await.unwrap().text().await.unwrap(),
+            "none"
+        );
+        // an explicit (source-configured) referrer survives the redirect unchanged
+        let got = c
+            .get(&url)
+            .header("referer", "https://portal.example/")
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(got, "https://portal.example/");
     }
 }

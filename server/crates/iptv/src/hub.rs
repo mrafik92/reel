@@ -26,10 +26,16 @@ use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use reel_playback::upstream::{Lease, UpstreamOpts, UpstreamProxy};
+
 use crate::{
     Error, Result,
     ts::{PKT, SYNC, StreamInfo, TsAnalyzer},
 };
+
+/// An HLS upstream's proxy tokens die this long after ffmpeg last used them (it reloads a live
+/// playlist every few seconds; the lease is also revoked as soon as the connection ends).
+const LIVE_TOKEN_IDLE: Duration = Duration::from_secs(120);
 
 // ───────────────────────── configuration & resolution ─────────────────────────
 
@@ -711,6 +717,9 @@ impl Drop for ExternalSlot {
 struct Inner {
     cfg: HubConfig,
     http: reqwest::Client,
+    /// Loopback proxy for HLS upstreams: ffmpeg gets a `127.0.0.1` token URL, never the
+    /// provider URL (credentials stay out of argv and `/proc`; every fetch is SSRF-guarded).
+    proxy: UpstreamProxy,
     resolver: Arc<dyn ChannelResolver>,
     state: Mutex<HubState>,
     shutdown: CancellationToken,
@@ -726,10 +735,16 @@ pub struct ChannelHub {
 impl ChannelHub {
     pub fn new(cfg: HubConfig, resolver: Arc<dyn ChannelResolver>) -> Self {
         let http = crate::net::client(cfg.allow_private_upstream);
+        let allow = cfg.allow_private_upstream;
+        let proxy = UpstreamProxy::new(
+            http.clone(),
+            Arc::new(move |u: &str| crate::net::check_url(u, allow).map_err(|e| e.to_string())),
+        );
         ChannelHub {
             inner: Arc::new(Inner {
                 cfg,
                 http,
+                proxy,
                 resolver,
                 state: Mutex::new(HubState {
                     pipes: HashMap::new(),
@@ -750,6 +765,11 @@ impl ChannelHub {
 
     pub fn config(&self) -> &HubConfig {
         &self.inner.cfg
+    }
+
+    /// Upstream-proxy tokens currently alive (HLS upstreams; diagnostics / tests).
+    pub fn proxy_tokens(&self) -> usize {
+        self.inner.proxy.token_count()
     }
 
     /// Start the background reaper (tears down idle pipes after the grace period).
@@ -1072,6 +1092,8 @@ struct Upstream {
     stream: ByteStream,
     /// Keeps an ffmpeg child alive (and kills it on drop) for HLS-only upstreams.
     _child: Option<tokio::process::Child>,
+    /// The child's proxy tokens; dropped after the child (field order), revoking them.
+    _lease: Option<Lease>,
 }
 
 fn host_of(url: &str) -> Option<String> {
@@ -1140,32 +1162,49 @@ async fn open_upstream(inner: &Inner, c: &Candidate) -> std::result::Result<Upst
     Ok(Upstream {
         stream: Box::pin(resp.bytes_stream().map(|r| r.map_err(io::Error::other))),
         _child: None,
+        _lease: None,
     })
 }
 
 /// HLS providers: let ffmpeg pull the playlist and emit one continuous MPEG-TS on stdout.
+///
+/// ffmpeg only ever sees a loopback URL of the hub's [`UpstreamProxy`]: the provider URL (with its
+/// login), user agent and referer stay in this process, and every playlist, segment and key is
+/// fetched through the SSRF-guarded client (DNS and redirects checked per request).
 fn open_ffmpeg(inner: &Inner, c: &Candidate, ua: &str) -> std::result::Result<Upstream, String> {
     use std::process::Stdio;
+    let opts = UpstreamOpts {
+        user_agent: ua.to_string(),
+        referer: c.referrer.clone(),
+        idle: Some(LIVE_TOKEN_IDLE),
+    };
+    let lease = inner
+        .proxy
+        .lease_with(&c.url, &opts, LIVE_TOKEN_IDLE)
+        .map_err(|e| crate::net::redact_text(&e.to_string()))?;
     let mut cmd = tokio::process::Command::new(&inner.cfg.ffmpeg_path);
     cmd.args([
         "-hide_banner",
         "-nostdin",
         "-loglevel",
         "error",
-        // only network protocols: a playlist must not make ffmpeg read local files
+        // loopback proxy only: a playlist can make ffmpeg neither read local files nor reach
+        // another host (the proxy rewrites every URI to a token and drops the rest); `crypto`
+        // wraps AES-128 segments, whose keys come through the proxy too
         "-protocol_whitelist",
-        "http,https,tcp,tls,crypto",
-        "-user_agent",
-        ua,
-    ]);
-    if let Some(r) = &c.referrer {
-        cmd.args(["-headers", &format!("Referer: {r}\r\n")]);
-    }
-    cmd.args(["-i", &c.url, "-c", "copy", "-f", "mpegts", "pipe:1"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
+        "http,tcp,crypto",
+        "-i",
+        lease.url(),
+        "-c",
+        "copy",
+        "-f",
+        "mpegts",
+        "pipe:1",
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null())
+    .kill_on_drop(true);
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("cannot start ffmpeg: {e}"))?;
@@ -1173,6 +1212,7 @@ fn open_ffmpeg(inner: &Inner, c: &Candidate, ua: &str) -> std::result::Result<Up
     Ok(Upstream {
         stream: Box::pin(tokio_util::io::ReaderStream::with_capacity(out, 64 * 1024)),
         _child: Some(child),
+        _lease: Some(lease),
     })
 }
 
