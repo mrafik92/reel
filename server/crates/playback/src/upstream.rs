@@ -223,6 +223,7 @@ impl UpstreamProxy {
         expires: Instant,
         owner: Option<&str>,
         token: Option<String>,
+        parent: Option<&str>,
     ) -> Result<(String, String), PlaybackError> {
         let parsed = reqwest::Url::parse(url)
             .map_err(|_| PlaybackError::Invalid("invalid upstream URL".into()))?;
@@ -239,6 +240,12 @@ impl UpstreamProxy {
             local_name(&parsed)
         );
         let mut map = self.0.entries.lock().unwrap();
+        // a nested URI only lives as long as the token it came from: checked under the same lock
+        // as `revoke_owner` / lease drop, so a playlist that was still being fetched when its
+        // owner ended cannot register tokens nothing would revoke
+        if parent.is_some_and(|p| !map.contains_key(p)) {
+            return Err(PlaybackError::Invalid("upstream owner ended".into()));
+        }
         if let Some(e) = map.get_mut(&token) {
             // same URI seen again (playlist reload): keep the entry, extend its life
             e.expires = e.expires.max(expires);
@@ -277,6 +284,7 @@ impl UpstreamProxy {
             Instant::now() + ttl,
             owner,
             None,
+            None,
         )
         .map(|(_, local)| local)
     }
@@ -301,6 +309,7 @@ impl UpstreamProxy {
             Instant::now() + ttl,
             Some(&token),
             Some(token.clone()),
+            None,
         )?;
         Ok(Lease {
             proxy: self.clone(),
@@ -329,7 +338,7 @@ impl UpstreamProxy {
         ttl: Duration,
         owner: Option<&str>,
     ) -> Result<String, PlaybackError> {
-        self.register_inner(url, opts, Instant::now() + ttl, owner, None)
+        self.register_inner(url, opts, Instant::now() + ttl, owner, None, None)
             .map(|(_, local)| local)
     }
 
@@ -556,10 +565,20 @@ async fn serve(
         let rewritten = rewrite_playlist(&text, &final_url, &mut |abs| {
             let tok = owner.as_deref().map(|o| proxy.child_token(o, abs));
             proxy
-                .register_inner(abs, &opts, child_expires, owner.as_deref(), tok)
+                .register_inner(
+                    abs,
+                    &opts,
+                    child_expires,
+                    owner.as_deref(),
+                    tok,
+                    Some(&token),
+                )
                 .ok()
                 .map(|(_, local)| local)
         });
+        if !inner.entries.lock().unwrap().contains_key(&token) {
+            return gone(); // revoked while the playlist was in flight
+        }
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")
