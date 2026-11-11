@@ -112,6 +112,7 @@ fn live_opts(idle: Duration) -> UpstreamOpts {
         user_agent: "LiveUA/1".into(),
         referer: Some("https://portal.example/".into()),
         idle: Some(idle),
+        exclusive: false,
     }
 }
 

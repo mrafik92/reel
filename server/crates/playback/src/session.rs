@@ -369,12 +369,19 @@ impl SessionManager {
             self.media
                 .upstream()
                 .ok_or_else(|| PlaybackError::Invalid("remote playback is not available".into()))?
-                .register(
+                .register_with(
                     &req.file.path,
-                    req.user_agent
-                        .as_deref()
-                        .filter(|ua| !ua.trim().is_empty())
-                        .unwrap_or(crate::ffmpeg::REMOTE_UA),
+                    &crate::upstream::UpstreamOpts {
+                        user_agent: req
+                            .user_agent
+                            .as_deref()
+                            .filter(|ua| !ua.trim().is_empty())
+                            .unwrap_or(crate::ffmpeg::REMOTE_UA)
+                            .to_string(),
+                        // one provider connection per session, also across ffmpeg's seeks
+                        exclusive: true,
+                        ..Default::default()
+                    },
                     self.cfg.upstream_ttl,
                     Some(&id),
                 )?

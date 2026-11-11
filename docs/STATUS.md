@@ -28,8 +28,12 @@ Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafi
   covered by CI tests with local fake providers (2026-11-11):
   - Movie and series episode, direct play (proxied through `/vod/direct` with `Range`) and remux/transcode (ffmpeg
     reads a loopback proxy URL, `Range` passed through).
-  - A remux seek restarts ffmpeg without ever holding two provider connections, and stopping closes the connection
-    (`remote_remux_seek_and_stop_keep_a_single_provider_connection`).
+  - A remux seek never holds two provider connections, and stopping closes the connection. ffmpeg's own HTTP seek
+    (5.1 in the image, 8.0 in CI) opens the new connection *before* closing the old one, so every seek (matroska
+    cue lookup, restart at a new position) briefly needed two. The proxy now gives a session's input one
+    connection: a new request cuts the previous one and waits for it to be released
+    (`exclusive_input_closes_the_old_connection_before_a_seek_opens_the_next`,
+    `remote_remux_seek_and_stop_keep_a_single_provider_connection`).
   - Takeover, stop or idle reap now also closes a **paused** direct-play stream (it used to keep the provider
     connection open until the browser let go).
   - The source's configured User-Agent is now used for every VOD request (probe, direct play, ffmpeg, subtitles);

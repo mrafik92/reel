@@ -13,7 +13,7 @@ use reel_playback::decision::*;
 use reel_playback::media::MediaCtx;
 use reel_playback::model::*;
 use reel_playback::subtitles::{SubtitleSource, to_vtt_with};
-use reel_playback::upstream::UpstreamProxy;
+use reel_playback::upstream::{UpstreamOpts, UpstreamProxy};
 use reel_playback::{HwAccel, PlaybackError, SessionConfig, SessionManager, StartRequest};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -653,6 +653,85 @@ async fn remote_remux_seek_and_stop_keep_a_single_provider_connection() {
         "never two provider connections at once ({} requests)",
         uas.len()
     );
+}
+
+/// What ffmpeg's HTTP seek does (`http_seek_internal` in 5.1 … 8.0: open the new connection, then
+/// close the old one) against a session's exclusive input: the provider never sees two
+/// connections, the old response is cut, the new one is served from the right offset. Tokens that
+/// are not exclusive (subtitle/probe leases, live HLS) keep parallel requests.
+#[tokio::test]
+async fn exclusive_input_closes_the_old_connection_before_a_seek_opens_the_next() {
+    let tmp = tempfile::tempdir().unwrap();
+    let f = tmp.path().join("m.bin");
+    let data: Vec<u8> = (0..=255u8).cycle().take(400_000).collect();
+    std::fs::write(&f, &data).unwrap();
+    let (p, port) = start_provider(f).await;
+    let proxy = open_proxy();
+    let url = format!("http://127.0.0.1:{port}/slow/bob/hunter2/1.mkv");
+    let opts = |exclusive| UpstreamOpts {
+        user_agent: "UA/1".into(),
+        exclusive,
+        ..Default::default()
+    };
+    let local = proxy
+        .register_with(&url, &opts(true), Duration::from_secs(60), Some("sess-1"))
+        .unwrap();
+    let c = reqwest::Client::new();
+    // A: the stream ffmpeg is reading
+    let mut a = c.get(&local).send().await.unwrap();
+    assert_eq!(a.status(), 200);
+    assert!(!a.chunk().await.unwrap().unwrap().is_empty());
+    assert_eq!(p.active.load(Ordering::SeqCst), 1);
+    // B: the seek opens a new connection while A is still open (and idle)
+    let mut b = c
+        .get(&local)
+        .header("Range", "bytes=300000-")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(b.status(), 206);
+    let first = b.chunk().await.unwrap().unwrap();
+    assert_eq!(first[0], data[300_000]);
+    assert_eq!(
+        p.peak.load(Ordering::SeqCst),
+        1,
+        "the provider never saw two connections"
+    );
+    // A was cut: its body ends early instead of streaming on
+    let mut got = 0usize;
+    let ended = tokio::time::timeout(Duration::from_secs(3), async {
+        while let Ok(Some(c)) = a.chunk().await {
+            got += c.len();
+        }
+    })
+    .await;
+    assert!(
+        ended.is_ok() && got < data.len(),
+        "old stream cut ({got} bytes)"
+    );
+    // stopping the session (revoke) closes the remaining connection too
+    proxy.revoke_owner("sess-1");
+    let ended = tokio::time::timeout(Duration::from_secs(3), async {
+        while let Ok(Some(_)) = b.chunk().await {}
+    })
+    .await;
+    assert!(ended.is_ok(), "revoke cuts the open stream");
+    for _ in 0..60 {
+        if p.active.load(Ordering::SeqCst) == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(p.active.load(Ordering::SeqCst), 0);
+
+    // not exclusive: two readers of the same owner run side by side
+    let shared = proxy
+        .register_with(&url, &opts(false), Duration::from_secs(60), Some("sess-2"))
+        .unwrap();
+    let mut x = c.get(&shared).send().await.unwrap();
+    let mut y = c.get(&shared).send().await.unwrap();
+    assert!(x.chunk().await.unwrap().is_some() && y.chunk().await.unwrap().is_some());
+    assert_eq!(p.active.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
