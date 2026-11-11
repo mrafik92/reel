@@ -61,7 +61,7 @@ gaps are listed in [STATUS.md](STATUS.md).
 | Live TV UI | ✅ | Player + two horizontal rows. Full-screen **group browser** (smart sections, Arabic-aware search, pin/hide). No auto-tune |
 | TV guide (EPG) | ✅ | The provider has no guide data, so Reel combines several external XMLTV guides (epgshare01: AE, beIN, Al Jazeera, UK, ZA, FR) matched by name. ~1,436 channels, ~54k programmes |
 | Guide grid | ✅ | Virtualized channels × time grid |
-| IPTV movies & series (VOD) | ✅ catalog / 🧪 playback | 41,268 movies and 15,109 series imported. **My library · IPTV** switch on Movies/Shows; detail pages; "Play now (IPTV)" in Discover. Playback goes through the internal upstream proxy and hasn't been exercised on the real provider yet |
+| IPTV movies & series (VOD) | ✅ catalog / 🧪 playback | 41,268 movies and 15,109 series imported. **My library · IPTV** switch on Movies/Shows; detail pages; "Play now (IPTV)" in Discover. Playback goes through the internal upstream proxy with the source's User-Agent, and shares the provider's connection budget with live TV (a stop or takeover also closes a paused direct-play stream). Covered by CI with fake providers; not yet exercised on the real provider (#3) |
 | Provider politeness | ✅ | Per-source rate limiter with backoff on the panel's 46x/429 anti-abuse codes |
 
 ## Clients & casting

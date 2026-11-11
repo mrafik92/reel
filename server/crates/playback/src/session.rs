@@ -120,6 +120,9 @@ pub struct StartRequest {
     pub user_max_streams: Option<usize>,
     /// The user's concurrent-transcode limit (enforced atomically like the stream limit).
     pub user_max_transcodes: Option<usize>,
+    /// User-Agent for a remote (provider) input, e.g. the IPTV source's configured one. `None`:
+    /// [`crate::ffmpeg::REMOTE_UA`]. Only the loopback proxy sends it; ffmpeg never sees it.
+    pub user_agent: Option<String>,
 }
 
 /// Snapshot of a session for the admin dashboard / `playback_sessions` mirroring.
@@ -366,9 +369,19 @@ impl SessionManager {
             self.media
                 .upstream()
                 .ok_or_else(|| PlaybackError::Invalid("remote playback is not available".into()))?
-                .register(
+                .register_with(
                     &req.file.path,
-                    crate::ffmpeg::REMOTE_UA,
+                    &crate::upstream::UpstreamOpts {
+                        user_agent: req
+                            .user_agent
+                            .as_deref()
+                            .filter(|ua| !ua.trim().is_empty())
+                            .unwrap_or(crate::ffmpeg::REMOTE_UA)
+                            .to_string(),
+                        // one provider connection per session, also across ffmpeg's seeks
+                        exclusive: true,
+                        ..Default::default()
+                    },
                     self.cfg.upstream_ttl,
                     Some(&id),
                 )?

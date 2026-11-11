@@ -268,6 +268,7 @@ fn request(path: &Path, nsubs: usize, start: f64) -> StartRequest {
         start_position_s: start,
         user_max_streams: None,
         user_max_transcodes: None,
+        user_agent: None,
     }
 }
 

@@ -170,6 +170,22 @@ mod tests {
     }
 
     #[test]
+    fn reqwest_errors_logged_by_the_upstream_proxy_are_clean() {
+        // reqwest's Display puts the request URL in parentheses
+        let r = redact_text(
+            "error sending request for url (http://prov.example:8080/series/bob/hunter2/5001.mkv): connection closed",
+        );
+        assert!(
+            !r.contains("bob") && !r.contains("hunter2") && !r.contains("prov.example"),
+            "{r}"
+        );
+        assert!(
+            r.contains("(<url>)") && r.ends_with("connection closed"),
+            "{r}"
+        );
+    }
+
+    #[test]
     fn paths_keep_basename_only() {
         let r = redact_text("Error opening input file /mnt/nfs/library/Film.mkv.");
         assert_eq!(r, "Error opening input file …/Film.mkv.");

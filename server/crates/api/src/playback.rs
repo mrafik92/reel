@@ -249,6 +249,7 @@ pub async fn decide_playback(
             start_position_s: req.start_s.unwrap_or(0.0).max(0.0),
             user_max_streams: limits.max_streams.and_then(|v| usize::try_from(v).ok()),
             user_max_transcodes: limits.max_transcodes.and_then(|v| usize::try_from(v).ok()),
+            user_agent: None,
         })
         .await?;
     let sg = st.signer(u.id());

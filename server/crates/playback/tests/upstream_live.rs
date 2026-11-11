@@ -112,6 +112,7 @@ fn live_opts(idle: Duration) -> UpstreamOpts {
         user_agent: "LiveUA/1".into(),
         referer: Some("https://portal.example/".into()),
         idle: Some(idle),
+        exclusive: false,
     }
 }
 
@@ -214,4 +215,66 @@ async fn fixed_expiry_leases_keep_their_url_and_have_no_referer() {
         2
     );
     assert!(log.iter().all(|(_, ua, r)| ua == "VodUA" && r.is_empty()));
+}
+
+/// A playlist that is still being fetched when its lease (the hub connection) ends must not
+/// register its segments afterwards: they would outlive the lease (live tokens slide for minutes)
+/// and nothing would revoke them. Same for a session owner revoked mid-request.
+#[tokio::test]
+async fn a_playlist_in_flight_when_its_owner_ends_registers_nothing() {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let app = Router::new()
+        .route(
+            "/slow.m3u8",
+            get(|State(g): State<Arc<tokio::sync::Notify>>| async move {
+                g.notified().await;
+                (
+                    [(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")],
+                    "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\na.ts\n#EXTINF:2,\nb.ts\n#EXTINF:2,\nc.ts\n",
+                )
+            }),
+        )
+        .with_state(gate.clone());
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    let proxy = UpstreamProxy::new(reqwest::Client::new(), Arc::new(|_| Ok(())));
+    let url = format!("http://127.0.0.1:{port}/slow.m3u8");
+
+    // 1. lease (live HLS): dropped while its playlist request waits for the provider
+    let lease = proxy
+        .lease_with(
+            &url,
+            &live_opts(Duration::from_secs(120)),
+            Duration::from_secs(60),
+        )
+        .unwrap();
+    let local = lease.url().to_string();
+    let req = tokio::spawn(async move { reqwest::get(&local).await.map(|r| r.status()) });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    drop(lease);
+    assert_eq!(proxy.token_count(), 0);
+    gate.notify_one();
+    let _ = req.await.unwrap();
+    assert_eq!(
+        proxy.token_count(),
+        0,
+        "segments of a playlist that arrived after the lease ended were registered"
+    );
+
+    // 2. session owner revoked mid-request
+    let local = proxy
+        .register_with(
+            &url,
+            &UpstreamOpts::ua("UA/1"),
+            Duration::from_secs(60),
+            Some("sess-9"),
+        )
+        .unwrap();
+    let req = tokio::spawn(async move { reqwest::get(&local).await.map(|r| r.status()) });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    proxy.revoke_owner("sess-9");
+    gate.notify_one();
+    let _ = req.await.unwrap();
+    assert_eq!(proxy.token_count(), 0, "revoked owner got new tokens");
 }

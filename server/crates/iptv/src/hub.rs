@@ -1177,6 +1177,7 @@ fn open_ffmpeg(inner: &Inner, c: &Candidate, ua: &str) -> std::result::Result<Up
         user_agent: ua.to_string(),
         referer: c.referrer.clone(),
         idle: Some(LIVE_TOKEN_IDLE),
+        exclusive: false,
     };
     let lease = inner
         .proxy

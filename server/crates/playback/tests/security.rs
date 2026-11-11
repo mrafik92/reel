@@ -13,7 +13,7 @@ use reel_playback::decision::*;
 use reel_playback::media::MediaCtx;
 use reel_playback::model::*;
 use reel_playback::subtitles::{SubtitleSource, to_vtt_with};
-use reel_playback::upstream::UpstreamProxy;
+use reel_playback::upstream::{UpstreamOpts, UpstreamProxy};
 use reel_playback::{HwAccel, PlaybackError, SessionConfig, SessionManager, StartRequest};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -130,6 +130,7 @@ fn req(path: &str, decision: PlaybackDecision, user: i64) -> StartRequest {
         start_position_s: 0.0,
         user_max_streams: None,
         user_max_transcodes: None,
+        user_agent: None,
     }
 }
 
@@ -159,6 +160,72 @@ struct Provider {
     file: Arc<PathBuf>,
     hits: Arc<AtomicUsize>,
     port: Arc<std::sync::atomic::AtomicU16>,
+    /// `/slow/…`: open responses right now, the most ever open at once, and every User-Agent
+    active: Arc<AtomicUsize>,
+    peak: Arc<AtomicUsize>,
+    uas: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+struct Open(Provider);
+impl Drop for Open {
+    fn drop(&mut self) {
+        self.0.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Like `serve_file` but trickles the body (8 KiB / 10 ms) and counts open connections, like a
+/// provider that allows one connection.
+async fn serve_slow(State(p): State<Provider>, headers: HeaderMap) -> Response {
+    let n = p.active.fetch_add(1, Ordering::SeqCst) + 1;
+    p.peak.fetch_max(n, Ordering::SeqCst);
+    let guard = Open(p.clone());
+    if let Some(ua) = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+    {
+        p.uas.lock().unwrap().push(ua.to_string());
+    }
+    let data = bytes::Bytes::from(std::fs::read(&*p.file).unwrap());
+    let len = data.len();
+    let (a, b, status) = match headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("bytes="))
+        .and_then(|r| r.split_once('-'))
+    {
+        Some((a, b)) => {
+            let a: usize = a.parse().unwrap_or(0);
+            let b: usize = b.parse().map(|b: usize| b.min(len - 1)).unwrap_or(len - 1);
+            if a >= len {
+                return StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+            }
+            (a, b, StatusCode::PARTIAL_CONTENT)
+        }
+        None => (0, len - 1, StatusCode::OK),
+    };
+    let body = futures_util::stream::unfold(
+        (guard, a, tokio::time::interval(Duration::from_millis(10))),
+        move |(g, pos, mut t)| {
+            let data = data.clone();
+            async move {
+                if pos > b {
+                    return None;
+                }
+                t.tick().await;
+                let end = (pos + 8 * 1024).min(b + 1);
+                Some((Ok::<_, std::io::Error>(data.slice(pos..end)), (g, end, t)))
+            }
+        },
+    );
+    let mut r = Response::builder()
+        .status(status)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_TYPE, "video/x-matroska")
+        .header(header::CONTENT_LENGTH, b + 1 - a);
+    if status == StatusCode::PARTIAL_CONTENT {
+        r = r.header(header::CONTENT_RANGE, format!("bytes {a}-{b}/{len}"));
+    }
+    r.body(Body::from_stream(body)).unwrap()
 }
 
 async fn serve_file(State(p): State<Provider>, headers: HeaderMap) -> Response {
@@ -228,10 +295,14 @@ async fn start_provider(file: PathBuf) -> (Provider, u16) {
         file: Arc::new(file),
         hits: Arc::new(AtomicUsize::new(0)),
         port: Arc::new(Default::default()),
+        active: Arc::new(AtomicUsize::new(0)),
+        peak: Arc::new(AtomicUsize::new(0)),
+        uas: Arc::new(Default::default()),
     };
     let app = Router::new()
         .route("/movie/{u}/{pw}/{name}", get(serve_file))
         .route("/media.mkv", get(serve_file))
+        .route("/slow/{u}/{pw}/{name}", get(serve_slow))
         .route("/hls/master.m3u8", get(hls_master))
         .route("/hls/v/index.m3u8", get(hls_media))
         .route("/hls/v/{seg}", get(hls_seg))
@@ -521,6 +592,146 @@ async fn remote_session_never_puts_the_provider_url_in_argv_and_revokes_tokens()
             .await
             .is_err()
     );
+}
+
+/// A remote remux session on a one-connection provider: ffmpeg reads through the proxy with the
+/// source's User-Agent, a seek (ffmpeg restart with `-ss`) and the matroska demuxer's own seeks
+/// never hold two provider connections at once, and stopping the session closes the connection.
+#[tokio::test]
+async fn remote_remux_seek_and_stop_keep_a_single_provider_connection() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let mkv = tmp.path().join("prov.mkv");
+    make_mkv(&mkv);
+    let (p, port) = start_provider(mkv).await;
+    let mut cfg = SessionConfig::new(tmp.path());
+    cfg.segment_secs = 2;
+    let mgr = SessionManager::new(cfg, HwAccel::Software);
+    mgr.media().set_upstream(open_proxy());
+    let mut r = req(
+        &format!("http://127.0.0.1:{port}/slow/bob/hunter2/1.mkv"),
+        remux(),
+        1,
+    );
+    r.user_agent = Some("ProviderUA/9".into());
+    let info = mgr.create_session(r).await.unwrap();
+    let first = mgr.segment_path(&info.id, "seg_00000.m4s").await.unwrap();
+    assert!(std::fs::metadata(first).unwrap().len() > 0);
+    let before_seek = p.uas.lock().unwrap().len();
+    assert_eq!(
+        p.active.load(Ordering::SeqCst),
+        1,
+        "still reading when the seek comes"
+    );
+    // seek far ahead: ffmpeg is restarted at the new position
+    let late = mgr.segment_path(&info.id, "seg_00008.m4s").await.unwrap();
+    assert!(std::fs::metadata(late).unwrap().len() > 0);
+    assert!(p.active.load(Ordering::SeqCst) <= 1);
+    mgr.remove(&info.id).await;
+    for _ in 0..60 {
+        if p.active.load(Ordering::SeqCst) == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        p.active.load(Ordering::SeqCst),
+        0,
+        "stopping closes the provider connection"
+    );
+    let uas = p.uas.lock().unwrap().clone();
+    assert!(
+        uas.len() > before_seek,
+        "the seek reopened the input: {uas:?}"
+    );
+    assert!(uas.iter().all(|u| u == "ProviderUA/9"), "{uas:?}");
+    assert_eq!(
+        p.peak.load(Ordering::SeqCst),
+        1,
+        "never two provider connections at once ({} requests)",
+        uas.len()
+    );
+}
+
+/// What ffmpeg's HTTP seek does (`http_seek_internal` in 5.1 … 8.0: open the new connection, then
+/// close the old one) against a session's exclusive input: the provider never sees two
+/// connections, the old response is cut, the new one is served from the right offset. Tokens that
+/// are not exclusive (subtitle/probe leases, live HLS) keep parallel requests.
+#[tokio::test]
+async fn exclusive_input_closes_the_old_connection_before_a_seek_opens_the_next() {
+    let tmp = tempfile::tempdir().unwrap();
+    let f = tmp.path().join("m.bin");
+    let data: Vec<u8> = (0..=255u8).cycle().take(400_000).collect();
+    std::fs::write(&f, &data).unwrap();
+    let (p, port) = start_provider(f).await;
+    let proxy = open_proxy();
+    let url = format!("http://127.0.0.1:{port}/slow/bob/hunter2/1.mkv");
+    let opts = |exclusive| UpstreamOpts {
+        user_agent: "UA/1".into(),
+        exclusive,
+        ..Default::default()
+    };
+    let local = proxy
+        .register_with(&url, &opts(true), Duration::from_secs(60), Some("sess-1"))
+        .unwrap();
+    let c = reqwest::Client::new();
+    // A: the stream ffmpeg is reading
+    let mut a = c.get(&local).send().await.unwrap();
+    assert_eq!(a.status(), 200);
+    assert!(!a.chunk().await.unwrap().unwrap().is_empty());
+    assert_eq!(p.active.load(Ordering::SeqCst), 1);
+    // B: the seek opens a new connection while A is still open (and idle)
+    let mut b = c
+        .get(&local)
+        .header("Range", "bytes=300000-")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(b.status(), 206);
+    let first = b.chunk().await.unwrap().unwrap();
+    assert_eq!(first[0], data[300_000]);
+    assert_eq!(
+        p.peak.load(Ordering::SeqCst),
+        1,
+        "the provider never saw two connections"
+    );
+    // A was cut: its body ends early instead of streaming on
+    let mut got = 0usize;
+    let ended = tokio::time::timeout(Duration::from_secs(3), async {
+        while let Ok(Some(c)) = a.chunk().await {
+            got += c.len();
+        }
+    })
+    .await;
+    assert!(
+        ended.is_ok() && got < data.len(),
+        "old stream cut ({got} bytes)"
+    );
+    // stopping the session (revoke) closes the remaining connection too
+    proxy.revoke_owner("sess-1");
+    let ended = tokio::time::timeout(Duration::from_secs(3), async {
+        while let Ok(Some(_)) = b.chunk().await {}
+    })
+    .await;
+    assert!(ended.is_ok(), "revoke cuts the open stream");
+    for _ in 0..60 {
+        if p.active.load(Ordering::SeqCst) == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(p.active.load(Ordering::SeqCst), 0);
+
+    // not exclusive: two readers of the same owner run side by side
+    let shared = proxy
+        .register_with(&url, &opts(false), Duration::from_secs(60), Some("sess-2"))
+        .unwrap();
+    let mut x = c.get(&shared).send().await.unwrap();
+    let mut y = c.get(&shared).send().await.unwrap();
+    assert!(x.chunk().await.unwrap().is_some() && y.chunk().await.unwrap().is_some());
+    assert_eq!(p.active.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

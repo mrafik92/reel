@@ -14,6 +14,12 @@
 //! same token (so the token map does not grow with every reload), and a redirected playlist is
 //! reloaded from where it was redirected to, like a player would.
 //!
+//! A playback session's input uses [`UpstreamOpts::exclusive`]: at most one provider connection is
+//! open for its owner. ffmpeg's HTTP seek opens the new connection *before* closing the old one
+//! (`http_seek_internal`: "if it fails, continue on old connection"), so without this every seek
+//! (a matroska demuxer jump to the cues, a restart at a new position) briefly holds two provider
+//! connections, which a one-connection provider refuses (HTTP 46x).
+//!
 //! This also keeps provider credentials out of subprocess argv and `/proc`.
 
 use crate::error::PlaybackError;
@@ -37,6 +43,11 @@ pub type UrlCheck = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 const MAX_ENTRIES: usize = 50_000;
 const MAX_PLAYLIST: usize = 4 * 1024 * 1024;
 const HEADER_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long an exclusive request waits for the previous connection of its owner to be released.
+const EXCLUSIVE_WAIT: Duration = Duration::from_secs(10);
+/// After cutting the previous connection, give its socket time to close (the FIN is sent by
+/// hyper's connection task, asynchronously) before the provider sees the next request.
+const EXCLUSIVE_SETTLE: Duration = Duration::from_millis(100);
 
 /// How a registered URL is fetched and how long its token lives.
 #[derive(Debug, Clone, Default)]
@@ -47,6 +58,11 @@ pub struct UpstreamOpts {
     /// Sliding expiry for live streams: every request through a token keeps it (and the tokens
     /// derived from it) alive for this long. `None`: fixed expiry.
     pub idle: Option<Duration>,
+    /// At most one open upstream response per owner: a new request through any token of the same
+    /// owner first cuts the previous one and waits until it is released (newest wins). For a
+    /// single-reader input (a session's media file); never for HLS (renditions load in parallel),
+    /// so tokens derived from a playlist do not inherit it.
+    pub exclusive: bool,
 }
 
 impl UpstreamOpts {
@@ -71,7 +87,19 @@ struct Inner {
     /// Keys the deterministic tokens of nested playlist URIs.
     secret: String,
     entries: Mutex<HashMap<String, Entry>>,
+    /// Exclusive owners: the one connection they may hold.
+    slots: Mutex<HashMap<String, Slot>>,
     port: Mutex<Option<u16>>,
+}
+
+/// The connection slot of an exclusive owner.
+struct Slot {
+    /// Bumped by every request; the newest request owns the slot.
+    seq: u64,
+    /// Dropping it tells the current holder to let go.
+    stop: tokio::sync::watch::Sender<()>,
+    /// One permit, held for as long as an upstream response is open.
+    gate: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Clone)]
@@ -101,6 +129,7 @@ impl Drop for Lease {
             .lock()
             .unwrap()
             .retain(|k, e| k != t && e.owner.as_deref() != Some(t.as_str()));
+        self.proxy.0.slots.lock().unwrap().remove(t);
     }
 }
 
@@ -132,6 +161,7 @@ impl UpstreamProxy {
             check,
             secret: new_token(),
             entries: Mutex::new(HashMap::new()),
+            slots: Mutex::new(HashMap::new()),
             port: Mutex::new(None),
         }))
     }
@@ -193,6 +223,7 @@ impl UpstreamProxy {
         expires: Instant,
         owner: Option<&str>,
         token: Option<String>,
+        parent: Option<&str>,
     ) -> Result<(String, String), PlaybackError> {
         let parsed = reqwest::Url::parse(url)
             .map_err(|_| PlaybackError::Invalid("invalid upstream URL".into()))?;
@@ -209,6 +240,12 @@ impl UpstreamProxy {
             local_name(&parsed)
         );
         let mut map = self.0.entries.lock().unwrap();
+        // a nested URI only lives as long as the token it came from: checked under the same lock
+        // as `revoke_owner` / lease drop, so a playlist that was still being fetched when its
+        // owner ended cannot register tokens nothing would revoke
+        if parent.is_some_and(|p| !map.contains_key(p)) {
+            return Err(PlaybackError::Invalid("upstream owner ended".into()));
+        }
         if let Some(e) = map.get_mut(&token) {
             // same URI seen again (playlist reload): keep the entry, extend its life
             e.expires = e.expires.max(expires);
@@ -247,6 +284,7 @@ impl UpstreamProxy {
             Instant::now() + ttl,
             owner,
             None,
+            None,
         )
         .map(|(_, local)| local)
     }
@@ -271,6 +309,7 @@ impl UpstreamProxy {
             Instant::now() + ttl,
             Some(&token),
             Some(token.clone()),
+            None,
         )?;
         Ok(Lease {
             proxy: self.clone(),
@@ -286,7 +325,108 @@ impl UpstreamProxy {
             .lock()
             .unwrap()
             .retain(|_, e| e.owner.as_deref() != Some(owner));
+        // dropping the slot's stop sender also cuts a connection that is still open
+        self.0.slots.lock().unwrap().remove(owner);
     }
+
+    /// Register a URL with explicit [`UpstreamOpts`] (e.g. `exclusive` for a session's input);
+    /// valid for `ttl` or until `revoke_owner(owner)`.
+    pub fn register_with(
+        &self,
+        url: &str,
+        opts: &UpstreamOpts,
+        ttl: Duration,
+        owner: Option<&str>,
+    ) -> Result<String, PlaybackError> {
+        self.register_inner(url, opts, Instant::now() + ttl, owner, None, None)
+            .map(|(_, local)| local)
+    }
+
+    /// Exclusive requests: take the owner's slot (cutting the previous holder) and wait until its
+    /// connection is released. `None`: superseded by a newer request, or the wait timed out.
+    async fn claim_slot(
+        &self,
+        key: &str,
+    ) -> Option<(
+        u64,
+        tokio::sync::watch::Receiver<()>,
+        tokio::sync::OwnedSemaphorePermit,
+    )> {
+        let (seq, mut stop, gate) = {
+            let mut slots = self.0.slots.lock().unwrap();
+            let slot = slots.entry(key.to_string()).or_insert_with(|| Slot {
+                seq: 0,
+                stop: tokio::sync::watch::channel(()).0,
+                gate: Arc::new(tokio::sync::Semaphore::new(1)),
+            });
+            slot.seq += 1;
+            let (tx, rx) = tokio::sync::watch::channel(());
+            // dropping the previous sender cuts the previous holder
+            drop(std::mem::replace(&mut slot.stop, tx));
+            (slot.seq, rx, slot.gate.clone())
+        };
+        let permit = match gate.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                let p = tokio::select! {
+                    p = tokio::time::timeout(EXCLUSIVE_WAIT, gate.acquire_owned()) => p.ok()?.ok()?,
+                    _ = stop.changed() => return None,
+                };
+                tokio::select! {
+                    _ = tokio::time::sleep(EXCLUSIVE_SETTLE) => {}
+                    _ = stop.changed() => return None,
+                }
+                p
+            }
+        };
+        Some((seq, stop, permit))
+    }
+
+    /// Forget the owner's slot once its newest request is done.
+    fn release_slot(&self, key: &str, seq: u64) {
+        let mut slots = self.0.slots.lock().unwrap();
+        if slots.get(key).is_some_and(|s| s.seq == seq) {
+            slots.remove(key);
+        }
+    }
+}
+
+/// Copy an upstream body into `tx` until it ends, the client goes away or `stop` fires; the
+/// permit (the owner's connection slot) is released together with the upstream response.
+async fn pump_exclusive(
+    resp: reqwest::Response,
+    tx: tokio::sync::mpsc::Sender<Result<bytes::Bytes, reqwest::Error>>,
+    mut stop: tokio::sync::watch::Receiver<()>,
+    permit: tokio::sync::OwnedSemaphorePermit,
+    proxy: UpstreamProxy,
+    key: String,
+    seq: u64,
+) {
+    use futures_util::StreamExt;
+    let mut up = Box::pin(resp.bytes_stream());
+    loop {
+        let chunk = tokio::select! {
+            biased;
+            _ = stop.changed() => break,
+            _ = tx.closed() => break,
+            c = up.next() => match c {
+                Some(c) => c,
+                None => break,
+            },
+        };
+        let failed = chunk.is_err();
+        let sent = tokio::select! {
+            biased;
+            _ = stop.changed() => false,
+            r = tx.send(chunk) => r.is_ok() && !failed,
+        };
+        if !sent {
+            break;
+        }
+    }
+    drop(up); // closes the provider connection …
+    drop(permit); // … before the next request of this owner may open one
+    proxy.release_slot(&key, seq);
 }
 
 fn gone() -> Response {
@@ -334,6 +474,16 @@ async fn serve(
         tracing::warn!(reason = %redact_text(&e), "upstream request refused by policy");
         return StatusCode::FORBIDDEN.into_response();
     }
+    let proxy = UpstreamProxy(inner.clone());
+    // exclusive owners: the previous connection is closed before this one is opened
+    let slot_key = owner.clone().unwrap_or_else(|| token.clone());
+    let mut slot = None;
+    if opts.exclusive {
+        match proxy.claim_slot(&slot_key).await {
+            Some(s) => slot = Some(s),
+            None => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        }
+    }
     let mut rb = inner
         .client
         .get(&url)
@@ -346,7 +496,19 @@ async fn serve(
             rb = rb.header(header::RANGE, r);
         }
     }
-    let resp = match tokio::time::timeout(HEADER_TIMEOUT, rb.send()).await {
+    let superseded = async {
+        match slot.as_mut() {
+            Some((_, stop, _)) => {
+                let _ = stop.changed().await;
+            }
+            None => std::future::pending::<()>().await,
+        }
+    };
+    let resp = tokio::select! {
+        r = tokio::time::timeout(HEADER_TIMEOUT, rb.send()) => r,
+        _ = superseded => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let resp = match resp {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
             tracing::warn!(error = %redact_text(&e.to_string()), "upstream fetch failed");
@@ -389,8 +551,13 @@ async fn serve(
                 e.url = final_url.to_string();
             }
         }
+        drop(slot); // the playlist is read: its connection is done
         let text = String::from_utf8_lossy(&body);
-        let proxy = UpstreamProxy(inner.clone());
+        // renditions/segments load in parallel: nested tokens are never exclusive
+        let opts = UpstreamOpts {
+            exclusive: false,
+            ..opts
+        };
         let child_expires = match opts.idle {
             Some(idle) => Instant::now() + idle,
             None => expires,
@@ -398,10 +565,20 @@ async fn serve(
         let rewritten = rewrite_playlist(&text, &final_url, &mut |abs| {
             let tok = owner.as_deref().map(|o| proxy.child_token(o, abs));
             proxy
-                .register_inner(abs, &opts, child_expires, owner.as_deref(), tok)
+                .register_inner(
+                    abs,
+                    &opts,
+                    child_expires,
+                    owner.as_deref(),
+                    tok,
+                    Some(&token),
+                )
                 .ok()
                 .map(|(_, local)| local)
         });
+        if !inner.entries.lock().unwrap().contains_key(&token) {
+            return gone(); // revoked while the playlist was in flight
+        }
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")
@@ -423,7 +600,19 @@ async fn serve(
             out = out.header(h, v.as_bytes());
         }
     }
-    out.body(Body::from_stream(resp.bytes_stream()))
+    let body = match slot {
+        None => Body::from_stream(resp.bytes_stream()),
+        Some((seq, stop, permit)) => {
+            // a task owns the upstream so a newer request can cut it even while ffmpeg is not
+            // reading (the old connection of an HTTP seek is left idle until the new one is open)
+            let (tx, rx) = tokio::sync::mpsc::channel(4);
+            tokio::spawn(pump_exclusive(resp, tx, stop, permit, proxy, slot_key, seq));
+            Body::from_stream(futures_util::stream::unfold(rx, |mut rx| async move {
+                rx.recv().await.map(|c| (c, rx))
+            }))
+        }
+    };
+    out.body(body)
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
