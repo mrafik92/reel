@@ -18,7 +18,7 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
   - **EPG ~1,436 channels / ~54k programmes** from external guides.
   - VOD catalog imported (41k movies / 15k series).
   - VOD **direct play** through the upstream proxy (#3, 2026-11-11): seeks resume in 0.4–0.6 s, exactly one
-    provider connection, a stop frees it in ~2 s, and no provider login in ffmpeg args or logs. Remux seek is broken (#92).
+    provider connection, a stop frees it in ~2 s, and no provider login in ffmpeg args or logs. Remux seek is broken on this build (#92; fix built, not deployed).
 - **Ops:** GitHub → GHCR → CT 113 deploys (one-click **deploy** workflow on the self-hosted runner CT 116; the `PROJECT_TOKEN` secret is needed for ticket updates); version shown in Settings → About; container resource limits; transcode caps (3 total, 2 per user).
 - **Network:** Tailscale now **direct** (UDP 41641 static-port rule on OPNsense) → 9–15 Mbps remote, up from 3.5 Mbps over the DERP relay.
 
@@ -26,7 +26,7 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
 
 - **webOS/Tizen apps:** never installed on a TV. Packaging CLIs aren't installed; the Tizen package id is a placeholder.
 - **Casting:** AirPlay and Chromecast never tested with devices. **DLNA** needs the TV IPs + a CT 113 firewall rule.
-- **IPTV VOD remux/transcode playback** through the upstream proxy (#3; direct play is verified, remux seek is broken: #92). Reviewed in code and
+- **IPTV VOD remux/transcode playback** through the upstream proxy (#3; direct play is verified, remux seek is broken on `65bd851`, fix built: #92). Reviewed in code and
   covered by CI tests with local fake providers (2026-11-11):
   - Movie and series episode, direct play (proxied through `/vod/direct` with `Range`) and remux/transcode (ffmpeg
     reads a loopback proxy URL, `Range` passed through).
@@ -36,6 +36,14 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
     connection: a new request cuts the previous one and waits for it to be released
     (`exclusive_input_closes_the_old_connection_before_a_seek_opens_the_next`,
     `remote_remux_seek_and_stop_keep_a_single_provider_connection`).
+  - **A remux can be seeked** (#92, built and tested in CI, not deployed). On build `65bd851` (#3 check) a forced
+    VOD remux played with one provider connection but could not be seeked: remote copy sessions skipped the
+    keyframe index and served ffmpeg's EVENT playlist without ENDLIST, which hls.js treats as live
+    (`duration = Infinity`, nothing seekable). The index is now read from the MKV Cues / MP4 `stss` with a few
+    `Range` requests through the session's exclusive proxy token (cached per title), so the playlist is a full VOD
+    playlist and a seek restarts ffmpeg at that keyframe, still with one provider connection
+    (`remote_mkv_remux_is_seekable`, `remote_mp4_remux_with_moov_at_the_end_is_seekable`,
+    `provider_without_range_support_falls_back_without_downloading_the_file`).
   - Takeover, stop or idle reap now also closes a **paused** direct-play stream (it used to keep the provider
     connection open until the browser let go).
   - The source's configured User-Agent is now used for every VOD request (probe, direct play, ffmpeg, subtitles);
@@ -57,6 +65,7 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
 | Reviews | IMDb/RT/Metacritic scores need `REEL_OMDB_API_KEY` |
 | EPG | Al Jazeera guide fully covered by AE1 (fine). The EG1 guide is stale upstream (removed) |
 | IPTV | Live HLS has no quality ladder (live transcode is fixed) |
+| IPTV | A VOD remux of a file without a container keyframe index (MPEG-TS, AVI), or from a provider that ignores `Range`, still serves ffmpeg's EVENT playlist and can't be seeked (#92). Transcodes and MKV/MP4 remuxes are seekable |
 | Library | Episodes of a multi-episode file all start at 0:00 (no per-episode offsets) |
 | Downloads | "Common Side Effects" is stuck in Sonarr ("episodes not imported"). That's a Sonarr-side import problem, not Reel |
 | Requests | **Torrent searches fail in bursts, outside Reel** (#66). Root cause: gluetun's DNS-over-TLS to Cloudflare (1.1.1.1:853) times out or gets reset. Prowlarr runs inside gluetun, so every indexer fails at the same moment (`EAI_AGAIN`: 119 of 165 indexer errors from 2026-10-30 to 11-10). The same DoT path feeds gluetun's health check, which caused VPN reconnect loops of 4 h (11-03) and 3 h (11-05). Prowlarr's backoff then reaches Radarr/Sonarr as HTTP 429, and they escalate their own backoff up to 12 h. Requests made in that window search with **0 active indexers**, and Reel marks them `not_found`. There are no Cloudflare/VPN-IP blocks, and Prowlarr↔Arr sync is fine. Fix awaiting owner approval (CT 105): switch gluetun to Proton's in-tunnel DNS, then Retry the 8 `not_found` requests (releases exist for them). Surfacing this in Reel is covered by #67 |
