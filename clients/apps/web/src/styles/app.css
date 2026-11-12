@@ -909,6 +909,21 @@ html.tv .results-grid {
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
+.player__buffer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+}
+/* "Reconnecting to the server…" while the player recovers by itself (#91, #93). */
+.player__recovering {
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
 .player__chrome {
   position: absolute;
   top: 0;

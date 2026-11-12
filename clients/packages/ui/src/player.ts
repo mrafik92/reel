@@ -1,6 +1,7 @@
 /// <reference path="./platform/webos.d.ts" />
 /// <reference path="./platform/tizen.d.ts" />
 import { parseVtt, type VttCue } from "./platform/vtt";
+import { RecoveryPolicy, failureKind, hlsConfig, recoveryReason, type FailureKind, type RecoveryAction } from "./recovery";
 
 /** Sidecar text track (WebVTT) to attach to the stream. */
 export interface ExternalTextTrack {
@@ -16,6 +17,8 @@ export interface LoadOptions {
   headers?: Record<string, string>;
   /** Sidecar subtitles (WebVTT). Native adapters attach them; others may ignore. */
   textTracks?: ExternalTextTrack[];
+  /** A live stream: stay near the edge, and recover to the edge instead of the playhead. */
+  live?: boolean;
 }
 
 export interface PlayerTrack {
@@ -44,6 +47,8 @@ export interface PlayerEventMap {
   tracks: PlayerTracks;
   /** Current subtitle cue rendered by the app (AVPlay); `null` text clears it. */
   cue: { text: string | null };
+  /** The adapter lost the stream and is getting it back by itself; `null` once it plays again. */
+  recovering: { attempt: number; reason: string } | null;
 }
 
 export type PlayerEventHandler<K extends keyof PlayerEventMap> = (data: PlayerEventMap[K]) => void;
@@ -79,8 +84,9 @@ export class Emitter {
   }
 }
 
-/** Standard <video> element → PlayerEventMap wiring (shared by HlsJs and WebOs adapters). */
-function wireVideoEvents(v: HTMLVideoElement, ev: Emitter): void {
+/** Standard <video> element → PlayerEventMap wiring (shared by HlsJs and WebOs adapters).
+ *  `onMediaError` may take over element errors (return `true` = handled, don't emit). */
+function wireVideoEvents(v: HTMLVideoElement, ev: Emitter, onMediaError?: () => boolean): void {
   v.addEventListener("timeupdate", () =>
     ev.emit("timeupdate", { positionSec: v.currentTime, durationSec: v.duration || 0 }));
   v.addEventListener("play", () => ev.emit("play", undefined));
@@ -97,50 +103,238 @@ function wireVideoEvents(v: HTMLVideoElement, ev: Emitter): void {
     }
     ev.emit("buffered", { endSec: end });
   });
-  v.addEventListener("error", () =>
-    ev.emit("error", { message: v.error?.message ?? "media error", fatal: true }));
+  v.addEventListener("error", () => {
+    if (onMediaError?.()) return;
+    ev.emit("error", { message: v.error?.message ?? "media error", fatal: true });
+  });
 }
 
+/**
+ * Play HLS with the browser's own player instead of hls.js? Only on Apple browsers (Safari's
+ * player is the reference one, and AirPlay needs it) and where MSE is missing. Chrome ≥ 14x also
+ * answers `canPlayType("application/vnd.apple.mpegurl")` now, but its built-in player has a small
+ * fixed buffer and gives up on the first bad segment (`CHUNK_DEMUXER_ERROR_APPEND_FAILED`, #91), so
+ * there hls.js stays in charge of buffering and recovery.
+ */
+export function prefersNativeHls(v: HTMLVideoElement, nav: { vendor?: string; userAgent?: string } | undefined = typeof navigator !== "undefined" ? navigator : undefined): boolean {
+  if (v.canPlayType("application/vnd.apple.mpegurl") === "") return false;
+  const g = globalThis as { MediaSource?: unknown; ManagedMediaSource?: unknown };
+  if (!g.MediaSource && !g.ManagedMediaSource) return true;
+  const apple = /Apple/i.test(nav?.vendor ?? "") && !/Chrome|Chromium|CriOS|Edg|Android/i.test(nav?.userAgent ?? "");
+  return apple;
+}
+
+/** A stall this long (buffering while meant to play) counts as a lost stream. */
+const STALL_VOD_MS = 25_000;
+const STALL_LIVE_MS = 12_000;
+/** Uninterrupted playback this long ends a recovery streak. */
+const HEALTHY_MS = 20_000;
+
+/**
+ * Desktop/mobile browsers: hls.js on MSE, or the element itself (direct play, native HLS on
+ * Safari). Fatal errors and long stalls are recovered by the adapter (see `recovery.ts`): reload at
+ * the playhead (VOD) or at the live edge (live), and only after repeated failures is a fatal `error`
+ * emitted. While it works on it, `recovering` carries the attempt; `null` once the picture moves again.
+ */
 export class HlsJsAdapter implements PlayerAdapter {
   private hls?: import("hls.js").default;
+  private HlsCtor?: typeof import("hls.js").default;
   private ev = new Emitter();
+  private url = "";
+  private opts: LoadOptions = {};
+  private live = false;
+  private policy: RecoveryPolicy;
+  private pending?: ReturnType<typeof setTimeout>;
+  private recovering = false;
+  private lastActionAt = 0;
+  private stallTimer?: ReturnType<typeof setTimeout>;
+  private healthyFrom = 0;
+  private lastPos = 0;
+  private destroyed = false;
+  /** Position to resume from on a rebuild (the element may already be reset). */
+  private resumeAt = 0;
 
-  constructor(private video: HTMLVideoElement) {
-    wireVideoEvents(video, this.ev);
+  /** `maxAttempts`: recovery attempts before a fatal `error` (default 8). */
+  constructor(private video: HTMLVideoElement, o: { maxAttempts?: number } = {}) {
+    this.policy = new RecoveryPolicy({ maxAttempts: o.maxAttempts });
+    wireVideoEvents(video, this.ev, () => this.onElementError());
+    video.addEventListener("waiting", () => this.armStall());
+    video.addEventListener("stalled", () => this.armStall());
+    video.addEventListener("playing", () => this.clearStall());
+    video.addEventListener("pause", () => this.clearStall());
+    video.addEventListener("timeupdate", () => this.onProgress());
   }
 
   async load(url: string, opts: LoadOptions = {}): Promise<void> {
+    this.cancelPending();
+    this.clearStall();
+    this.policy.healthy();
+    this.setRecovering(null);
+    this.url = url;
+    this.opts = opts;
+    this.live = !!opts.live;
+    this.resumeAt = opts.startPositionSec ?? 0;
+    await this.attach(opts.startPositionSec);
+    if (opts.autoplay) await this.play();
+  }
+
+  /** (Re)build the pipeline for `this.url` at `start` (undefined/-1 = default / live edge). */
+  private async attach(start: number | undefined): Promise<void> {
     this.hls?.destroy();
     this.hls = undefined;
     const v = this.video;
+    const url = this.url;
     const isHls = /\.m3u8(\?|$)/.test(url);
-    const nativeHls = isHls && v.canPlayType("application/vnd.apple.mpegurl") !== "";
+    const nativeHls = isHls && prefersNativeHls(v);
     // hls.js is only fetched for HLS on MSE browsers; direct play stays lean.
-    const Hls = isHls && !nativeHls ? (await import("hls.js")).default : undefined;
+    const Hls = isHls && !nativeHls ? (this.HlsCtor ??= (await import("hls.js")).default) : undefined;
+    if (this.destroyed || url !== this.url) return;
     if (Hls && Hls.isSupported()) {
+      const headers = this.opts.headers;
       const hls = new Hls({
-        startPosition: opts.startPositionSec ?? -1,
-        xhrSetup: opts.headers
-          ? (xhr) => Object.entries(opts.headers!).forEach(([k, val]) => xhr.setRequestHeader(k, val))
+        ...(hlsConfig({ live: this.live, startPosition: start && start > 0 ? start : -1 }) as Partial<import("hls.js").HlsConfig>),
+        xhrSetup: headers
+          ? (xhr: XMLHttpRequest) => Object.entries(headers).forEach(([k, val]) => xhr.setRequestHeader(k, val))
           : undefined,
       });
       this.hls = hls;
-      hls.on(Hls.Events.ERROR, (_e, d) =>
-        this.ev.emit("error", { message: d.details, fatal: d.fatal }));
+      hls.on(Hls.Events.ERROR, (_e, d) => {
+        if (hls !== this.hls) return;
+        if (!d.fatal) {
+          this.ev.emit("error", { message: d.details, fatal: false });
+          return;
+        }
+        this.fail(failureKind(d.type), d.details);
+      });
+      hls.on(Hls.Events.LEVEL_LOADED, (_e, d) => {
+        if (hls === this.hls && d.details?.live) this.live = true;
+      });
       hls.loadSource(url);
       hls.attachMedia(v);
     } else {
       v.src = url; // direct play or native HLS (Safari, TV browsers)
-      const start = opts.startPositionSec;
-      if (start) {
+      if (start && start > 0) {
         const seek = () => {
           v.removeEventListener("loadedmetadata", seek);
           v.currentTime = start;
         };
         v.addEventListener("loadedmetadata", seek);
       }
+      v.load();
     }
-    if (opts.autoplay) await this.play();
+  }
+
+  private position(): number {
+    const t = this.video.currentTime;
+    if (t > 0) this.resumeAt = t;
+    return this.resumeAt;
+  }
+
+  /** `<video>` error: with hls.js attached it's an MSE/decoder failure we can recover from. */
+  private onElementError(): boolean {
+    if (this.destroyed || !this.url) return false;
+    // hls.js already reported this one (bufferAppendError & co.) a moment ago.
+    if (this.pending || Date.now() - this.lastActionAt < 1000) return true;
+    return this.fail("media", this.video.error?.message || "media error");
+  }
+
+  /** A fatal failure: schedule the next recovery step, or give up (emitting the fatal `error`).
+   *  Returns `true` when handled here — the caller must not report it again. */
+  private fail(kind: FailureKind, details: string): boolean {
+    if (this.destroyed) return false;
+    if (this.pending) return true; // one recovery at a time
+    this.clearStall();
+    this.healthyFrom = 0;
+    const step = this.policy.next(kind, { live: this.live, position: this.position() });
+    if (step.action.kind === "giveUp") {
+      this.setRecovering(null);
+      this.ev.emit("error", { message: details, fatal: true });
+      return true;
+    }
+    this.ev.emit("error", { message: details, fatal: false });
+    this.setRecovering({ attempt: step.attempt, reason: recoveryReason(kind, this.live) });
+    const run = () => {
+      this.pending = undefined;
+      this.lastActionAt = Date.now();
+      this.run(step.action);
+    };
+    if (step.delayMs > 0) this.pending = setTimeout(run, step.delayMs);
+    else run();
+    return true;
+  }
+
+  private run(a: RecoveryAction): void {
+    if (this.destroyed) return;
+    const hls = this.hls;
+    const v = this.video;
+    if (a.kind === "startLoad" && hls) {
+      hls.startLoad(a.position);
+      // Live: we fell out of the window — go to where the edge is now.
+      const edge = (hls as unknown as { liveSyncPosition?: number | null }).liveSyncPosition;
+      if (this.live && edge != null && isFinite(edge) && v.currentTime < edge - 1) v.currentTime = edge;
+      v.play().catch(() => undefined);
+      this.armStall();
+      return;
+    }
+    if (a.kind === "recoverMedia" && hls) {
+      if (a.swapAudio) hls.swapAudioCodec();
+      hls.recoverMediaError();
+      v.play().catch(() => undefined);
+      this.armStall();
+      return;
+    }
+    // reload (or no hls.js instance to nudge: direct play / native HLS)
+    const at = a.kind === "reload" || a.kind === "startLoad" ? a.position : this.position();
+    void this.attach(at > 0 ? at : undefined).then(() => {
+      if (this.destroyed) return;
+      v.play().catch(() => undefined);
+      this.armStall();
+    });
+  }
+
+  private setRecovering(r: { attempt: number; reason: string } | null): void {
+    if (!r && !this.recovering) return;
+    this.recovering = !!r;
+    this.ev.emit("recovering", r);
+  }
+
+  /** Waiting for data while meant to play: if it lasts, treat it like a network failure. */
+  private armStall(): void {
+    if (this.stallTimer || this.destroyed || !this.url) return;
+    this.stallTimer = setTimeout(() => {
+      this.stallTimer = undefined;
+      const v = this.video;
+      if (this.destroyed || v.paused || v.ended) return;
+      // Still no data ahead of the playhead?
+      if (v.readyState >= 3) return;
+      this.fail("network", "stalled");
+    }, this.live ? STALL_LIVE_MS : STALL_VOD_MS);
+  }
+  private clearStall(): void {
+    if (this.stallTimer) clearTimeout(this.stallTimer);
+    this.stallTimer = undefined;
+  }
+  private cancelPending(): void {
+    if (this.pending) clearTimeout(this.pending);
+    this.pending = undefined;
+  }
+
+  /** The picture moves again → recovered; a long healthy stretch resets the attempt budget. */
+  private onProgress(): void {
+    const v = this.video;
+    const t = v.currentTime;
+    const moved = Math.abs(t - this.lastPos) > 0.01 && !v.paused;
+    this.lastPos = t;
+    if (!moved) return;
+    if (t > 0) this.resumeAt = t;
+    this.clearStall();
+    const now = Date.now();
+    if (this.recovering) {
+      this.setRecovering(null);
+      this.healthyFrom = now;
+    }
+    if (!this.healthyFrom) this.healthyFrom = now;
+    if (this.policy.used && now - this.healthyFrom > HEALTHY_MS) this.policy.healthy();
   }
 
   play(): Promise<void> {
@@ -150,9 +344,13 @@ export class HlsJsAdapter implements PlayerAdapter {
     this.video.pause();
   }
   seek(positionSec: number): void {
+    this.resumeAt = positionSec;
     this.video.currentTime = positionSec;
   }
   destroy(): void {
+    this.destroyed = true;
+    this.cancelPending();
+    this.clearStall();
     this.hls?.destroy();
     this.hls = undefined;
     this.video.removeAttribute("src");
