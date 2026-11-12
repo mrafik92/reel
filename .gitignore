@@ -1,1 +1,3 @@
 .DS_Store
+# Playwright MCP screenshots and traces (local scratch)
+.playwright-mcp/
