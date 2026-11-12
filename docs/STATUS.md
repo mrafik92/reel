@@ -1,6 +1,6 @@
-# Status: 2026-11-11
+# Status: 2026-11-12
 
-Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
+Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
 ## What's verified on real hardware and data
 
@@ -17,6 +17,8 @@ Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafi
   - Group browser; newest-wins on the single-connection plan.
   - **EPG ~1,436 channels / ~54k programmes** from external guides.
   - VOD catalog imported (41k movies / 15k series).
+  - VOD **direct play** through the upstream proxy (#3, 2026-11-11): seeks resume in 0.4–0.6 s, exactly one
+    provider connection, a stop frees it in ~2 s, and no provider login in ffmpeg args or logs. Remux seek is broken (#92).
 - **Ops:** GitHub → GHCR → CT 113 deploys (one-click **deploy** workflow on the self-hosted runner CT 116; the `PROJECT_TOKEN` secret is needed for ticket updates); version shown in Settings → About; container resource limits; transcode caps (3 total, 2 per user).
 - **Network:** Tailscale now **direct** (UDP 41641 static-port rule on OPNsense) → 9–15 Mbps remote, up from 3.5 Mbps over the DERP relay.
 
@@ -24,7 +26,7 @@ Live build: **`99b0deb`** (2026-11-04 09:09 UTC) on CT 113 → https://reel.rafi
 
 - **webOS/Tizen apps:** never installed on a TV. Packaging CLIs aren't installed; the Tizen package id is a placeholder.
 - **Casting:** AirPlay and Chromecast never tested with devices. **DLNA** needs the TV IPs + a CT 113 firewall rule.
-- **IPTV VOD playback** through the upstream proxy, against the real provider (#3). Reviewed in code and
+- **IPTV VOD remux/transcode playback** through the upstream proxy (#3; direct play is verified, remux seek is broken: #92). Reviewed in code and
   covered by CI tests with local fake providers (2026-11-11):
   - Movie and series episode, direct play (proxied through `/vod/direct` with `Range`) and remux/transcode (ffmpeg
     reads a loopback proxy URL, `Range` passed through).
@@ -80,11 +82,11 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 
 **Still open (must be done before any public exposure):**
 
-1. ~~Upgrade `quick-xml` to ≥ 0.41; sqlx with sqlite only~~ Fixed in code (#7, 🧪): `quick-xml` 0.42 (RUSTSEC-2026-0194/-0195 gone) in the XMLTV and DLNA parsers. sqlx was already built SQLite-only; every crate now uses the one workspace entry and CI fails if `sqlx-mysql`, `sqlx-postgres` or `rsa` enter the build graph. `rsa` (RUSTSEC-2023-0071) stays listed in `Cargo.lock` only, because cargo records disabled optional deps, and is ignored with that reason in `server/.cargo/audit.toml`. Counts as done once deployed and an EPG refresh and a DLNA discovery have been checked. A fresh `cargo audit` also found RUSTSEC-2026-0459 (bundled SQLite in `libsqlite3-sys` 0.30), tracked in #80: the fix needs sqlx 0.9, which needs rustc 1.94.
-2. ~~IPTV/EPG ingestion budgets: bytes, gzip expansion, line/token sizes, record counts, deadlines~~ Fixed in code (#8, 🧪): playlist, guide and Xtream API downloads have byte caps and deadlines, gunzipped guides an expanded-size cap, M3U lines and XML events/attributes/texts length caps, channel/programme/VOD/category lists count caps, and downloaded guides are deleted on every exit path. Limits in `server/crates/iptv/src/limits.rs` (ARCHITECTURE A21). Counts as done once deployed and a full playlist + guide + VOD refresh still succeeds on the real provider.
+1. ~~Upgrade `quick-xml` to ≥ 0.41; sqlx with sqlite only~~ Fixed (#7, ✅ live): `quick-xml` 0.42 (RUSTSEC-2026-0194/-0195 gone) in the XMLTV and DLNA parsers. sqlx was already built SQLite-only; every crate now uses the one workspace entry and CI fails if `sqlx-mysql`, `sqlx-postgres` or `rsa` enter the build graph. `rsa` (RUSTSEC-2023-0071) stays listed in `Cargo.lock` only, because cargo records disabled optional deps, and is ignored with that reason in `server/.cargo/audit.toml`. Verified on `65bd851` (2026-11-11): guide refresh OK, `&` and accents correct, migrations clean. DLNA discovery on the real TV still to check. A fresh `cargo audit` also found RUSTSEC-2026-0459 (bundled SQLite in `libsqlite3-sys` 0.30), tracked in #80: the fix needs sqlx 0.9, which needs rustc 1.94.
+2. ~~IPTV/EPG ingestion budgets: bytes, gzip expansion, line/token sizes, record counts, deadlines~~ Fixed (#8, ✅ live): playlist, guide and Xtream API downloads have byte caps and deadlines, gunzipped guides an expanded-size cap, M3U lines and XML events/attributes/texts length caps, channel/programme/VOD/category lists count caps, and downloaded guides are deleted on every exit path. Limits in `server/crates/iptv/src/limits.rs` (ARCHITECTURE A21). Verified on `65bd851` (2026-11-11): a full refresh succeeds (11,950 channels, 41,338 movies, 15,147 series, ~54k programmes), no limit errors, no leftover temp files.
 3. Logo/TMDB image fetches: streaming size cutoff, single-flight, cache size budget.
 4. ~~Local artwork: canonicalize under the library roots + magic-byte sniff~~ Fixed in code (#10, 🧪): the image route resolves symlinks, requires a library root, caps size and sniffs magic bytes. Counts as done once deployed and checked on the real library.
-5. ~~SSRF guard gaps (IPv4-compatible v6, `64:ff9b::/96`, `2002::/16`, `192.0.0.0/24`); route **live IPTV** HLS upstreams through the upstream proxy~~ Fixed in code (#11, 🧪): `net.rs` judges NAT64, 6to4, Teredo and IPv4-translated addresses by the IPv4 address they carry, refuses `::a.b.c.d`, `64:ff9b:1::/48`, `192.0.0.0/24`, `100::/64` and `fec0::/10`, and the guarded client no longer sends the previous (login) URL as `Referer` on redirects. The live hub hands ffmpeg only a loopback proxy URL. Counts as done once deployed and checked on the real provider.
+5. ~~SSRF guard gaps (IPv4-compatible v6, `64:ff9b::/96`, `2002::/16`, `192.0.0.0/24`); route **live IPTV** HLS upstreams through the upstream proxy~~ Fixed (#11, ✅ live): `net.rs` judges NAT64, 6to4, Teredo and IPv4-translated addresses by the IPv4 address they carry, refuses `::a.b.c.d`, `64:ff9b:1::/48`, `192.0.0.0/24`, `100::/64` and `fec0::/10`, and the guarded client no longer sends the previous (login) URL as `Referer` on redirects. The live hub hands ffmpeg only a loopback proxy URL. Verified on `65bd851` (2026-11-11): no provider login in ffmpeg args (472 samples) or logs. The provider has no HLS channels, so the live-HLS proxy path is covered by CI only. Live TV stalls are tracked in #93.
 6. DLNA discovery trust: bind control URLs to the responding IP, cap body sizes, setting to disable discovery.
 7. Live IPTV transcodes counted against the user's `max_transcodes`.
 8. Signing key / data dir permissions created atomically (0600/0700).
