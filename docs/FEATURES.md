@@ -44,9 +44,10 @@ gaps are listed in [STATUS.md](STATUS.md).
 | Hardware transcoding (VAAPI on the N100) | ✅ | Full GPU pipeline (decode → scale_vaapi → h264_vaapi). Measured at 8.3× realtime for 1080p→720p. Falls back to software per attempt |
 | Keyframe-accurate HLS for remux | ✅ | Reads the keyframe index from MKV Cues / MP4 `stss` (kilobytes, not the whole file). Segments are validated before serving, so seek/resume stays stable |
 | Adaptive quality (server) | ✅ | `quality` = auto/original/1080p/720p/480p plus a `max_bitrate_kbps` hint. Ladder: 8/4/2 Mbps, never upscales |
-| Adaptive quality (player: bandwidth estimate, auto step-down, quality menu) | ⏳ | Not built yet (the agent errored). For now there's a per-user bitrate cap (Settings → Users) |
+| Adaptive quality (player: bandwidth estimate, auto step-down, quality menu) | ⏳ | Not built yet (#87). For now there's a per-user bitrate cap (Settings → Users). A link slower than a file's peak bitrate still stalls (the player no longer stops, but it can't play faster than the link) |
 | Subtitles | ✅ | Reel's own overlay on every platform. Text subtitles → WebVTT. Image subtitles are burned in. Human-readable labels such as "English · SDH" |
 | Automatic audio/subtitle selection | ✅ | Settings → Playback (languages, Off / Forced only / Automatic / Always, SDH). The server picks the tracks and explains why |
+| Playback recovery (web) | 🧪 | hls.js plays HLS in every MSE browser, Chrome included (Chrome's own HLS player gave up on the first bad segment). VOD keeps ~90 s buffered with longer segment timeouts, so bitrate peaks don't drain it. Network errors, MSE/decoder errors and stalls of 25 s (live: 12 s) are retried by themselves (reload at the playhead or the live edge, `recoverMediaError`, `swapAudioCodec`, rebuild) with a **"Reconnecting…"** overlay. After 8 failed attempts the player reopens the session (live: re-tunes) once, at most once a minute, before it shows the error card (#91, #93). Safari keeps its native HLS player; TV apps use their own players |
 | Player UI | ✅ | Redesigned controls: centred transport, scrubber with a time tooltip, labelled actions, volume/speed/PiP, keyboard shortcuts, D-pad seek mode |
 | Watch state | ✅ | Resume, continue watching, played toggles cascade to seasons and shows |
 
@@ -58,6 +59,7 @@ gaps are listed in [STATUS.md](STATUS.md).
 | Shared upstream + keyframe (GOP) cache | ✅ | One provider connection per channel no matter how many viewers watch it. New viewers start at the cached keyframe almost instantly |
 | Single-connection plan handling | ✅ | Your own older stream gives up the slot automatically (newest wins). Others get a friendly 429, and admins get a **Take over** button |
 | Direct (local) Live TV playback | 🧪 | Off by default (`REEL_ALLOW_DIRECT_LIVE`). When on, **Settings → Playback → Live TV on this device** (Playback is the first entry in the Settings menu) lets a device play channels straight from the provider instead of through Reel. The device's choice is stored locally. Reel only holds the provider connection slot (so the budget still works) and the device sends a heartbeat every 15 s. If a device can't play the provider's stream (browsers usually can't: CORS, mixed content, MPEG-TS), that channel falls back to the server. Trade-offs: no shared upstream or keyframe cache (slower zapping), and the provider login is sent to the device |
+| Live HLS window | 🧪 | Browser live streams use ~2 s fMP4 segments (the first is 1 s for a quick tune) in a 30 s playlist, and a segment stays servable ~20 s after it leaves the playlist, so a viewer who falls behind isn't hit by 404s. LATM AAC audio (stream type 0x11) is re-encoded to AAC, other AAC is copied (#93) |
 | Live TV UI | ✅ | Player + two horizontal rows. Full-screen **group browser** (smart sections, Arabic-aware search, pin/hide). No auto-tune |
 | TV guide (EPG) | ✅ | The provider has no guide data, so Reel combines several external XMLTV guides (epgshare01: AE, beIN, Al Jazeera, UK, ZA, FR) matched by name. ~1,436 channels, ~54k programmes |
 | Guide grid | ✅ | Virtualized channels × time grid |
@@ -80,6 +82,7 @@ gaps are listed in [STATUS.md](STATUS.md).
 |---|---|---|
 | First-run setup, login, invites | ✅ | Argon2id passwords, opaque session tokens (30-day sliding window, 90-day absolute limit) |
 | Per-user library access, limits, permissions | ✅ | Streams, transcodes, bitrate cap, request quotas. Flags for IPTV / VOD / requests / casting, off by default for invited users |
+| Reconnects by itself (web) | 🧪 | API calls time out (20 s reads, 60 s writes) and reads are retried once. When the server answers again after a network failure, or the tab becomes visible / goes online, the current page is reloaded in place (not the player or Live TV), "Can't reach your Reel server" screens retry with backoff, and the events WebSocket reconnects (it is replaced after more than 60 s away). The server pings each socket every 25 s (#81) |
 | Signed media URLs | ✅ | HMAC with a per-user `sign_epoch` (revocable). Works in native players without auth headers |
 | Admin settings | ✅ | Libraries, users & invites, Radarr/Sonarr, download clients, notifications, Live TV (providers, guides, channels, live hub), now playing, transcoding, **About** (server + web app versions) |
 | Audit log | ✅ | Admin actions, login failures (sampled), IPTV takeovers |

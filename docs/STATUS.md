@@ -48,12 +48,32 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
 - **Direct (local) Live TV playback** (#77): built and tested in CI, not yet tried on a TV or against the real provider. Off until `REEL_ALLOW_DIRECT_LIVE` is set on CT 113.
 - **Live TV HLS upstreams through the upstream proxy** (#11): built and tested in CI with local HLS fixtures, not yet deployed. Only channels whose provider URL is HLS (`.m3u8` or an HLS content type) go through ffmpeg and the proxy; raw MPEG-TS channels are read by the hub directly, as before. Tokens of a playlist that is still in flight when its lease or session ends are no longer registered (they used to outlive the hub connection until their sliding expiry; `a_playlist_in_flight_when_its_owner_ends_registers_nothing`).
 - **Notifications** (Discord/Telegram/webhook).
+- **Player and connection resilience** (#91, #93, #81, not yet deployed). Checked 2026-11-12 with Playwright
+  (mock mode, and the new web client against the live `65bd851` server; desktop and 1920×1080 TV mode):
+  - Chrome had been playing HLS with its **built-in player**, not hls.js (`canPlayType(mpegurl)` is now "maybe"
+    in Chrome), so the app had no say over buffering or retries; `CHUNK_DEMUXER_ERROR_APPEND_FAILED` in #91 came
+    from it. hls.js is now used wherever MSE exists. Against the live server: start at 2:30 in ~10 s,
+    `init.mp4` loaded once (the startup double-load is gone), and two connection resets on one segment were
+    retried with no error.
+  - Live TV on the old 6 × 1 s window (France 5): a `404 seg_00016` was recovered without an error; when the
+    provider feed itself stalled (`upstream failed: stalled: no data for 8.0s`, five times in a minute) the player
+    showed "Catching up with the live stream…" and then re-tuned once by itself. The longer server window (30 s
+    + 20 s grace) is in CI only.
+  - #81: with the browser offline, a page showed "Can't reach your Reel server" and filled in by itself ~1.4 s
+    after the network came back; the events socket was replaced after a long absence from the tab.
+  - Not checked: the 90 s VOD buffer riding out the 2:44–3:16 bitrate peak. The test Mac's link to the server
+    was below the file's bitrate the whole time (10 downloads running), so it starved either way; that needs a
+    link faster than the file's average. Chrome over HTTP/3 on Tailscale wasn't reproduced (Playwright went
+    through the dev proxy over TCP).
 
 ## Known gaps / bugs
 
 | Area | Gap |
 |---|---|
 | Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) wasn't delivered (the agent errored). For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
+| Player | A link slower than a file's peak bitrate still stalls (e.g. The Remarried Empress E1: 5.9 Mbit/s average, 11–13 Mbit/s at 2:44–3:16). The player now waits and recovers instead of stopping (#91), but only a lower rendition fixes it (#87) |
+| Network | Chrome over HTTP/3 on Tailscale (MTU 1280) sees `QUIC_TOO_MANY_RTOS` and status-0 responses (#91, #93). The player and the app now retry these; turning off HTTP/3 for reel.rafikii.co at Caddy (CT 107) is an owner decision, not changed |
+| IPTV | Some provider feeds stall for 8 s at a time (France 5 on 2026-11-12); the hub reconnects and the player re-tunes, but the picture freezes meanwhile |
 | Reviews | IMDb/RT/Metacritic scores need `REEL_OMDB_API_KEY` |
 | EPG | Al Jazeera guide fully covered by AE1 (fine). The EG1 guide is stale upstream (removed) |
 | IPTV | Live HLS has no quality ladder (live transcode is fixed) |
