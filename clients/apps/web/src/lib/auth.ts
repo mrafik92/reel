@@ -3,6 +3,7 @@ import { api, ApiError, getToken, onUnauthorized, setToken, invalidate, type Cre
 import { deviceFields } from "./device";
 import { MOCK } from "./mode";
 import { needsServerSetup } from "@reel/ui";
+import { autoRetry } from "./connection";
 
 export type AuthStatus = "checking" | "offline" | "needs_server" | "needs_setup" | "anon" | "authed";
 
@@ -48,9 +49,35 @@ function accept(r: LoginResponse): Me {
   return r.user;
 }
 
-/** Resolve who we are: valid token → authed; else first-run setup or login. */
-export async function bootstrap(): Promise<void> {
-  setStatus("checking");
+// Couldn't reach the server at start-up (#81): keep trying in the background and whenever the tab
+// comes back, instead of waiting for a refresh or the "Try again" button.
+let retrying = false;
+let stopRetry: (() => void) | undefined;
+function retryWhileOffline(): void {
+  if (stopRetry) return;
+  stopRetry = autoRetry(
+    () => {
+      if (retrying) return;
+      retrying = true;
+      void bootstrap(true).finally(() => (retrying = false));
+    },
+    () => status() === "offline",
+  );
+}
+
+/** Resolve who we are: valid token → authed; else first-run setup or login.
+ *  `quiet`: a background retry; keep the offline screen up instead of flashing "checking". */
+export async function bootstrap(quiet = false): Promise<void> {
+  await resolve(quiet);
+  if (status() === "offline") retryWhileOffline();
+  else {
+    stopRetry?.();
+    stopRetry = undefined;
+  }
+}
+
+async function resolve(quiet: boolean): Promise<void> {
+  if (!quiet) setStatus("checking");
   setBootError(undefined);
   if (!MOCK && needsServerSetup()) {
     // Packaged TV app (file://) with no server address yet.

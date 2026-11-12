@@ -1,14 +1,31 @@
-import { Show, type JSX } from "solid-js";
+import { Show, createEffect, onCleanup, type JSX } from "solid-js";
 import { Icon } from "@reel/ui";
 import { ApiError } from "../api";
 import { MOCK, href } from "../lib/mode";
 import { isAdmin } from "../lib/auth";
+import { autoRetry } from "../lib/connection";
+
+const RETRY_DELAYS = [3000, 6000, 12000, 20000, 30000];
+let offlineStreak = 0;
+let lastOfflineAt = 0;
 
 export function ErrorState(props: { error: unknown; onRetry?: () => void; title?: string }): JSX.Element {
   const offline = () => props.error instanceof ApiError && props.error.status === 0;
   const notFound = () => props.error instanceof ApiError && props.error.status === 404;
   const message = () =>
     props.error instanceof Error ? props.error.message : "Something went wrong";
+  // Couldn't reach the server (#81): retry by itself with backoff and when the tab comes back.
+  const auto = () => offline() && !!props.onRetry;
+  createEffect(() => {
+    if (!auto()) return;
+    // A failed retry often remounts this card (loading → error): keep backing off across mounts.
+    const now = Date.now();
+    offlineStreak = now - lastOfflineAt < 120_000 ? offlineStreak + 1 : 0;
+    lastOfflineAt = now;
+    const delays = RETRY_DELAYS.slice(Math.min(offlineStreak, RETRY_DELAYS.length - 1));
+    const stop = autoRetry(() => props.onRetry?.(), auto, delays);
+    onCleanup(stop);
+  });
   return (
     <div class="state state--error" role="alert">
       <div class="state__icon">
@@ -20,6 +37,7 @@ export function ErrorState(props: { error: unknown; onRetry?: () => void; title?
       <p class="state__body">
         <Show when={offline()} fallback={message()}>
           Check that the server is running and on the same network.
+          <Show when={props.onRetry}> Reel keeps trying in the background.</Show>
           <Show when={!MOCK}>
             {" "}To preview the interface with sample data, add <code>?mock=1</code> to the address.
           </Show>

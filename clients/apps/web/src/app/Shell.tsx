@@ -5,6 +5,9 @@ import { MOCK, TV, href } from "../lib/mode";
 import { authStatus, bootError, bootstrap, currentUser, isAdmin, logout, onAuthChange } from "../lib/auth";
 import { connectEvents, disconnectEvents, downloads, queueSummary } from "../lib/downloads";
 import { Toaster } from "../components/Toaster";
+import { api, invalidate } from "../api";
+import { hadNetworkFailure, onConnectionRestored } from "../api/http";
+import { onResume } from "../lib/connection";
 import { ErrorState } from "../components/States";
 import "../styles/browse.css";
 
@@ -42,6 +45,27 @@ export function Shell(props: ParentProps): JSX.Element {
   const [railOpen, setRailOpen] = createSignal(false);
 
   initTvNavigation({ tv: TV });
+
+  // #81: a page whose reads failed while the network was away (a blip, a frozen background tab, a
+  // reset HTTP/3 connection) is loaded again as soon as the server answers — no refresh needed. The
+  // player and Live TV recover their streams themselves and are never re-mounted.
+  const [pageEpoch, setPageEpoch] = createSignal(1);
+  const reloadPage = () => {
+    if (immersive() || loc.pathname.indexOf("/live") === 0 || authStatus() !== "authed") return;
+    invalidate();
+    setPageEpoch((n) => n + 1);
+  };
+  onMount(() => {
+    const offRestored = onConnectionRestored(reloadPage);
+    // Back in the tab / online again: probe once, which fires `restored` if the server answers.
+    const offResume = onResume(() => {
+      if (hadNetworkFailure() && authStatus() === "authed") api.me().catch(() => undefined);
+    });
+    onCleanup(() => {
+      offRestored();
+      offResume();
+    });
+  });
 
   onMount(() => {
     void bootstrap();
@@ -262,7 +286,10 @@ export function Shell(props: ParentProps): JSX.Element {
             </a>
           </Show>
           <main class="main" data-nav-group>
-            {props.children}
+            {/* Re-mounted when the connection comes back after a page's load failed (#81). */}
+            <Show when={pageEpoch()} keyed>
+              {(_n: number) => <>{props.children}</>}
+            </Show>
           </main>
         </Match>
       </Switch>
