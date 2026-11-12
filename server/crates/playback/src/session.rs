@@ -73,6 +73,8 @@ pub struct SessionConfig {
     pub disk_evict_min_idle: Duration,
     /// Lifetime of upstream-proxy tokens of a session (also revoked when the session ends).
     pub upstream_ttl: Duration,
+    /// Bounds of reading a remote (provider) file's keyframe index from its container metadata.
+    pub remote_index: plan::RemoteIndexLimits,
 }
 
 impl SessionConfig {
@@ -100,6 +102,7 @@ impl SessionConfig {
             max_total_disk_bytes: 20 << 30,
             disk_evict_min_idle: Duration::from_secs(15),
             upstream_ttl: Duration::from_secs(12 * 3600),
+            remote_index: plan::RemoteIndexLimits::default(),
         }
     }
     pub fn transcode_root(&self) -> PathBuf {
@@ -144,8 +147,9 @@ pub struct SessionInfo {
     /// ffmpeg is paused by the read-ahead throttle.
     #[serde(default)]
     pub paused: bool,
-    /// No keyframe index was available: ffmpeg's own growing EVENT playlist is served and seeking
-    /// is approximate until the background index completes (next session is exact).
+    /// No keyframe index was available: ffmpeg's own growing EVENT playlist is served. Players treat
+    /// it as live and can't seek. Local files are indexed in the background (the next session is
+    /// seekable); remote files only when their container has an index readable over `Range`.
     #[serde(default)]
     pub fallback_playlist: bool,
 }
@@ -299,10 +303,59 @@ impl SessionManager {
         let mut plan = SegmentPlan::fixed(if mode.needs_ffmpeg() { duration } else { 0.0 }, seg);
         let mut event_mode = false;
         let remote = crate::ffmpeg::is_remote(&req.file.path);
+        // ffmpeg never receives a provider URL: remote inputs go through the loopback proxy
+        let input = if mode.needs_ffmpeg() && remote {
+            self.media
+                .upstream()
+                .ok_or_else(|| PlaybackError::Invalid("remote playback is not available".into()))?
+                .register_with(
+                    &req.file.path,
+                    &crate::upstream::UpstreamOpts {
+                        user_agent: req
+                            .user_agent
+                            .as_deref()
+                            .filter(|ua| !ua.trim().is_empty())
+                            .unwrap_or(crate::ffmpeg::REMOTE_UA)
+                            .to_string(),
+                        // one provider connection per session, also across ffmpeg's seeks
+                        exclusive: true,
+                        ..Default::default()
+                    },
+                    self.cfg.upstream_ttl,
+                    Some(&id),
+                )?
+        } else {
+            req.file.path.clone()
+        };
         if remote && mode.needs_ffmpeg() && req.decision.video == VideoAction::Copy {
-            // Remote (provider) input: never scan it for keyframes — that would download the whole
-            // file over the provider connection. ffmpeg's own growing EVENT playlist is served.
-            event_mode = true;
+            // Remote (provider) input: never scan it for keyframes (that would download the whole
+            // file), but read the container's own index (Matroska Cues / MP4 `stss`) with a few
+            // ranged requests through the session's exclusive proxy token, before ffmpeg opens
+            // it: still one provider connection at a time. With it the session serves a full VOD
+            // playlist and seeks restart ffmpeg at the keyframe (#92); without it (no index, no
+            // Range support) ffmpeg's growing EVENT playlist is served, which players treat as
+            // live and cannot seek in.
+            let (dd, fid, url) = (&self.cfg.data_dir, req.file.id, req.file.path.as_str());
+            let kfs = match plan::cached_remote_keyframes(dd, fid, url, duration).await {
+                Some(k) => Some(k),
+                None => {
+                    let k = plan::remote_keyframes(&input, self.cfg.remote_index, duration).await;
+                    if let Some(k) = &k {
+                        plan::store_keyframes(dd, fid, url, k).await;
+                    }
+                    k
+                }
+            };
+            match kfs {
+                Some(k) if !k.is_empty() => plan = SegmentPlan::from_keyframes(&k, duration, seg),
+                _ => {
+                    tracing::warn!(
+                        file = fid,
+                        "remote file has no readable keyframe index; serving EVENT playlist (not seekable)"
+                    );
+                    event_mode = true;
+                }
+            }
         } else if mode.needs_ffmpeg() && req.decision.video == VideoAction::Copy {
             // 1. disk cache, 2. container metadata (bounded, ms), 3. fall back to an EVENT
             // playlist while a background scan builds the cache. Never blocks on a full scan.
@@ -364,30 +417,6 @@ impl SessionManager {
             None
         };
 
-        // ffmpeg never receives a provider URL: remote inputs go through the loopback proxy
-        let input = if mode.needs_ffmpeg() && remote {
-            self.media
-                .upstream()
-                .ok_or_else(|| PlaybackError::Invalid("remote playback is not available".into()))?
-                .register_with(
-                    &req.file.path,
-                    &crate::upstream::UpstreamOpts {
-                        user_agent: req
-                            .user_agent
-                            .as_deref()
-                            .filter(|ua| !ua.trim().is_empty())
-                            .unwrap_or(crate::ffmpeg::REMOTE_UA)
-                            .to_string(),
-                        // one provider connection per session, also across ffmpeg's seeks
-                        exclusive: true,
-                        ..Default::default()
-                    },
-                    self.cfg.upstream_ttl,
-                    Some(&id),
-                )?
-        } else {
-            req.file.path.clone()
-        };
         // from here on a failure must revoke the tokens again
         let revoke = |m: &Self| {
             if let Some(p) = m.media.upstream() {
