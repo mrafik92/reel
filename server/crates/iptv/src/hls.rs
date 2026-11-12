@@ -1,5 +1,6 @@
 //! Browser output: one shared `ffmpeg -c copy` per (channel, audio/video mode) fed straight from
-//! the hub over a stdin pipe, writing a sliding-window fMP4 HLS playlist with ~1 s segments.
+//! the hub over a stdin pipe, writing a sliding-window fMP4 HLS playlist: ~2 s segments, a 30 s
+//! window, and segments kept on disk ~20 s after they leave the playlist (see [`LIVE_SEG_SECS`]).
 //! Any number of HLS viewers share that one ffmpeg; it goes away shortly after the last viewer.
 
 use std::{
@@ -100,6 +101,18 @@ pub fn decide_modes(info: &StreamInfo, o: &HlsOptions) -> (VideoMode, AudioMode)
     };
     (v, a)
 }
+
+/// Live segment length (the first one stays 1 s via `-hls_init_time`, for a quick tune).
+///
+/// #93: a 6 × 1 s window deleted segments ~8 s after they were written, so any viewer that fell a
+/// few seconds behind (a slow or remote link, a stall, a tab in the background) got 404s and the
+/// player gave up. Now: 15 × 2 s = a 30 s window, and segments that left it stay servable for another
+/// [`LIVE_DELETE_THRESHOLD`] segments (~20 s), so a late request still finds its file.
+pub const LIVE_SEG_SECS: u32 = 2;
+/// Segments listed in the live playlist.
+pub const LIVE_LIST_SIZE: u32 = 15;
+/// Segments kept on disk after they drop out of the playlist (`-hls_delete_threshold`).
+pub const LIVE_DELETE_THRESHOLD: u32 = 10;
 
 /// Output height cap for transcoded live video.
 const MAX_HEIGHT: &str = "720";
@@ -310,7 +323,7 @@ pub fn ffmpeg_args(
             "-hls_flags",
             "delete_segments+independent_segments+omit_endlist",
             "-hls_delete_threshold",
-            "2",
+            &LIVE_DELETE_THRESHOLD.to_string(),
             "-hls_segment_type",
             "fmp4",
             "-hls_fmp4_init_filename",
@@ -445,8 +458,8 @@ impl HlsManager {
             root,
             ffmpeg,
             grace,
-            seg_secs: 1,
-            list_size: 6,
+            seg_secs: LIVE_SEG_SECS,
+            list_size: LIVE_LIST_SIZE,
             hw: Mutex::new(HwAccel::Software),
             hw_health: Mutex::default(),
             pipes: Default::default(),
@@ -868,6 +881,11 @@ mod tests {
             .1,
             AudioMode::Aac
         );
+        // LATM AAC can't be copied into fMP4 (#93): re-encode, even for an AAC-capable client.
+        assert_eq!(
+            decide_modes(&info(Some(VideoCodec::H264), Some(AudioCodec::AacLatm)), &o).1,
+            AudioMode::Aac
+        );
         assert_eq!(
             decide_modes(&info(None, Some(AudioCodec::Aac)), &o).0,
             VideoMode::None
@@ -900,6 +918,36 @@ mod tests {
         )
         .join(" ");
         assert!(t.contains("libx264") && t.contains("-c:a aac"));
+    }
+
+    #[test]
+    fn live_window_gives_late_viewers_slack() {
+        // #93: 6 × 1 s with a delete threshold of 2 deleted segments ~8 s after they were written.
+        let window = LIVE_SEG_SECS * LIVE_LIST_SIZE;
+        let grace = LIVE_SEG_SECS * LIVE_DELETE_THRESHOLD;
+        assert!(window >= 30, "live window {window} s");
+        assert!(
+            grace >= 20,
+            "segments stay servable {grace} s after leaving the playlist"
+        );
+        let j = ffmpeg_args(
+            Path::new("/tmp/x"),
+            VideoMode::Copy,
+            AudioMode::Copy,
+            &HwAccel::Software,
+            false,
+            LIVE_SEG_SECS,
+            LIVE_LIST_SIZE,
+        )
+        .join(" ");
+        assert!(
+            j.contains("-hls_time 2 -hls_init_time 1 -hls_list_size 15"),
+            "{j}"
+        );
+        assert!(
+            j.contains("delete_segments") && j.contains("-hls_delete_threshold 10"),
+            "{j}"
+        );
     }
 
     #[test]
