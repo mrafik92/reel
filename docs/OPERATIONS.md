@@ -78,6 +78,7 @@ Backlog → To do → Implementing → Reviewing → **Deployed** (automatic, `d
 | `REEL_ALLOW_PRIVATE_FETCH` / `..._LOGO_FETCH` | `true` / `false` | SSRF policy (playlists/EPG may be LAN; logos never) |
 | `REEL_TMDB_API_KEY`, `REEL_WEBHOOK_SECRET` | in `.env` | |
 | `REEL_OMDB_API_KEY`, `REEL_TRAKT_CLIENT_ID` | optional | IMDb/RT scores, Trakt comments |
+| `REEL_WS_PING_SECS` | unset (`25`) | Ping interval of the `/events` WebSocket, so idle proxy/VPN paths don't drop it silently. `REEL_WS_RECHECK_SECS` (`30`) re-checks the session on open sockets |
 | Container limits | `mem_limit 3g`, `pids_limit 512`, `cpus 3.0`, `read_only`, `cap_drop ALL`, `no-new-privileges` | |
 
 ## Runbooks
@@ -93,6 +94,16 @@ To debug decisions, Settings → Now playing shows each session's mode, reasons,
 2. Measure the client's throughput (a big ranged `curl` of a file URL).
 3. If the bitrate is above the throughput: lower the user's `max_bitrate_kbps` (Settings → Users) until the player has auto quality.
 4. Tailscale clients: `tailscale status` should show `direct`, not `relay`.
+5. The web player recovers by itself ("Reconnecting…" overlay, then it reopens the session or re-tunes once). If
+   it still ends on "Playback stopped", capture the browser console and network tab. Chrome on Tailscale may use
+   HTTP/3 (Caddy Alt-Svc); `ERR_QUIC_PROTOCOL_ERROR` / status-0 responses point at QUIC over the 1280-byte MTU.
+   Disabling h3 for reel.rafikii.co at Caddy (CT 107) would rule it out, but that's an owner decision.
+
+**Live TV stops or freezes**
+Browser live HLS keeps a 30 s window (2 s segments) plus ~20 s of rotated-out segments on disk (`hls.rs`,
+`LIVE_*` constants). Check `GET /api/v1/admin/iptv/hub` and the logs: `upstream failed: stalled` means the
+provider feed stalled (the hub reconnects); 404s for `seg_*.m4s` in the browser mean the viewer fell more than
+~50 s behind.
 
 **IPTV provider blocks (HTTP 46x)**
 The panel's anti-abuse limit. Don't hammer it; Reel backs off automatically. Check the source status in Settings → Live TV.

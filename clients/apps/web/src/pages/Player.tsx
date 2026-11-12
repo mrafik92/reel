@@ -103,6 +103,10 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   const [buffered, setBuffered] = createSignal(0);
   const [visible, setVisible] = createSignal(true);
   const [error, setError] = createSignal<PlayError>();
+  /** The player is getting the stream back by itself (#91): what it's doing, for the overlay. */
+  const [recovering, setRecovering] = createSignal<string>();
+  /** Last automatic session restart after the player gave up (at most one per minute). */
+  let autoRestartAt = 0;
   const [scrub, setScrub] = createSignal<number | null>(null);
   const [picker, setPicker] = createSignal<"audio" | "sub" | null>(null);
   const [series, setSeries] = createSignal<string>();
@@ -205,6 +209,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       }
     } catch (e) {
       setBuffering(false);
+      setRecovering(undefined);
       setError(props.source?.error?.(e) ?? decideError(e));
       return;
     }
@@ -260,6 +265,8 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
             a.play().catch(() => undefined);
           }
         }
+        // An automatic restart is over once the picture moves.
+        if (recovering() && t.positionSec > startAt + 0.2 && !video.paused) setRecovering(undefined);
         setPos(t.positionSec);
         if (t.durationSec && isFinite(t.durationSec)) setDur(t.durationSec);
       }),
@@ -284,8 +291,18 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       // Tizen AVPlay can't show <track>s: the adapter emits cues and we draw them.
       a.on("cue", (c) => setCueHtml(c.text ? cueToHtml(c.text) : "")),
       a.on("tracks", (t) => setNativeTracks(t)),
+      a.on("recovering", (r) => setRecovering(r ? r.reason : undefined)),
       a.on("error", (e) => {
         if (e.fatal) {
+          setRecovering(undefined);
+          // The player's own retries are spent. The server session may be gone too (reaped while
+          // the stream was stuck): open a fresh one at the same spot, once a minute at most.
+          if (Date.now() - autoRestartAt > 60_000 && !closed) {
+            autoRestartAt = Date.now();
+            setRecovering("Reconnecting to the server");
+            void start(pos() || startAt);
+            return;
+          }
           setBuffering(false);
           setError({
             title: "Playback stopped",
@@ -542,6 +559,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     setPlaying(false);
     setBuffering(false);
     setError(undefined);
+    setRecovering(undefined);
     setVisible(true);
   };
   const resumeLocal = (at: number) => {
@@ -1062,8 +1080,11 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
         </div>
       </Show>
 
-      <Show when={buffering() && !error()}>
-        <div class="player__buffer" aria-label="Buffering"><span class="spinner" /></div>
+      <Show when={(buffering() || recovering()) && !error()}>
+        <div class="player__buffer" aria-label={recovering() ?? "Buffering"}>
+          <span class="spinner" />
+          <Show when={recovering()}>{(r) => <span class="player__recovering" role="status">{r()}…</span>}</Show>
+        </div>
       </Show>
 
       <Show when={error()}>

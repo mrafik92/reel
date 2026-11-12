@@ -30,7 +30,11 @@ impl VideoCodec {
 pub enum AudioCodec {
     Mp2,
     Mp3,
+    /// ADTS AAC (stream type 0x0F): copied into fMP4 with `aac_adtstoasc`.
     Aac,
+    /// LATM/LOAS AAC (stream type 0x11, common on DVB). `aac_adtstoasc` can't repackage it, and a
+    /// copied track fails to parse in browsers (#93), so HLS re-encodes it.
+    AacLatm,
     Ac3,
     Eac3,
     Other,
@@ -42,6 +46,7 @@ impl AudioCodec {
             Self::Mp2 => "mp2",
             Self::Mp3 => "mp3",
             Self::Aac => "aac",
+            Self::AacLatm => "aac_latm",
             Self::Ac3 => "ac3",
             Self::Eac3 => "eac3",
             Self::Other => "other",
@@ -164,7 +169,8 @@ pub fn parse_pmt(pmt_pid: u16, payload: &[u8]) -> Option<StreamInfo> {
             }
             0x03 => info.audio.push((pid, AudioCodec::Mp2)),
             0x04 => info.audio.push((pid, AudioCodec::Mp2)),
-            0x0F | 0x11 => info.audio.push((pid, AudioCodec::Aac)),
+            0x0F => info.audio.push((pid, AudioCodec::Aac)),
+            0x11 => info.audio.push((pid, AudioCodec::AacLatm)),
             0x81 => info.audio.push((pid, AudioCodec::Ac3)),
             0x87 => info.audio.push((pid, AudioCodec::Eac3)),
             0x06 => {

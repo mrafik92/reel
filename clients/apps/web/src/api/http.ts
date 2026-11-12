@@ -73,22 +73,78 @@ const FRIENDLY: Record<number, string> = {
   502: "The server couldn't reach an external service",
 };
 
+// ---- connection health (#81) -------------------------------------------------------------------
+// Pages often swallow a failed read (a lane that `.catch()`es to empty) and would stay empty after
+// a network blip. When a page's read failed for network reasons and a later request gets through,
+// listeners (the app shell) re-mount the page so everything loads again.
+
+/** Background polls and keepalives: their failures don't leave a page half-loaded. */
+const BACKGROUND = /^\/(downloads|requests\/active|auth\/ws-ticket|playback\/|live\/|iptv\/sessions\/)/;
+let pageReadFailed = false;
+const restoredHandlers = new Set<() => void>();
+
+/** Called once the server answers again after a page's read failed for network reasons. */
+export function onConnectionRestored(fn: () => void): () => void {
+  restoredHandlers.add(fn);
+  return () => restoredHandlers.delete(fn);
+}
+/** A page's read failed for network reasons since the last restore. */
+export function hadNetworkFailure(): boolean {
+  return pageReadFailed;
+}
+function noteResult(method: string, path: string, reached: boolean): void {
+  if (!reached) {
+    if (method === "GET" && !BACKGROUND.test(path)) pageReadFailed = true;
+    return;
+  }
+  if (!pageReadFailed) return;
+  pageReadFailed = false;
+  restoredHandlers.forEach((h) => h());
+}
+
+/** A request that hangs this long (a wedged HTTP/3 connection, a frozen tab) fails instead (#81).
+ *  Writes get longer: tuning a channel or starting playback can take a while on the server. */
+const READ_TIMEOUT_MS = 20_000;
+const WRITE_TIMEOUT_MS = 60_000;
+
+/** One fetch with a timeout. Network failures, aborts and timeouts all become status 0. */
+async function send(url: string, init: RequestInit): Promise<Response> {
+  const ctl = typeof AbortController !== "undefined" ? new AbortController() : undefined;
+  const ms = init.method === "GET" ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS;
+  const timer = ctl ? setTimeout(() => ctl.abort(), ms) : undefined;
+  try {
+    return await fetch(url, { ...init, signal: ctl?.signal });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function request<T>(method: string, path: string, o: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
   if (o.body !== undefined) headers["Content-Type"] = "application/json";
   if (o.auth !== false && token) headers.Authorization = `Bearer ${token}`;
-  let res: Response;
-  try {
-    // serverUrl(): same origin on the web, the configured address in file:// TV builds.
-    res = await fetch(serverUrl(`/api/v1${path}${qs(o.query)}`), {
-      method,
-      headers,
-      body: o.body !== undefined ? JSON.stringify(o.body) : undefined,
-      keepalive: o.keepalive,
-    });
-  } catch {
-    throw new ApiError(0, FRIENDLY[0]!);
+  // serverUrl(): same origin on the web, the configured address in file:// TV builds.
+  const url = serverUrl(`/api/v1${path}${qs(o.query)}`);
+  const init: RequestInit = {
+    method,
+    headers,
+    body: o.body !== undefined ? JSON.stringify(o.body) : undefined,
+    keepalive: o.keepalive,
+  };
+  let res: Response | undefined;
+  // Reads are retried once after a network blip (a reset connection, a request the browser dropped
+  // while the tab was in the background); writes aren't, they may already have happened.
+  const tries = method === "GET" ? 2 : 1;
+  for (let i = 0; i < tries && !res; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 600));
+    try {
+      res = await send(url, init);
+    } catch {
+      /* status 0 below */
+    }
   }
+  noteResult(method, path, !!res);
+  if (!res) throw new ApiError(0, FRIENDLY[0]!);
   if (!res.ok) {
     let msg = "";
     let body: Record<string, unknown> | undefined;

@@ -41,6 +41,10 @@ export class ReelEvents {
   private attempt = 0;
   private timer?: ReturnType<typeof setTimeout>;
   private stopped = true;
+  /** Bumped by every open/close so a slow ticket fetch can't open a second socket. */
+  private gen = 0;
+  /** A ticket is being fetched for the current generation. */
+  private opening = false;
 
   constructor(private opts: ReelEventsOptions) {}
 
@@ -64,9 +68,47 @@ export class ReelEvents {
 
   close(): void {
     this.stopped = true;
+    this.gen++;
+    this.opening = false;
     if (this.timer) clearTimeout(this.timer);
-    this.ws?.close();
+    this.drop();
+  }
+
+  /** The socket is open (or opening) right now. */
+  get alive(): boolean {
+    const ws = this.ws;
+    return !!ws && (ws.readyState === 0 || ws.readyState === 1);
+  }
+
+  /**
+   * Reconnect now instead of waiting for the backoff: the tab came back or the network returned.
+   * `force` also replaces a socket that still looks open — after a long sleep it is often dead
+   * without the browser having noticed yet.
+   */
+  kick(force = false): void {
+    if (this.stopped) return;
+    if (!force && (this.alive || this.opening)) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    this.attempt = 0;
+    this.gen++;
+    this.opening = false;
+    this.drop();
+    void this.open();
+  }
+
+  private drop(): void {
+    const ws = this.ws;
     this.ws = undefined;
+    if (!ws) return;
+    ws.onopen = ws.onmessage = ws.onerror = null;
+    ws.onclose = null;
+    try {
+      ws.close();
+    } catch {
+      /* ignore */
+    }
+    this.opts.onClose?.();
   }
 
   private httpBase(): string {
@@ -79,10 +121,14 @@ export class ReelEvents {
     const u = this.httpBase().replace(/^http/, "ws") + "/api/v1/events";
     if (!this.opts.token) return u;
     try {
+      // A hung request (wedged connection, frozen tab) must not stall reconnecting forever.
+      const ctl = typeof AbortController !== "undefined" ? new AbortController() : undefined;
+      const t = ctl ? setTimeout(() => ctl.abort(), 10_000) : undefined;
       const r = await fetch(`${this.httpBase()}/api/v1/auth/ws-ticket`, {
         method: "POST",
         headers: { Authorization: `Bearer ${this.opts.token}` },
-      });
+        signal: ctl?.signal,
+      }).finally(() => t && clearTimeout(t));
       if (r.ok) {
         const { ticket } = (await r.json()) as { ticket: string };
         return `${u}?ticket=${encodeURIComponent(ticket)}`;
@@ -95,8 +141,11 @@ export class ReelEvents {
   }
 
   private async open(): Promise<void> {
+    const gen = ++this.gen;
+    this.opening = true;
     const url = await this.url();
-    if (this.stopped) return;
+    if (this.stopped || gen !== this.gen) return;
+    this.opening = false;
     const ws = new WebSocket(url);
     this.ws = ws;
     ws.onopen = () => {
@@ -114,6 +163,8 @@ export class ReelEvents {
       this.anyHandlers.forEach((h) => h(ev));
     };
     ws.onclose = () => {
+      if (ws !== this.ws) return;
+      this.ws = undefined;
       this.opts.onClose?.();
       if (this.stopped) return;
       const min = this.opts.minBackoffMs ?? 500;

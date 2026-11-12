@@ -48,6 +48,9 @@ pub struct Config {
     pub trust_proxy_headers: bool,
     /// Seconds between session re-validation of open `/events` sockets (default 30).
     pub ws_recheck_secs: u64,
+    /// Seconds between WebSocket pings on open `/events` sockets (default 25), so idle proxy, NAT
+    /// and VPN paths don't drop them silently.
+    pub ws_ping_secs: u64,
     /// Reverse proxies (CIDRs, e.g. `["172.18.0.0/16"]`) whose `X-Forwarded-For` is believed: the
     /// client is the right-most entry that is not itself a trusted proxy. Empty (default) = the
     /// headers are ignored. `trust_proxy_headers` is a deprecated alias meaning "trust private-range
@@ -115,6 +118,7 @@ impl Default for Config {
             public_url: None,
             trust_proxy_headers: false,
             ws_recheck_secs: 30,
+            ws_ping_secs: 25,
             trusted_proxies: Vec::new(),
             max_body_bytes: 4 * 1024 * 1024,
             iptv_grace_secs: 15,

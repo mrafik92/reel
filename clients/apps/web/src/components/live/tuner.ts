@@ -162,6 +162,8 @@ export interface Tuner {
   session: () => TuneResponse | undefined;
   error: () => TuneError | undefined;
   buffering: () => boolean;
+  /** The player is getting the stream back by itself (#93): what it's doing, for the overlay. */
+  recovering: () => string | undefined;
   muted: () => boolean;
   unmute: () => void;
   nativePlane: () => boolean;
@@ -179,6 +181,7 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
   const [session, setSession] = createSignal<TuneResponse>();
   const [error, setError] = createSignal<TuneError>();
   const [buffering, setBuffering] = createSignal(false);
+  const [recovering, setRecovering] = createSignal<string>();
   const [muted, setMuted] = createSignal(false);
   const [nativePlane, setNativePlane] = createSignal(false);
   const [samples, setSamples] = createSignal<ZapSample[]>([]);
@@ -191,6 +194,8 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     beat = undefined;
   };
   const seen = new Set<number>();
+  /** Last automatic re-tune after the player gave up (at most one per minute, see #93). */
+  let autoRetuneAt = 0;
 
   const ensureAdapter = (): PlayerAdapter | undefined => {
     if (adapter) return adapter;
@@ -201,9 +206,21 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     setNativePlane(a instanceof AvPlayAdapter);
     a.on("buffering", (b) => setBuffering(b));
     a.on("play", () => setBuffering(false));
+    a.on("recovering", (r) => setRecovering(r ? r.reason : undefined));
     a.on("error", (e) => {
       if (!e.fatal || phase() === "idle") return;
+      setRecovering(undefined);
       if (session()?.mode === "direct" && fallBack()) return;
+      // The player's own retries are spent; the server may have ended the stream (reaped while
+      // nothing was fetched). Tune the same channel again once — a single request, so the
+      // provider's one connection and rate limit aren't hammered.
+      if (last && phase() === "playing" && Date.now() - autoRetuneAt > 60_000) {
+        autoRetuneAt = Date.now();
+        const c = last;
+        setRecovering("Reconnecting to the channel");
+        void tune(c, { auto: true }).then(() => setRecovering(undefined));
+        return;
+      }
       setPhase("error");
       setBuffering(false);
       setError({ kind: "playback", retry: true, title: "The picture stopped", body: "The stream broke off. Try again, or pick another channel." });
@@ -235,8 +252,9 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     return Promise.race([new Promise<void>((r) => v.requestVideoFrameCallback!(() => r())), sleep(4000)]);
   };
 
-  const tune = async (c: IptvChannel, o: { takeover?: boolean; viaServer?: boolean } = {}): Promise<void> => {
+  const tune = async (c: IptvChannel, o: { takeover?: boolean; viaServer?: boolean; auto?: boolean } = {}): Promise<void> => {
     const my = ++gen;
+    if (!o.auto) setRecovering(undefined);
     const t0 = now();
     last = c;
     setChannelId(c.id);
@@ -294,7 +312,7 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     if (!a) return;
     const v = video();
     try {
-      await a.load(mediaUrl(r.url)!, { autoplay: true });
+      await a.load(mediaUrl(r.url)!, { autoplay: true, live: true });
     } catch (e) {
       if (my !== gen) return;
       // Browsers block autoplay with sound until the first interaction: carry on muted.
@@ -325,7 +343,7 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
   };
 
   return {
-    phase, channelId, session, error, buffering, muted, nativePlane, samples, tune,
+    phase, channelId, session, error, buffering, recovering, muted, nativePlane, samples, tune,
     unmute: () => {
       const v = video();
       if (v) {
@@ -347,6 +365,7 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
       }
       setPhase("idle");
       setBuffering(false);
+      setRecovering(undefined);
     },
     dispose: () => {
       gen++;

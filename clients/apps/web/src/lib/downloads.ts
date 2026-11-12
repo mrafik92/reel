@@ -3,6 +3,7 @@ import { createDownloadProgressStore, getServerUrl, onServerUrlChange, type Down
 import { ReelEvents, type RequestProgressEvent, type ReelEvent } from "@reel/sdk";
 import { api, backend, getToken, invalidate, type DiscoverCard, type DownloadItem, type DownloadsEvent, type ProgressDto, type RequestDto } from "../api";
 import { MOCK } from "./mode";
+import { onResume } from "./connection";
 
 /**
  * App-wide download progress (SPEC §7.1). One store keyed by tmdb_id, fed by
@@ -225,8 +226,15 @@ export function connectEvents(): void {
   });
   const off = ws.onAny(dispatch);
   ws.connect();
+  // Back from the background or offline (#81): reconnect now if the socket died, and replace it
+  // after a long absence (it may be dead without the browser knowing). The open handler reseeds.
+  const offResume = onResume((r) => {
+    if (r.awayMs > 60_000 || !ws.alive) ws.kick(true);
+    else void refreshQueue();
+  });
   stop = () => {
     off();
+    offResume();
     ws.close();
     setConnected(false);
   };

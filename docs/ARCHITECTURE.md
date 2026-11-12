@@ -129,6 +129,12 @@ provider ──(the device opens its own connection)──► device      mode "
      Reel holds only the budget slot (an `ExternalSlot`) and expects a heartbeat
 ```
 
+- **Browser HLS window.** The shared packager writes fMP4 segments of ~2 s (the first one 1 s, for a fast tune)
+  into a 15-segment (30 s) sliding playlist, and keeps each segment on disk for another 10 segments (~20 s) after it
+  leaves the playlist (`-hls_delete_threshold`), so a request from a viewer who fell behind still finds its file
+  (#93). Audio is copied only when it is ADTS AAC; LATM AAC (stream type 0x11), MP2, AC-3 and others are encoded
+  to AAC.
+
 - **Direct mode.** With `REEL_ALLOW_DIRECT_LIVE`, `POST /iptv/channels/{id}/tune {"mode":"direct"}` claims a
   provider slot under the usual policy (own sessions: newest wins; others: 429; admins: takeover) and returns the
   provider URL instead of a signed Reel URL. It never shares a hub pipe, because a second viewer on the same
@@ -184,7 +190,13 @@ clients/
 ```
 
 One UI codebase covers the browser, LG and Samsung. The differences are confined to a `PlayerAdapter` and a
-platform layer. Web builds use absolute asset paths so deep links work, while TV packages use relative paths
+platform layer. The browser adapter (`HlsJsAdapter`) recovers from failures itself (`packages/ui/src/recovery.ts`):
+network errors reload at the playhead or the live edge with backoff, MSE errors go through `recoverMediaError` →
+`swapAudioCodec` → a rebuild, long stalls count as network failures, and only after 8 attempts does the app see a
+fatal error (it then reopens the session or re-tunes once before showing it). In the web app, `lib/connection.ts`
+signals "the app is back" (tab visible, online, back/forward cache); the events socket, the start-up check and
+"Can't reach your Reel server" screens retry on it, and the shell re-mounts a page whose reads failed once the
+server answers again. Web builds use absolute asset paths so deep links work, while TV packages use relative paths
 because they load from `file://`.
 
 ## 5. Architecture choices (and why)
@@ -217,6 +229,8 @@ because they load from `file://`.
 | A25 | **A VOD direct-play response lives only as long as its playback session** | On a one-connection provider, a paused or abandoned browser tab would otherwise hold the provider connection after a takeover or stop, and the new viewer would get HTTP 46x | A task per direct-play response pumps the provider body; a long `bytes=0-` stream is cut once the session is idle-reaped (the web player keeps it alive with progress reports) |
 | A26 | **A session's ffmpeg input holds at most one provider connection: in the proxy, a new request cuts the previous one and waits for it to close (`UpstreamOpts::exclusive`)** | ffmpeg's HTTP seek opens the new connection before closing the old one ("if it fails, continue on old connection"), so each seek briefly needed two connections, which a one-connection provider refuses (HTTP 46x) | A seek that has to cut an open connection waits ~100 ms longer. If the new request fails, ffmpeg's fallback to the old connection finds it cut and reconnects. Only for single-reader inputs: HLS tokens (renditions load in parallel), probe/subtitle leases and browser direct play aren't exclusive |
 | A27 | **Remote remux reads the keyframe index from the container over `Range` (#92)** | Remote copy sessions used to skip the index (a full scan would download the file), so they served ffmpeg's EVENT playlist without ENDLIST. hls.js treats that as live (`duration = Infinity`, nothing seekable), so IPTV VOD remux could not be seeked at all. The MKV Cues / MP4 `stss` readers (A5) only need the head and the index, so a buffered `Range` reader (1 MiB blocks, at most 12 requests / 24 MiB / 8 s, `206` required) reads them through the session's exclusive proxy token, one request at a time, before ffmpeg opens the input. The index is cached under `keyframes/{file}-remote-{sha256(url)[..8]}.json` (no URL or login in the name) and only reused if it still covers the probed duration | Starting a remote remux makes 2–4 extra provider requests the first time (none once cached) and waits for them. A provider that changes a file without changing its URL or duration gets a stale index until the cache is cleared. Containers without an index (TS, AVI) or a provider without `Range` still get the unseekable EVENT playlist |
+| A28 | **hls.js plays HLS in every MSE browser, Chrome included; native HLS only on Safari/Apple and where MSE is missing** (#91) | Chrome now answers `canPlayType("application/vnd.apple.mpegurl")`, so the adapter had silently switched to Chrome's built-in player: a small fixed buffer, no retry, and it stops on the first bad segment (`CHUNK_DEMUXER_ERROR_APPEND_FAILED`). With hls.js the app controls the buffer (~90 s for VOD), timeouts and error recovery | hls.js (~190 KB gzip) is fetched for every HLS stream in Chrome/Firefox (lazy, not on first paint). Safari keeps its native player for AirPlay, so its recovery is the simpler "reload at the playhead" path |
+| A29 | **Players recover by themselves before they report an error; the app re-tunes or reopens the session once** (#91, #93, #81) | Remote links (Tailscale, HTTP/3 over a 1280 MTU) drop or truncate responses now and then, and live segments rotate out. Stopping on the first fatal error turned every blip into "Playback stopped". The one-shot reopen covers a server session that was reaped while the player was stuck | A truly broken stream shows its error ~1–2 minutes later than before. Re-tuning uses one extra tune request (at most once a minute), which is gentle on the one-connection provider |
 
 ## 6. Data model (essentials)
 

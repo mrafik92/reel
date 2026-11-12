@@ -908,6 +908,40 @@ async fn serve(e: &Env) -> SocketAddr {
     addr
 }
 
+/// #81: idle `/events` sockets are pinged, so dead paths are noticed and live ones kept warm.
+#[tokio::test]
+async fn idle_websockets_are_pinged() {
+    use futures_util::StreamExt;
+    let e = env_with(|c| c.ws_ping_secs = 1, opts(100, 100), true).await;
+    let addr = serve(&e).await;
+    let login = e
+        .state
+        .auth
+        .login("admin", PW, dev("127.0.0.1"))
+        .await
+        .unwrap();
+    let admin = authed_as(&e, &login.token);
+    let t = api(&admin, "POST", "/api/v1/auth/ws-ticket", None).await.1["ticket"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (mut ws, _) =
+        tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/events?ticket={t}"))
+            .await
+            .unwrap();
+    let pinged = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(_))) => break true,
+                Some(Ok(_)) => continue,
+                _ => break false,
+            }
+        }
+    })
+    .await;
+    assert_eq!(pinged, Ok(true), "a ping within a few seconds");
+}
+
 #[tokio::test]
 async fn websockets_use_single_use_tickets_are_capped_and_closed_when_access_is_revoked() {
     use futures_util::StreamExt;

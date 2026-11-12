@@ -423,11 +423,14 @@ function Watch(): JSX.Element {
           <Show when={tuner.phase() === "tuning" && !tuner.error()}>
             <div class="live__tuning" aria-live="polite">
               <span class="spinner" />
-              <span>Tuning {tuned()?.name}…</span>
+              <span>{tuner.recovering() ?? `Tuning ${tuned()?.name ?? ""}`}…</span>
             </div>
           </Show>
-          <Show when={tuner.phase() === "playing" && tuner.buffering()}>
-            <div class="live__tuning"><span class="spinner" /></div>
+          <Show when={tuner.phase() === "playing" && (tuner.buffering() || tuner.recovering())}>
+            <div class="live__tuning" aria-live="polite">
+              <span class="spinner" />
+              <Show when={tuner.recovering()}>{(r) => <span>{r()}…</span>}</Show>
+            </div>
           </Show>
 
           <Show when={tuner.error()}>
