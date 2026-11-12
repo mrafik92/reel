@@ -166,6 +166,21 @@ struct KeyframeCache {
 }
 
 fn cache_path(data_dir: &Path, file_id: i64, input: &str) -> Option<PathBuf> {
+    if crate::ffmpeg::is_remote(input) {
+        // remote (provider) file: keyed by a hash of its URL (never the URL itself, it carries
+        // credentials); a replaced file with the same URL is caught by the duration check in
+        // `cached_remote_keyframes`
+        use sha2::{Digest, Sha256};
+        let h: String = Sha256::digest(input.as_bytes())[..8]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        return Some(
+            data_dir
+                .join("keyframes")
+                .join(format!("{file_id}-remote-{h}.json")),
+        );
+    }
     let m = std::fs::metadata(input).ok()?;
     let mtime = m
         .modified()
@@ -235,6 +250,215 @@ pub async fn fast_keyframes(input: &str, timeout: Duration, duration: f64) -> Op
     match res {
         Ok(Some(k)) if index_is_usable(&k, duration) => Some(k),
         _ => None,
+    }
+}
+
+/// Cached index of a remote file, if it still fits the file's (probed) duration.
+pub async fn cached_remote_keyframes(
+    data_dir: &Path,
+    file_id: i64,
+    url: &str,
+    duration: f64,
+) -> Option<Vec<f64>> {
+    cached_keyframes(data_dir, file_id, url)
+        .await
+        .filter(|k| index_is_usable(k, duration))
+}
+
+/// Limits of [`remote_keyframes`]: a handful of ranged reads, never a download of the file.
+#[derive(Debug, Clone, Copy)]
+pub struct RemoteIndexLimits {
+    pub timeout: Duration,
+    /// Most HTTP requests (each a ranged GET, one at a time).
+    pub max_requests: u32,
+    /// Most bytes read in total.
+    pub max_bytes: u64,
+}
+
+impl Default for RemoteIndexLimits {
+    fn default() -> Self {
+        RemoteIndexLimits {
+            timeout: Duration::from_secs(8),
+            max_requests: 12,
+            max_bytes: 24 << 20,
+        }
+    }
+}
+
+/// Read the keyframe index (Matroska Cues / MP4 `stss`) of a *remote* file from its container
+/// metadata with a few ranged GETs, one at a time. `url` must be the session's loopback
+/// upstream-proxy URL (never a provider URL): the proxy adds the provider's User-Agent and keeps
+/// the owner's single provider connection. `None` when the server ignores `Range`, the container
+/// has no usable index, or a limit is hit.
+pub async fn remote_keyframes(
+    url: &str,
+    limits: RemoteIndexLimits,
+    duration: f64,
+) -> Option<Vec<f64>> {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .ok()?;
+    let handle = tokio::runtime::Handle::current();
+    let url = url.to_string();
+    let task = tokio::task::spawn_blocking(move || {
+        let r = RangeReader::open(client, url, handle, limits)?;
+        let mut r = crate::keyindex::Limited::new(r, Some(limits.timeout));
+        crate::keyindex::read_keyframes(&mut r)
+    });
+    let res = tokio::time::timeout(limits.timeout + Duration::from_millis(500), task)
+        .await
+        .ok()?
+        .ok()?;
+    match res {
+        Ok(Some(k)) if index_is_usable(&k, duration) => Some(k),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::debug!(error = %e, "remote keyframe index not readable");
+            None
+        }
+    }
+}
+
+/// Smallest ranged read: the container head (EBML header, SeekHead, Tracks / `ftyp`, `moov`
+/// headers) and most Matroska Cues fit in one request.
+const RANGE_BLOCK: u64 = 1 << 20;
+
+/// `Read + Seek` over HTTP `Range` requests (blocking; runs on a `spawn_blocking` thread), with
+/// every fetched range kept in memory so the index parsers' small reads cost no extra request.
+struct RangeReader {
+    client: reqwest::Client,
+    url: String,
+    rt: tokio::runtime::Handle,
+    len: u64,
+    pos: u64,
+    blocks: Vec<(u64, Vec<u8>)>,
+    requests: u32,
+    bytes: u64,
+    limits: RemoteIndexLimits,
+}
+
+fn io_err(msg: impl Into<String>) -> std::io::Error {
+    std::io::Error::other(msg.into())
+}
+
+impl RangeReader {
+    fn open(
+        client: reqwest::Client,
+        url: String,
+        rt: tokio::runtime::Handle,
+        limits: RemoteIndexLimits,
+    ) -> std::io::Result<Self> {
+        let mut r = RangeReader {
+            client,
+            url,
+            rt,
+            len: u64::MAX,
+            pos: 0,
+            blocks: Vec::new(),
+            requests: 0,
+            bytes: 0,
+            limits,
+        };
+        r.fetch(0, RANGE_BLOCK)?;
+        Ok(r)
+    }
+
+    /// GET `bytes=start-(start+want-1)`; learns the total length from `Content-Range`.
+    fn fetch(&mut self, start: u64, want: u64) -> std::io::Result<()> {
+        if self.requests >= self.limits.max_requests {
+            return Err(io_err("remote index: request limit"));
+        }
+        let want = want.min(self.len.saturating_sub(start)).max(1);
+        if self.bytes + want > self.limits.max_bytes {
+            return Err(io_err("remote index: byte limit"));
+        }
+        self.requests += 1;
+        let end = start + want - 1;
+        let (client, url) = (self.client.clone(), self.url.clone());
+        let (total, data) = self.rt.block_on(async move {
+            use futures_util::StreamExt;
+            let resp = client
+                .get(&url)
+                .header(reqwest::header::RANGE, format!("bytes={start}-{end}"))
+                .send()
+                .await
+                .map_err(|e| io_err(format!("remote index: {}", e.without_url())))?;
+            // a server that ignores Range would send the whole file: never read that
+            if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+                return Err(io_err(format!("remote index: HTTP {}", resp.status())));
+            }
+            let (from, total) = resp
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_content_range)
+                .ok_or_else(|| io_err("remote index: no Content-Range"))?;
+            if from != start {
+                return Err(io_err("remote index: wrong range"));
+            }
+            let mut data = Vec::with_capacity(want as usize);
+            let mut body = Box::pin(resp.bytes_stream());
+            while let Some(c) = body.next().await {
+                let c = c.map_err(|e| io_err(format!("remote index: {}", e.without_url())))?;
+                if (data.len() + c.len()) as u64 > want {
+                    return Err(io_err("remote index: response longer than asked"));
+                }
+                data.extend_from_slice(&c);
+            }
+            Ok::<_, std::io::Error>((total, data))
+        })?;
+        if data.is_empty() {
+            return Err(io_err("remote index: empty range"));
+        }
+        self.bytes += data.len() as u64;
+        self.len = total;
+        self.blocks.push((start, data));
+        Ok(())
+    }
+}
+
+/// `bytes A-B/TOTAL` → (A, TOTAL).
+fn parse_content_range(v: &str) -> Option<(u64, u64)> {
+    let (range, total) = v.strip_prefix("bytes ")?.split_once('/')?;
+    let (a, _) = range.split_once('-')?;
+    Some((a.trim().parse().ok()?, total.trim().parse().ok()?))
+}
+
+impl std::io::Read for RangeReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() || self.pos >= self.len {
+            return Ok(0);
+        }
+        let hit = |blocks: &[(u64, Vec<u8>)], pos: u64| {
+            blocks
+                .iter()
+                .find(|(s, d)| pos >= *s && pos < s + d.len() as u64)
+                .map(|(s, d)| (*s, d.len()))
+        };
+        if hit(&self.blocks, self.pos).is_none() {
+            self.fetch(self.pos, (buf.len() as u64).max(RANGE_BLOCK))?;
+        }
+        let (s, _) = hit(&self.blocks, self.pos).ok_or_else(|| io_err("remote index: short"))?;
+        let data = &self.blocks.iter().find(|(b, _)| *b == s).expect("hit").1;
+        let off = (self.pos - s) as usize;
+        let n = buf.len().min(data.len() - off);
+        buf[..n].copy_from_slice(&data[off..off + n]);
+        self.pos += n as u64;
+        Ok(n)
+    }
+}
+
+impl std::io::Seek for RangeReader {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        let p = match pos {
+            std::io::SeekFrom::Start(p) => Some(p),
+            std::io::SeekFrom::End(d) => self.len.checked_add_signed(d),
+            std::io::SeekFrom::Current(d) => self.pos.checked_add_signed(d),
+        };
+        self.pos = p.ok_or_else(|| io_err("remote index: bad seek"))?;
+        Ok(self.pos)
     }
 }
 
