@@ -521,8 +521,19 @@ async fn forward_events(
         tokio::time::interval(Duration::from_secs(st.config.ws_recheck_secs.max(1)));
     alive_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     alive_tick.tick().await;
+    // #81: an idle socket sent nothing for minutes, so proxies, NAT and Tailscale paths could drop
+    // it silently and neither side noticed. A WebSocket ping (`ws_ping_secs`, 25 s) keeps the path
+    // warm, and a failed send ends the loop so the slot is freed; browsers answer pings themselves.
+    let mut ping_tick = tokio::time::interval(Duration::from_secs(st.config.ws_ping_secs.max(1)));
+    ping_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ping_tick.tick().await;
     loop {
         tokio::select! {
+            _ = ping_tick.tick() => {
+                if socket.send(Message::Ping(Default::default())).await.is_err() {
+                    break;
+                }
+            }
             _ = alive_tick.tick() => {
                 if !st.auth.session_valid(session_id, user.id).await {
                     let _ = socket.send(Message::Close(None)).await;
