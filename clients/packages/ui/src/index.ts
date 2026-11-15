@@ -2,6 +2,7 @@ export * from "./player";
 export * from "./profile";
 export * from "./progress";
 export * from "./navigation";
+export { keepFocusOnOverlayMove, overlayMount, overlayTarget } from "./overlay";
 export * from "./types";
 export * from "./format";
 export { Icon, type IconName } from "./components/Icon";

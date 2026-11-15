@@ -1,6 +1,7 @@
 import { createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { focusElement, focusFirst, onBack } from "../navigation";
+import { keepFocusOnOverlayMove, overlayMount } from "../overlay";
 import { Icon, type IconName } from "./Icon";
 
 export interface SheetOption<V> {
@@ -48,11 +49,16 @@ export function Sheet<V>(props: SheetProps<V>): JSX.Element {
     setTimeout(() => props.onSelect(v), 0);
   };
 
+  const focusSelected = (p: HTMLElement) => {
+    const sel = p.querySelector<HTMLElement>('[aria-checked="true"]');
+    if (sel) focusElement(sel, { smooth: false });
+    else focusFirst(p);
+  };
+  keepFocusOnOverlayMove(() => panel, focusSelected);
+
   onMount(() => {
     returnTo = document.activeElement as HTMLElement | null;
-    const sel = panel.querySelector<HTMLElement>('[aria-checked="true"]');
-    if (sel) focusElement(sel, { smooth: false });
-    else focusFirst(panel);
+    focusSelected(panel);
     const off = onBack(() => {
       props.onClose();
       return true;
@@ -64,7 +70,8 @@ export function Sheet<V>(props: SheetProps<V>): JSX.Element {
   });
 
   return (
-    <Portal>
+    // Inside the full-screen element when there is one, or it opens invisibly (#94).
+    <Portal mount={overlayMount()}>
       <div
         class="sheet"
         data-nav-trap

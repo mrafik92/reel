@@ -49,6 +49,7 @@ gaps are listed in [STATUS.md](STATUS.md).
 | Automatic audio/subtitle selection | ✅ | Settings → Playback (languages, Off / Forced only / Automatic / Always, SDH). The server picks the tracks and explains why |
 | Playback recovery (web) | 🧪 | hls.js plays HLS in every MSE browser, Chrome included (Chrome's own HLS player gave up on the first bad segment). VOD keeps ~90 s buffered with longer segment timeouts, so bitrate peaks don't drain it. Network errors, MSE/decoder errors and stalls of 25 s (live: 12 s) are retried by themselves (reload at the playhead or the live edge, `recoverMediaError`, `swapAudioCodec`, rebuild) with a **"Reconnecting…"** overlay. After 8 failed attempts the player reopens the session (live: re-tunes) once, at most once a minute, before it shows the error card (#91, #93). Safari keeps its native HLS player; TV apps use their own players |
 | Player UI | ✅ | Redesigned controls: centred transport, scrubber with a time tooltip, labelled actions, volume/speed/PiP, keyboard shortcuts, D-pad seek mode |
+| Player menus and toasts in full screen (web) | 🧪 | Speed, audio, subtitle and "Play on…" sheets, and toasts, mount inside the full-screen player, so they open over the video and close back to it without leaving full screen. Before, they opened invisibly behind it (#94) |
 | Watch state | ✅ | Resume, continue watching, played toggles cascade to seasons and shows |
 
 ## Live TV & IPTV
