@@ -1,6 +1,6 @@
 import { createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
-import { focusElement, focusFirst, Icon, onBack, type IconName } from "@reel/ui";
+import { focusElement, focusFirst, Icon, keepFocusOnOverlayMove, onBack, overlayMount, type IconName } from "@reel/ui";
 import { ApiError } from "../../api/http";
 import { casting, type CastDevice } from "../../api/casting";
 import { castSdkStatus, castState, castUnavailableWhy, loadCastSdk } from "../../lib/casting/chromecast";
@@ -47,13 +47,16 @@ export function CastSheet(props: {
     setTimeout(fn, 0);
   };
 
+  const focusSelected = (p: HTMLElement) => {
+    const sel = p.querySelector<HTMLElement>('[aria-checked="true"]:not([disabled])');
+    if (sel) focusElement(sel, { smooth: false });
+    else focusFirst(p);
+  };
+  keepFocusOnOverlayMove(() => panel, focusSelected);
+
   onMount(() => {
     returnTo = document.activeElement as HTMLElement | null;
-    requestAnimationFrame(() => {
-      const sel = panel.querySelector<HTMLElement>('[aria-checked="true"]:not([disabled])');
-      if (sel) focusElement(sel, { smooth: false });
-      else focusFirst(panel);
-    });
+    requestAnimationFrame(() => focusSelected(panel));
     const off = onBack(() => {
       props.onClose();
       return true;
@@ -77,7 +80,8 @@ export function CastSheet(props: {
   const ccEnabled = () => castSdkStatus() === "ready" && castState() !== "NO_DEVICES_AVAILABLE";
 
   return (
-    <Portal>
+    // Inside the full-screen player when there is one, or it opens invisibly (#94).
+    <Portal mount={overlayMount()}>
       <div
         class="sheet"
         data-nav-trap

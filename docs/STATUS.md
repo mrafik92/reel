@@ -56,6 +56,10 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
 - **Direct (local) Live TV playback** (#77): built and tested in CI, not yet tried on a TV or against the real provider. Off until `REEL_ALLOW_DIRECT_LIVE` is set on CT 113.
 - **Live TV HLS upstreams through the upstream proxy** (#11): built and tested in CI with local HLS fixtures, not yet deployed. Only channels whose provider URL is HLS (`.m3u8` or an HLS content type) go through ffmpeg and the proxy; raw MPEG-TS channels are read by the hub directly, as before. Tokens of a playlist that is still in flight when its lease or session ends are no longer registered (they used to outlive the hub connection until their sliding expiry; `a_playlist_in_flight_when_its_owner_ends_registers_nothing`).
 - **Notifications** (Discord/Telegram/webhook).
+- **Player menus in full screen** (#94, not yet deployed). Checked 2026-11-15 with Playwright in mock mode: in real
+  browser full screen (Chrome) the speed, audio, subtitle and "Play on…" sheets open over the video, work with
+  mouse and keys, and close without leaving full screen; a toast shows too. Leaving full screen with a sheet open
+  keeps it open with focus inside. 1920×1080 TV mode (arrow keys, Back) is unchanged. Not checked: Safari.
 - **Player and connection resilience** (#91, #93, #81, not yet deployed). Checked 2026-11-12 with Playwright
   (mock mode, and the new web client against the live `65bd851` server; desktop and 1920×1080 TV mode):
   - Chrome had been playing HLS with its **built-in player**, not hls.js (`canPlayType(mpegurl)` is now "maybe"
