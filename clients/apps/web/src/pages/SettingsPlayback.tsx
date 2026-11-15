@@ -3,7 +3,6 @@ import { Icon, PICKER_LANGUAGES, Sheet, iso1, languageName } from "@reel/ui";
 import { DEFAULT_PREFS, type PlaybackPrefs, type SubtitleMode } from "../api/prefs";
 import { loadPrefs, playbackPrefs, prefsSupported, savePrefs } from "../lib/prefs";
 import { previewSelection } from "../lib/tracks";
-import { usePageFocus } from "../lib/focus";
 import { chooseLiveDelivery, directAllowed, liveDelivery, type LiveDelivery } from "../lib/liveDelivery";
 import { Panel, Toggle } from "../components/AdminKit";
 import "../styles/prefs.css";
@@ -11,6 +10,7 @@ import "../styles/prefs.css";
 /**
  * Settings → Playback (per user, every device): which audio and subtitles Reel picks when
  * you press Play. Changes save as you make them; a live example shows what they mean.
+ * Rendered in the settings pane (`pages/admin/Admin.tsx`), next to the section nav (#88).
  */
 
 const MODES: { id: SubtitleMode; title: string; body: string }[] = [
@@ -44,10 +44,8 @@ const DELIVERY: { id: LiveDelivery; title: string; body: string }[] = [
 const langLabel = (c: string) => (c === "original" ? "Original language" : languageName(c));
 
 export default function SettingsPlayback(): JSX.Element {
-  const [ready, setReady] = createSignal(false);
-  void loadPrefs(true).then(() => setReady(true));
-  let el!: HTMLDivElement;
-  usePageFocus(ready, () => el);
+  // Focus stays with the settings layout (the nav's current link), like the other sections.
+  void loadPrefs(true);
 
   const p = (): PlaybackPrefs => playbackPrefs() ?? DEFAULT_PREFS;
   const [status, setStatus] = createSignal<"idle" | "saving" | "saved" | "error">("idle");
@@ -97,11 +95,10 @@ export default function SettingsPlayback(): JSX.Element {
   const subListActive = () => cur().subtitle_mode === "auto" || cur().subtitle_mode === "always";
 
   return (
-    <div class="page prefs" ref={el}>
-      <header class="page-head">
-        <p class="eyebrow eyebrow--accent">Settings</p>
-        <div class="page-head__row">
-          <h1 class="page-title">Playback</h1>
+    <div class="prefs">
+      <header class="prefs__head">
+        <div class="prefs__headrow">
+          <h2 class="prefs__title">Playback</h2>
           <p class="prefs__status" role="status" aria-live="polite" classList={{ [`is-${status()}`]: true }}>
             <Show when={status() === "saving"}>Saving…</Show>
             <Show when={status() === "saved"}><Icon name="check" /> Saved</Show>
