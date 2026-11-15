@@ -31,6 +31,12 @@ const RENDERER_ST: &str = "urn:schemas-upnp-org:device:MediaRenderer:1";
 /// Non-manual devices that stopped answering searches for this long are dropped.
 const STALE_AFTER: Duration = Duration::from_secs(15 * 60);
 const REFRESH_EVERY: Duration = Duration::from_secs(60);
+/// Largest device description accepted (real ones are a few KiB).
+pub const MAX_DESCRIPTION_BYTES: u64 = 256 * 1024;
+/// Largest SOAP answer read from a TV (real ones are well under 4 KiB).
+pub const MAX_SOAP_BYTES: u64 = 64 * 1024;
+/// Most description URLs fetched per SSDP round.
+const MAX_LOCATIONS_PER_ROUND: usize = 32;
 
 // ───────────────────────── model ─────────────────────────
 
@@ -109,8 +115,11 @@ impl Default for CastRuntime {
         Self {
             devices: Mutex::default(),
             sessions: Mutex::default(),
+            // Descriptions and SOAP answers come from whatever answered on the LAN: no
+            // redirects (they could point anywhere), bodies are capped where they are read.
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(6))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap_or_default(),
         }
@@ -152,12 +161,22 @@ fn tag_text(xml: &str, name: &str) -> Option<String> {
     None
 }
 
-fn resolve(base: &str, rel: &str) -> Option<String> {
-    reqwest::Url::parse(base)
-        .ok()?
-        .join(rel)
-        .ok()
-        .map(|u| u.to_string())
+/// Resolve `rel` against `base` and keep it only when it is plain HTTP(S) on the same host as
+/// the description (`origin`): a description must not be able to send Reel's SOAP calls, or
+/// the clients' icon requests, to another machine.
+fn resolve_on(origin: &reqwest::Url, base: &str, rel: &str) -> Option<String> {
+    let u = reqwest::Url::parse(base).ok()?.join(rel).ok()?;
+    let ok = matches!(u.scheme(), "http" | "https")
+        && u.host() == origin.host()
+        && u.username().is_empty()
+        && u.password().is_none();
+    if !ok {
+        tracing::warn!(
+            device = %origin.host_str().unwrap_or(""),
+            "DLNA description points away from the device; ignored"
+        );
+    }
+    ok.then(|| u.to_string())
 }
 
 /// Parse a UPnP device description. `None` when it is not a renderer with AVTransport.
@@ -225,11 +244,15 @@ pub fn parse_description(xml: &str, location: &str) -> Option<Device> {
             _ => {}
         }
     }
+    let origin = reqwest::Url::parse(location).ok()?;
+    if !matches!(origin.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = origin.host_str()?.to_string();
     let base = urlbase
         .filter(|b| b.starts_with("http"))
         .unwrap_or_else(|| location.to_string());
     let (av_type, av_ctl) = av?;
-    let host = reqwest::Url::parse(location).ok()?.host_str()?.to_string();
     let udn = udn.unwrap_or_else(|| location.to_string());
     let mut h = Sha256::new();
     h.update(udn.trim_start_matches("uuid:").as_bytes());
@@ -245,12 +268,12 @@ pub fn parse_description(xml: &str, location: &str) -> Option<Device> {
         name: name.unwrap_or_else(|| host.clone()),
         model,
         manufacturer: manu,
-        icon: icon.and_then(|i| resolve(&base, &i)),
+        icon: icon.and_then(|i| resolve_on(&origin, &base, &i)),
         ip: host,
         location: location.to_string(),
-        av_control: resolve(&base, &av_ctl)?,
+        av_control: resolve_on(&origin, &base, &av_ctl)?,
         av_type,
-        rc_control: rc.as_ref().and_then(|(_, c)| resolve(&base, c)),
+        rc_control: rc.as_ref().and_then(|(_, c)| resolve_on(&origin, &base, c)),
         rc_type: rc.map(|(t, _)| t),
         manual: false,
         last_seen: Instant::now(),
@@ -266,6 +289,30 @@ fn header_value(msg: &str, name: &str) -> Option<String> {
             .eq_ignore_ascii_case(name)
             .then(|| v.trim().to_string())
     })
+}
+
+/// A SSDP answer's `LOCATION` is only followed when it is HTTP on the very IP the answer came
+/// from, so a host on the LAN (or a spoofed packet) can't make Reel fetch URLs elsewhere.
+pub fn location_matches_sender(location: &str, from: std::net::IpAddr) -> bool {
+    let Ok(u) = reqwest::Url::parse(location) else {
+        return false;
+    };
+    // only IP literals: a name could resolve anywhere
+    let Some(Ok(ip)) = u.host_str().map(|h| {
+        h.trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+    }) else {
+        return false;
+    };
+    let from = match from {
+        std::net::IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map(std::net::IpAddr::V4)
+            .unwrap_or(from),
+        v4 => v4,
+    };
+    u.scheme() == "http" && ip == from
 }
 
 /// Common description URLs of TVs that do not answer (or are not reachable by) multicast.
@@ -313,7 +360,13 @@ impl CastRuntime {
 
     fn upsert(&self, mut d: Device) -> Device {
         let mut m = self.devices.lock().unwrap();
-        if let Some(old) = m.get(&d.id) {
+        if let Some(old) = m.get_mut(&d.id) {
+            // A device added by an admin can't be taken over by an SSDP answer that claims the
+            // same UDN from another address: it would receive the signed media URLs.
+            if old.manual && !d.manual && old.ip != d.ip {
+                tracing::warn!(device = %old.name, from = %d.ip, "SSDP answer for a manual DLNA device from another address; ignored");
+                return old.clone();
+            }
             d.manual |= old.manual;
         }
         m.insert(d.id.clone(), d.clone());
@@ -332,7 +385,10 @@ impl CastRuntime {
         if !res.status().is_success() {
             return Err(format!("HTTP {}", res.status()));
         }
-        let xml = res.text().await.map_err(|e| e.to_string())?;
+        let body = reel_iptv::limits::read_body(res, "device description", MAX_DESCRIPTION_BYTES)
+            .await
+            .map_err(|e| e.to_string())?;
+        let xml = String::from_utf8_lossy(&body);
         let mut d = parse_description(&xml, location).ok_or("not a MediaRenderer")?;
         d.manual = manual;
         Ok(self.upsert(d))
@@ -364,13 +420,19 @@ impl CastRuntime {
         let mut locations: HashSet<String> = HashSet::new();
         let deadline = tokio::time::Instant::now() + wait;
         let mut buf = vec![0u8; 4096];
-        while let Ok(Ok((n, _))) = tokio::time::timeout_at(deadline, sock.recv_from(&mut buf)).await
+        while let Ok(Ok((n, from))) =
+            tokio::time::timeout_at(deadline, sock.recv_from(&mut buf)).await
         {
             let text = String::from_utf8_lossy(&buf[..n]);
-            if let Some(l) = header_value(&text, "location") {
-                if l.starts_with("http") {
-                    locations.insert(l);
-                }
+            let Some(l) = header_value(&text, "location") else {
+                continue;
+            };
+            if !location_matches_sender(&l, from.ip()) {
+                tracing::debug!(%from, "SSDP answer with a LOCATION on another host; ignored");
+                continue;
+            }
+            if locations.len() < MAX_LOCATIONS_PER_ROUND {
+                locations.insert(l);
             }
         }
         let found = futures_util::future::join_all(
@@ -389,8 +451,14 @@ impl CastRuntime {
             .retain(|_, d| d.manual || d.last_seen.elapsed() < STALE_AFTER);
     }
 
-    /// Background discovery: manual devices from `data_dir/cast_devices.json`, then SSDP every minute.
-    pub fn spawn_discovery(self: &Arc<Self>, data_dir: PathBuf) {
+    /// Background discovery: manual devices from `data_dir/cast_devices.json`, then, when `ssdp`
+    /// is set (normally [`SSDP_ADDR`]), an SSDP search every minute. `None` (config
+    /// `cast_discovery = false`) only loads the devices added by IP.
+    pub fn spawn_discovery(
+        self: &Arc<Self>,
+        data_dir: PathBuf,
+        ssdp: Option<SocketAddr>,
+    ) -> tokio::task::JoinHandle<()> {
         let me = self.clone();
         tokio::spawn(async move {
             let file = data_dir.join("cast_devices.json");
@@ -399,14 +467,17 @@ impl CastRuntime {
                     let _ = me.add_location(&loc, true).await;
                 }
             }
-            let target: SocketAddr = SSDP_ADDR.parse().expect("ssdp addr");
+            let Some(target) = ssdp else {
+                tracing::info!("DLNA SSDP discovery is off (cast_discovery = false)");
+                return;
+            };
             loop {
                 let n = me.discover(target, Duration::from_secs(3)).await;
                 tracing::debug!(found = n, "ssdp search");
                 me.prune();
                 tokio::time::sleep(REFRESH_EVERY).await;
             }
-        });
+        })
     }
 
     fn save_manual(&self, data_dir: &std::path::Path) {
@@ -450,7 +521,15 @@ impl CastRuntime {
             .await
             .map_err(|e| ApiError::BadGateway(format!("TV unreachable: {e}")))?;
         let ok = res.status().is_success();
-        let text = res.text().await.unwrap_or_default();
+        let text = match reel_iptv::limits::read_body(res, "SOAP answer", MAX_SOAP_BYTES).await {
+            Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+            Err(_) if ok => {
+                return Err(ApiError::BadGateway(format!(
+                    "TV answer to {action} was too large"
+                )));
+            }
+            Err(_) => String::new(),
+        };
         if !ok {
             let why = tag_text(&text, "errorDescription")
                 .or_else(|| tag_text(&text, "faultstring"))
@@ -1097,4 +1176,279 @@ pub async fn set_volume(
         )
         .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod trust_tests {
+    //! #12: what an SSDP answer or a device description may make Reel do.
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use axum::{
+        Router,
+        response::{IntoResponse, Redirect},
+        routing::{get, post},
+    };
+
+    use super::*;
+
+    fn desc(urlbase: Option<&str>, av: &str, rc: &str, icon: &str) -> String {
+        format!(
+            r#"<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0">{}<device>
+<deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType><friendlyName>TV</friendlyName>
+<UDN>uuid:trust-1</UDN><iconList><icon><url>{icon}</url></icon></iconList><serviceList>
+<service><serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType><controlURL>{rc}</controlURL></service>
+<service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType><controlURL>{av}</controlURL></service>
+</serviceList></device></root>"#,
+            urlbase
+                .map(|u| format!("<URLBase>{u}</URLBase>"))
+                .unwrap_or_default()
+        )
+    }
+
+    const LOC: &str = "http://192.168.1.40:9197/dmr";
+
+    #[test]
+    fn control_urls_are_bound_to_the_device_host() {
+        // relative and same-host absolute URLs (any port) are fine
+        let d = parse_description(
+            &desc(None, "/av", "http://192.168.1.40:1234/rc", "/i.png"),
+            LOC,
+        )
+        .unwrap();
+        assert_eq!(d.av_control, "http://192.168.1.40:9197/av");
+        assert_eq!(d.rc_control.as_deref(), Some("http://192.168.1.40:1234/rc"));
+        assert_eq!(d.icon.as_deref(), Some("http://192.168.1.40:9197/i.png"));
+
+        // AVTransport on another host: not a usable device
+        for av in [
+            "http://10.10.10.1/admin",
+            "http://127.0.0.1:8420/api/v1/admin/x",
+            "//evil.example/av",
+            "https://192.168.1.41/av",
+            "http://user:pw@192.168.1.40/av",
+            "file:///etc/passwd",
+        ] {
+            assert!(
+                parse_description(&desc(None, av, "/rc", "/i"), LOC).is_none(),
+                "{av}"
+            );
+        }
+        // a URLBase on another host moves every relative URL there: refused as well
+        assert!(
+            parse_description(&desc(Some("http://10.10.10.1/"), "/av", "/rc", "/i"), LOC).is_none()
+        );
+        // volume control and icon elsewhere are dropped, the device stays usable
+        let d = parse_description(
+            &desc(
+                None,
+                "/av",
+                "http://10.10.10.1/rc",
+                "http://tracker.example/i.png",
+            ),
+            LOC,
+        )
+        .unwrap();
+        assert!(d.rc_control.is_none() && d.icon.is_none());
+        // the description itself must be HTTP(S)
+        assert!(parse_description(&desc(None, "/av", "/rc", "/i"), "file:///tmp/d.xml").is_none());
+    }
+
+    #[test]
+    fn ssdp_location_must_be_the_sender() {
+        let from: std::net::IpAddr = "192.168.1.40".parse().unwrap();
+        assert!(location_matches_sender(
+            "http://192.168.1.40:9197/dmr",
+            from
+        ));
+        assert!(!location_matches_sender(
+            "http://192.168.1.41:9197/dmr",
+            from
+        ));
+        assert!(!location_matches_sender("http://10.10.10.207:8420/", from));
+        assert!(!location_matches_sender("http://tv.lan:9197/dmr", from));
+        assert!(!location_matches_sender("ftp://192.168.1.40/dmr", from));
+        assert!(!location_matches_sender("not a url", from));
+        let mapped: std::net::IpAddr = "::ffff:192.168.1.40".parse().unwrap();
+        assert!(location_matches_sender("http://192.168.1.40/d.xml", mapped));
+        let v6: std::net::IpAddr = "fe80::1".parse().unwrap();
+        assert!(location_matches_sender("http://[fe80::1]:80/d.xml", v6));
+    }
+
+    /// A fake TV on loopback: `/description.xml`, `/ctl/av`, plus hostile routes. Counts hits.
+    async fn tv() -> (SocketAddr, Arc<AtomicUsize>) {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let h = hits.clone();
+        let app = Router::new()
+            .route(
+                "/description.xml",
+                get(move || {
+                    h.fetch_add(1, Ordering::SeqCst);
+                    async { desc(None, "/ctl/av", "/ctl/rc", "/i.png") }
+                }),
+            )
+            .route(
+                "/redirect",
+                get(|| async { Redirect::temporary("/description.xml") }),
+            )
+            .route(
+                "/huge.xml",
+                get(|| async {
+                    // an endless description
+                    let chunks = futures_util::stream::repeat_with(|| {
+                        Ok::<_, std::io::Error>(vec![b' '; 64 * 1024])
+                    });
+                    axum::body::Body::from_stream(chunks)
+                }),
+            )
+            .route(
+                "/ctl/av",
+                post(|| async { "<s:Envelope>".to_string() + &" ".repeat(1024 * 1024) }),
+            )
+            .route(
+                "/ctl/redirect",
+                post(|| async { Redirect::temporary("/ctl/av").into_response() }),
+            );
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        (addr, hits)
+    }
+
+    /// SSDP responder on 127.0.0.1 answering every M-SEARCH with `locations`. Counts searches.
+    async fn responder(locations: Vec<String>) -> (SocketAddr, Arc<AtomicUsize>) {
+        let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr = sock.local_addr().unwrap();
+        let searches = Arc::new(AtomicUsize::new(0));
+        let n = searches.clone();
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 2048];
+            while let Ok((len, from)) = sock.recv_from(&mut buf).await {
+                if !buf[..len].starts_with(b"M-SEARCH") {
+                    continue;
+                }
+                n.fetch_add(1, Ordering::SeqCst);
+                for l in &locations {
+                    let r =
+                        format!("HTTP/1.1 200 OK\r\nLOCATION: {l}\r\nST: {RENDERER_ST}\r\n\r\n");
+                    let _ = sock.send_to(r.as_bytes(), from).await;
+                }
+            }
+        });
+        (addr, searches)
+    }
+
+    #[tokio::test]
+    async fn ssdp_answers_pointing_elsewhere_are_not_fetched() {
+        let (tv, hits) = tv().await;
+        let port = tv.port();
+        // the answers come from 127.0.0.1 but name other hosts (or a host name)
+        let (ssdp, _) = responder(vec![
+            format!("http://localhost:{port}/description.xml"),
+            format!("http://10.255.255.1:{port}/description.xml"),
+            format!("http://[::1]:{port}/description.xml"),
+            "file:///etc/passwd".into(),
+        ])
+        .await;
+        let rt = CastRuntime::default();
+        assert_eq!(rt.discover(ssdp, Duration::from_millis(400)).await, 0);
+        assert_eq!(hits.load(Ordering::SeqCst), 0, "nothing was fetched");
+        assert!(rt.devices().is_empty());
+
+        // the honest answer from the same address works
+        let (ssdp, _) = responder(vec![format!("http://{tv}/description.xml")]).await;
+        assert_eq!(rt.discover(ssdp, Duration::from_millis(400)).await, 1);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn descriptions_are_capped_and_redirects_not_followed() {
+        let (tv, hits) = tv().await;
+        let rt = CastRuntime::default();
+        let t = Instant::now();
+        let e = rt
+            .add_location(&format!("http://{tv}/huge.xml"), true)
+            .await
+            .unwrap_err();
+        assert!(e.contains("larger"), "{e}");
+        assert!(t.elapsed() < Duration::from_secs(3));
+        let e = rt
+            .add_location(&format!("http://{tv}/redirect"), true)
+            .await
+            .unwrap_err();
+        assert!(e.contains("307"), "{e}");
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert!(rt.devices().is_empty());
+    }
+
+    #[tokio::test]
+    async fn soap_answers_are_capped_and_redirects_not_followed() {
+        let (tv, _) = tv().await;
+        let rt = CastRuntime::default();
+        let st = "urn:schemas-upnp-org:service:AVTransport:1";
+        let e = rt
+            .soap(&format!("http://{tv}/ctl/av"), st, "Play", &[])
+            .await
+            .unwrap_err();
+        assert!(format!("{e:?}").contains("too large"), "{e:?}");
+        let e = rt
+            .soap(&format!("http://{tv}/ctl/redirect"), st, "Play", &[])
+            .await
+            .unwrap_err();
+        assert!(matches!(e, ApiError::BadGateway(_)), "{e:?}");
+    }
+
+    #[tokio::test]
+    async fn ssdp_cannot_take_over_a_manual_device() {
+        let (tv, _) = tv().await;
+        let rt = CastRuntime::default();
+        let real = rt
+            .add_location(&format!("http://{tv}/description.xml"), true)
+            .await
+            .unwrap();
+        // another box claims the same UDN
+        let mut fake = parse_description(
+            &desc(None, "/ctl/av", "/ctl/rc", "/i.png"),
+            "http://10.10.10.99:9197/dmr",
+        )
+        .unwrap();
+        assert_eq!(fake.id, real.id);
+        fake.manual = false;
+        rt.upsert(fake);
+        let d = rt.device(&real.id).unwrap();
+        assert_eq!(d.ip, "127.0.0.1");
+        assert!(d.av_control.starts_with(&format!("http://{tv}/")));
+    }
+
+    #[tokio::test]
+    async fn discovery_switch() {
+        let (tv, _) = tv().await;
+        let dir = tempfile::tempdir().unwrap();
+        // a TV added by IP earlier
+        std::fs::write(
+            dir.path().join("cast_devices.json"),
+            serde_json::to_string(&[format!("http://{tv}/description.xml")]).unwrap(),
+        )
+        .unwrap();
+        let (ssdp, searches) = responder(vec![format!("http://{tv}/description.xml")]).await;
+
+        // off: the saved TV is loaded, no SSDP search is ever sent
+        let rt = Arc::new(CastRuntime::default());
+        rt.spawn_discovery(dir.path().into(), None).await.unwrap();
+        assert_eq!(rt.devices().len(), 1);
+        assert!(rt.devices()[0].manual);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(searches.load(Ordering::SeqCst), 0);
+
+        // on: searches go out
+        let rt = Arc::new(CastRuntime::default());
+        let h = rt.spawn_discovery(dir.path().into(), Some(ssdp));
+        for _ in 0..50 {
+            if searches.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        h.abort();
+        assert!(searches.load(Ordering::SeqCst) > 0);
+    }
 }

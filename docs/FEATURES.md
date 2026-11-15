@@ -74,7 +74,7 @@ gaps are listed in [STATUS.md](STATUS.md).
 | Web app (desktop + 10-foot TV mode) | ✅ | SolidJS. D-pad spatial navigation. Targets Chromium 68 for old TVs |
 | LG webOS / Samsung Tizen apps | 🧪 | Packaging, remote keys, native players (`<video>` / AVPlay). **Never installed on a real TV** |
 | Casting: AirPlay, Chromecast | 🧪 | Sender UI with a "Playing on…" remote view. Cast URLs point at the LAN address. Needs real devices to verify |
-| Casting: DLNA "Play on TV" | 🧪 | Server-side SOAP control; devices added by IP. Waiting on TV IPs + a CT 113 firewall rule |
+| Casting: DLNA "Play on TV" | 🧪 | Server-side SOAP control; devices found by SSDP or added by IP. Waiting on TV IPs + a CT 113 firewall rule. Discovery can be turned off (`REEL_CAST_DISCOVERY=false`); a TV's description and control URLs must stay on the TV's own address, with capped bodies and no redirects (🧪 #12, pending deploy) |
 | Android / iOS | — | Postponed |
 
 ## Sharing & administration

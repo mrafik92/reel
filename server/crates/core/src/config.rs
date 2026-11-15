@@ -83,6 +83,10 @@ pub struct Config {
     /// Base URL TVs / Chromecasts use to reach this server (LAN address, e.g.
     /// `http://10.10.10.207:8420`). Used for cast URLs (`for_cast`, `POST /playback/{id}/cast-url`).
     pub cast_base_url: Option<String>,
+    /// `REEL_CAST_DISCOVERY`: look for DLNA TVs with SSDP multicast (default true). Set false
+    /// to only use TVs added by IP (Settings or `POST /admin/cast/devices`): SSDP answers can
+    /// come from any host on the LAN.
+    pub cast_discovery: bool,
     /// `REEL_ALLOW_DIRECT_LIVE`: let clients play Live TV straight from the provider instead of
     /// through Reel. Off by default: the tune response then carries the provider URL, which
     /// contains the provider login.
@@ -136,6 +140,7 @@ impl Default for Config {
             image_cache_max_mb: 4096,
             iptv_image_cache_max_mb: 1024,
             cast_base_url: None,
+            cast_discovery: true,
             allow_direct_live: false,
             omdb_api_key: None,
             trakt_client_id: None,
@@ -174,6 +179,7 @@ mod tests {
             assert_eq!(c.database_path(), PathBuf::from("./data/reel.db"));
             assert!(c.tmdb_api_key.is_none());
             assert_eq!(c.image_cache_max_mb, 4096);
+            assert!(c.cast_discovery);
             Ok(())
         });
     }
@@ -184,9 +190,11 @@ mod tests {
             jail.create_file("c.toml", "bind = \"127.0.0.1:1\"\ndata_dir = \"/x\"")?;
             jail.set_env("REEL_BIND", "127.0.0.1:2");
             jail.set_env("REEL_IMAGE_CACHE_MAX_MB", "512");
+            jail.set_env("REEL_CAST_DISCOVERY", "false");
             let c = Config::load(Some(Path::new("c.toml"))).unwrap();
             assert_eq!(c.bind, "127.0.0.1:2");
             assert_eq!(c.image_cache_max_mb, 512);
+            assert!(!c.cast_discovery);
             assert_eq!(c.database_path(), PathBuf::from("/x/reel.db"));
             Ok(())
         });
