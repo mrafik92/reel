@@ -10249,14 +10249,14 @@
               "string",
               "null"
             ],
-            "description": "Deprecated: first entry of `epg_urls`."
+            "description": "Deprecated: first entry of `epg_urls` (credentials masked)."
           },
           "epg_urls": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "External guide (XMLTV) URLs in precedence order. The provider's own guide (when it has one)\nis imported first, then each of these; for a channel carried by several guides the earlier\none wins."
+            "description": "External guide (XMLTV) URLs in precedence order, credentials masked like `url`. The\nprovider's own guide (when it has one) is imported first, then each of these; for a channel\ncarried by several guides the earlier one wins. A patch may send masked entries back\nunchanged; they keep their saved URL."
           },
           "id": {
             "type": "integer",
@@ -10318,7 +10318,8 @@
             "type": "boolean"
           },
           "url": {
-            "type": "string"
+            "type": "string",
+            "description": "Playlist / server URL with credentials masked (`***`: userinfo, `username`/`password`-style\nquery parameters, Xtream `/live/USER/PASS/` path segments). Sending it back unchanged in a\npatch keeps the saved URL."
           },
           "user_agent": {
             "type": [
@@ -10330,7 +10331,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Xtream username, masked (`ab••••`, or `••••` when short). Never returned in clear: to change\nit, send the new one; sending the masked value back keeps the saved one."
           },
           "vod_movie_count": {
             "type": "integer",
@@ -10367,7 +10369,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Replace the external guide URL list (empty list clears). Omit to keep it."
+            "description": "Replace the external guide URL list (empty list clears). Omit to keep it. Entries may be the\nmasked URLs from `epg_urls`; they keep their saved URL."
           },
           "max_connections": {
             "type": [
@@ -10402,7 +10404,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "New URL. The masked `url` of the source sent back unchanged keeps the saved one; a URL that\nstill contains `***` is refused. Moving an Xtream source to another server\n(scheme/host/port) needs `username` and `password` in the same patch, so the saved login is\nnever sent to a server the admin didn't type it for."
           },
           "user_agent": {
             "type": [
@@ -10414,7 +10417,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Omit (or send the masked value back) to keep the current username; `\"\"` clears it."
           }
         }
       },

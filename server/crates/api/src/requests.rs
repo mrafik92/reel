@@ -162,6 +162,70 @@ pub(crate) fn card_dto(c: &DiscoverCard, sg: &reel_auth::UrlSigner) -> DiscoverC
     }
 }
 
+/// Library items `user` may open, by TMDB id: movies with a file, or shows, in a visible library
+/// (lowest id per title). `None` = the user sees every library (admins), no lookup needed.
+pub(crate) async fn visible_library_items(
+    st: &AppState,
+    user: &reel_auth::User,
+    media: MediaType,
+    tmdb_ids: &[i64],
+) -> ApiResult<Option<std::collections::HashMap<i64, i64>>> {
+    let Some(vis) = st.visible(user).await? else {
+        return Ok(None);
+    };
+    if tmdb_ids.is_empty() || vis.is_empty() {
+        return Ok(Some(Default::default()));
+    }
+    let kind = match media {
+        MediaType::Movie => "movie",
+        MediaType::Tv => "show",
+    };
+    let rows: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT i.tmdb_id, MIN(i.id) FROM media_items i
+         WHERE i.kind = ?1 AND i.tmdb_id IN (SELECT value FROM json_each(?2))
+           AND i.library_id IN (SELECT value FROM json_each(?3))
+           AND (i.kind != 'movie' OR EXISTS (SELECT 1 FROM media_files f WHERE f.item_id = i.id))
+         GROUP BY i.tmdb_id",
+    )
+    .bind(kind)
+    .bind(serde_json::to_string(tmdb_ids).unwrap_or_else(|_| "[]".into()))
+    .bind(serde_json::to_string(&vis).unwrap_or_else(|_| "[]".into()))
+    .fetch_all(&st.db)
+    .await?;
+    Ok(Some(rows.into_iter().collect()))
+}
+
+/// Re-point each card's `library_item_id` at a copy of the title `user` may open, or drop it. The
+/// discovery service links the first copy server-wide, which can sit in a library the user has no
+/// access to; the id alone would reveal that the title is there (and its item id).
+pub(crate) async fn scope_cards<'a>(
+    st: &AppState,
+    user: &reel_auth::User,
+    cards: impl IntoIterator<Item = &'a mut DiscoverCardDto>,
+) -> ApiResult<()> {
+    let mut cards: Vec<&mut DiscoverCardDto> = cards
+        .into_iter()
+        .filter(|c| c.library_item_id.is_some())
+        .collect();
+    for media in [MediaTypeDto::Movie, MediaTypeDto::Tv] {
+        let ids: Vec<i64> = cards
+            .iter()
+            .filter(|c| c.media_type == media)
+            .map(|c| c.tmdb_id)
+            .collect();
+        if ids.is_empty() {
+            continue;
+        }
+        let Some(map) = visible_library_items(st, user, media.into(), &ids).await? else {
+            return Ok(());
+        };
+        for c in cards.iter_mut().filter(|c| c.media_type == media) {
+            c.library_item_id = map.get(&c.tmdb_id).copied();
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverPageDto {
     pub page: u32,
@@ -301,7 +365,9 @@ pub async fn discover_list(
         "upcoming" => d.upcoming(page).await?,
         _ => return Err(ApiError::NotFound),
     };
-    Ok(Json(page_dto(out, &st.signer(u.id()))))
+    let mut dto = page_dto(out, &st.signer(u.id()));
+    scope_cards(&st, &u.user, &mut dto.results).await?;
+    Ok(Json(dto))
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -335,7 +401,9 @@ pub async fn discover_search(
     let media = parse_media(q.media.as_deref())?;
     let cards = st.requests.discovery().search(text, media).await?;
     let sg = st.signer(u.id());
-    Ok(Json(cards.iter().map(|c| card_dto(c, &sg)).collect()))
+    let mut out: Vec<DiscoverCardDto> = cards.iter().map(|c| card_dto(c, &sg)).collect();
+    scope_cards(&st, &u.user, &mut out).await?;
+    Ok(Json(out))
 }
 
 /// TMDB detail card (genres, runtime, seasons) with availability + progress.
@@ -359,8 +427,10 @@ pub async fn discover_detail(
 ) -> ApiResult<Json<DiscoverDetailDto>> {
     let media = MediaType::parse(&media).ok_or(ApiError::NotFound)?;
     let d = st.requests.discovery().detail(media, tmdb_id).await?;
+    let mut card = card_dto(&d.card, &st.signer(u.id()));
+    scope_cards(&st, &u.user, [&mut card]).await?;
     Ok(Json(DiscoverDetailDto {
-        card: card_dto(&d.card, &st.signer(u.id())),
+        card,
         genres: d.genres,
         runtime_minutes: d.runtime_minutes,
         imdb_id: d.imdb_id,

@@ -58,6 +58,9 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
 - **Live TV transcodes under the transcode limits** (#13): built and tested in CI
   (`live_transcodes_count_against_the_transcode_limits` with an MPEG-2 fake provider,
   `external_transcodes_count_against_the_limits`), not yet deployed.
+- **Provider login hidden in admin responses; library links scoped to visible libraries** (#15): built and tested in CI
+  (`admin_source_responses_never_contain_provider_credentials`,
+  `discover_cards_link_only_library_items_the_viewer_can_open`, the downloads test), not yet deployed.
 - **Notifications** (Discord/Telegram/webhook).
 - **Player menus in full screen** (#94, not yet deployed). Checked 2026-11-15 with Playwright in mock mode: in real
   browser full screen (Chrome) the speed, audio, subtitle and "Play on…" sheets open over the video, work with
@@ -147,7 +150,7 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 6. DLNA discovery trust: bind control URLs to the responding IP, cap body sizes, setting to disable discovery.
 7. ~~Live IPTV transcodes counted against the user's `max_transcodes`~~ Fixed in code (#13, 🧪): a live HLS session whose shared packager re-encodes video counts as one transcode of its viewer (joining a running packager included) and each such packager as one server-wide, together with playback transcodes, under one admission lock. A user's own oldest live transcode gives way when they zap (newest wins); playback transcodes and other users' never do. Passthrough, direct and copy/audio-only HLS don't count. Counts as done once deployed and checked live.
 8. Signing key / data dir permissions created atomically (0600/0700).
-9. Redact `epg_urls`/source URL credentials in admin DTOs; filter `library_item_id` in Discover/Downloads by library visibility.
+9. ~~Redact `epg_urls`/source URL credentials in admin DTOs; filter `library_item_id` in Discover/Downloads by library visibility~~ Fixed in code (#15, 🧪): admin source responses mask the source URL, guide URLs and the Xtream username; edits accept the masked values back, refuse a URL that still holds `***`, and need the login again to move an Xtream source to another server. Discover (lists, search, detail), person pages, global search and Downloads link only a copy of a title in a library the viewer can open. Counts as done once deployed and checked live.
 10. Edge, if ever public: only Caddy 443 forwarded; block `/api/v1/{admin,setup,webhooks,cast}/*` from the WAN; CSP/Permissions-Policy at Caddy; rate limits/CrowdSec; geo allowlist.
 
 **Decision on record:** Reel stays **private** (LAN + Tailscale) until items 1–10 are done and re-reviewed.

@@ -776,16 +776,22 @@ pub struct SourceDto {
     pub name: String,
     /// `m3u` | `xtream`
     pub kind: String,
+    /// Playlist / server URL with credentials masked (`***`: userinfo, `username`/`password`-style
+    /// query parameters, Xtream `/live/USER/PASS/` path segments). Sending it back unchanged in a
+    /// patch keeps the saved URL.
     pub url: String,
+    /// Xtream username, masked (`ab••••`, or `••••` when short). Never returned in clear: to change
+    /// it, send the new one; sending the masked value back keeps the saved one.
     pub username: Option<String>,
     pub password_set: bool,
     /// Provider connection limit (`null` = unlimited / unknown).
     pub max_connections: Option<u32>,
-    /// Deprecated: first entry of `epg_urls`.
+    /// Deprecated: first entry of `epg_urls` (credentials masked).
     pub epg_url: Option<String>,
-    /// External guide (XMLTV) URLs in precedence order. The provider's own guide (when it has one)
-    /// is imported first, then each of these; for a channel carried by several guides the earlier
-    /// one wins.
+    /// External guide (XMLTV) URLs in precedence order, credentials masked like `url`. The
+    /// provider's own guide (when it has one) is imported first, then each of these; for a channel
+    /// carried by several guides the earlier one wins. A patch may send masked entries back
+    /// unchanged; they keep their saved URL.
     pub epg_urls: Vec<String>,
     /// Import result per guide (provider guide first, then `epg_urls` in order).
     pub epg_sources: Vec<EpgSourceDto>,
@@ -841,7 +847,7 @@ async fn epg_sources(st: &AppState, s: &Source) -> Vec<EpgSourceDto> {
     let rows = store::guide_stats(&st.db, s.id).await.unwrap_or_default();
     let mut out: Vec<EpgSourceDto> = vec![];
     let dto = |r: &store::GuideStat| EpgSourceDto {
-        url: r.url.clone(),
+        url: reel_iptv::net::redact_url(&r.url),
         provider: r.provider,
         channels: r.channels,
         programmes: r.programmes,
@@ -877,18 +883,55 @@ async fn epg_sources(st: &AppState, s: &Source) -> Vec<EpgSourceDto> {
     out
 }
 
+/// Masked form of a provider username: the first two characters of a long one, else nothing.
+pub(crate) fn mask_username(u: &str) -> String {
+    let n = u.chars().count();
+    if n < 6 {
+        "••••".into()
+    } else {
+        format!("{}••••", u.chars().take(2).collect::<String>())
+    }
+}
+
+/// A patched URL: the masked form of `current` sent back unchanged keeps `current`; anything still
+/// holding a mask (`***`) is refused, because the real value can't be recovered from it.
+fn unmask_url(sent: &str, current: &[String]) -> ApiResult<String> {
+    let sent = sent.trim();
+    if let Some(c) = current
+        .iter()
+        .find(|c| c.as_str() == sent || reel_iptv::net::redact_url(c) == sent)
+    {
+        return Ok(c.clone());
+    }
+    if sent.contains("***") {
+        return Err(ApiError::BadRequest(
+            "a URL still contains a hidden part (***): enter the full URL, credentials included"
+                .into(),
+        ));
+    }
+    Ok(sent.to_string())
+}
+
+/// `scheme://host:port` of a URL, to notice a source moving to another server.
+fn origin(u: &str) -> Option<String> {
+    reqwest::Url::parse(u)
+        .ok()
+        .map(|u| u.origin().ascii_serialization())
+}
+
 async fn source_dto(st: &AppState, s: &Source) -> SourceDto {
+    let redact = |u: &String| reel_iptv::net::redact_url(u);
     SourceDto {
-        epg_urls: s.epg_urls.clone(),
+        epg_urls: s.epg_urls.iter().map(redact).collect(),
         epg_sources: epg_sources(st, s).await,
         id: s.id,
         name: s.name.clone(),
         kind: s.kind.as_str().into(),
-        url: s.url.clone(),
-        username: s.username.clone(),
+        url: redact(&s.url),
+        username: s.username.as_deref().map(mask_username),
         password_set: s.password.as_deref().is_some_and(|p| !p.is_empty()),
         max_connections: s.max_connections,
-        epg_url: s.epg_urls.first().cloned(),
+        epg_url: s.epg_urls.first().map(redact),
         // credentials in the guide URL (Xtream `xmltv.php?username=…&password=…`) are masked
         detected_epg_url: s
             .detected_epg_url
@@ -961,6 +1004,13 @@ fn validate_url(st: &AppState, u: &str) -> ApiResult<()> {
     if !(u.starts_with("http://") || u.starts_with("https://")) {
         return Err(ApiError::BadRequest(
             "url must start with http:// or https://".into(),
+        ));
+    }
+    // `***` is the mask admin responses use: such a URL would send the mask to the provider
+    if u.contains("***") {
+        return Err(ApiError::BadRequest(
+            "a URL still contains a hidden part (***): enter the full URL, credentials included"
+                .into(),
         ));
     }
     reel_iptv::net::check_url(u, st.config.allow_private_fetch)?;
@@ -1080,7 +1130,12 @@ pub async fn get_source(
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SourcePatch {
     pub name: Option<String>,
+    /// New URL. The masked `url` of the source sent back unchanged keeps the saved one; a URL that
+    /// still contains `***` is refused. Moving an Xtream source to another server
+    /// (scheme/host/port) needs `username` and `password` in the same patch, so the saved login is
+    /// never sent to a server the admin didn't type it for.
     pub url: Option<String>,
+    /// Omit (or send the masked value back) to keep the current username; `""` clears it.
     pub username: Option<String>,
     /// Omit to keep the current password.
     pub password: Option<String>,
@@ -1088,7 +1143,8 @@ pub struct SourcePatch {
     pub max_connections: Option<u32>,
     /// Deprecated: replaces the list with this single URL (empty string clears).
     pub epg_url: Option<String>,
-    /// Replace the external guide URL list (empty list clears). Omit to keep it.
+    /// Replace the external guide URL list (empty list clears). Omit to keep it. Entries may be the
+    /// masked URLs from `epg_urls`; they keep their saved URL.
     pub epg_urls: Option<Vec<String>>,
     pub refresh_interval: Option<i64>,
     pub user_agent: Option<String>,
@@ -1110,8 +1166,36 @@ pub async fn update_source(
     Json(p): Json<SourcePatch>,
 ) -> ApiResult<Json<SourceDto>> {
     let cur = store::get_source(&st.db, id).await?;
-    if let Some(u) = p.url.as_deref() {
-        validate_url(&st, u.trim())?;
+    let mut p = p;
+    // Masked values sent back unchanged mean "keep": the DTO never holds the real ones.
+    let url = match p.url.as_deref() {
+        Some(u) => unmask_url(u, std::slice::from_ref(&cur.url))?,
+        None => cur.url.clone(),
+    };
+    if url != cur.url {
+        validate_url(&st, &url)?;
+    }
+    if p.username.as_deref().is_some_and(|u| {
+        cur.username
+            .as_deref()
+            .is_some_and(|c| u == mask_username(c))
+    }) {
+        p.username = None;
+    }
+    if let Some(list) = p.epg_urls.as_mut() {
+        for u in list.iter_mut() {
+            *u = unmask_url(u, &cur.epg_urls)?;
+        }
+    }
+    if let Some(u) = p.epg_url.as_mut() {
+        *u = unmask_url(u, &cur.epg_urls)?;
+    }
+    let new_login = p.username.as_deref().is_some_and(|u| !u.is_empty())
+        && p.password.as_deref().is_some_and(|p| !p.is_empty());
+    if cur.kind == SourceKind::Xtream && origin(&url) != origin(&cur.url) && !new_login {
+        return Err(ApiError::BadRequest(
+            "moving the source to another server needs the username and password again".into(),
+        ));
     }
     let urls = resolve_urls(&st, p.epg_urls.clone(), p.epg_url.clone(), &cur.epg_urls)?;
     let empty_to_none = |s: Option<String>, cur: Option<String>| match s {
@@ -1124,7 +1208,7 @@ pub async fn update_source(
          epg_url = ?, epg_urls = ?, refresh_interval = ?, user_agent = ?, enabled = ? WHERE id = ?",
     )
     .bind(p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(&cur.name))
-    .bind(p.url.as_deref().map(str::trim).unwrap_or(&cur.url))
+    .bind(&url)
     .bind(empty_to_none(p.username, cur.username))
     .bind(empty_to_none(p.password, cur.password))
     .bind(match p.max_connections {

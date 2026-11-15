@@ -17,7 +17,7 @@ use crate::{
     AppState,
     auth::AuthUser,
     error::{ApiError, ApiResult, ErrorBody},
-    requests::{DiscoverCardDto, card_dto, tmdb_image},
+    requests::{DiscoverCardDto, card_dto, scope_cards, tmdb_image, visible_library_items},
     routes::image_url,
 };
 
@@ -76,6 +76,17 @@ pub async fn get_person(
 ) -> ApiResult<Json<PersonDto>> {
     let p = st.requests.discovery().person(tmdb_id).await?;
     let sg = st.signer(u.id());
+    let mut credits: Vec<PersonCreditDto> = p
+        .credits
+        .iter()
+        .map(|c| PersonCreditDto {
+            card: card_dto(&c.card, &sg),
+            role: c.role.to_string(),
+            character: c.character.clone(),
+            job: c.job.clone(),
+        })
+        .collect();
+    scope_cards(&st, &u.user, credits.iter_mut().map(|c| &mut c.card)).await?;
     Ok(Json(PersonDto {
         tmdb_id: p.tmdb_id,
         name: p.name,
@@ -86,16 +97,7 @@ pub async fn get_person(
         known_for_department: p.known_for_department,
         photo_url: tmdb_image(&sg, "profile", &p.profile_path, 342),
         imdb_id: p.imdb_id,
-        credits: p
-            .credits
-            .iter()
-            .map(|c| PersonCreditDto {
-                card: card_dto(&c.card, &sg),
-                role: c.role.to_string(),
-                character: c.character.clone(),
-                job: c.job.clone(),
-            })
-            .collect(),
+        credits,
     }))
 }
 
@@ -277,27 +279,33 @@ pub(crate) async fn downloads_for(
     items: &[DownloadItem],
 ) -> Vec<DownloadDto> {
     let sg = st.signer(user.id);
-    let mut out = Vec::with_capacity(items.len());
-    let mut lib_ok: std::collections::HashMap<i64, bool> = Default::default();
-    for i in items {
-        if !user.is_admin() && i.request_user_id != Some(user.id) {
-            continue;
+    let mine: Vec<&DownloadItem> = items
+        .iter()
+        .filter(|i| user.is_admin() || i.request_user_id == Some(user.id))
+        .collect();
+    // Library link / poster only for a copy of the title in a library the user may open.
+    let mut visible: std::collections::HashMap<(MediaType, i64), i64> = Default::default();
+    let scoped = !user.is_admin();
+    for media in [MediaType::Movie, MediaType::Tv] {
+        let ids: Vec<i64> = mine
+            .iter()
+            .filter(|i| i.media_type == media && i.library_item_id.is_some())
+            .filter_map(|i| i.tmdb_id)
+            .collect();
+        // an error leaves the map empty: no links rather than unchecked ones
+        if let Ok(Some(map)) = visible_library_items(st, user, media, &ids).await {
+            visible.extend(map.into_iter().map(|(t, id)| ((media, t), id)));
         }
-        // Library link / poster only when the user may see that library item.
-        let mut lib = i.library_item_id;
-        if let (Some(id), false) = (lib, user.is_admin()) {
-            let ok = match lib_ok.get(&id) {
-                Some(o) => *o,
-                None => {
-                    let o = st.require_item(user, id).await.is_ok();
-                    lib_ok.insert(id, o);
-                    o
-                }
-            };
-            if !ok {
-                lib = None;
-            }
-        }
+    }
+    let mut out = Vec::with_capacity(mine.len());
+    for i in mine {
+        let lib = if scoped {
+            i.library_item_id
+                .and(i.tmdb_id)
+                .and_then(|t| visible.get(&(i.media_type, t)).copied())
+        } else {
+            i.library_item_id
+        };
         let has_lib_poster = match lib {
             Some(id) => sqlx::query_scalar::<_, Option<String>>(
                 "SELECT poster FROM media_items WHERE id = ?",
