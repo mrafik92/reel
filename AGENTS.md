@@ -18,9 +18,13 @@ an issue in `mrafik92/reel`. When asked to "work on #N":
 4. **Validate locally** (see §3) and **update the docs** (see §6) before pushing. Docs changes go in the
    same PR as the code.
 5. **Open a PR**: `gh pr create -R mrafik92/reel --base main --head <branch>`, filling in the PR template.
-   Write **`Refs #N`, never `Closes #N` / `Fixes #N`**. Then link the PR to the issue in its *Development*
-   section, or with `gh pr edit` (the body reference is enough for the board). The project workflow moves
-   the card to **Reviewing**.
+   Write **`Refs #N`, never `Closes #N` / `Fixes #N`**, and **don't** link the PR in the issue's *Development*
+   sidebar: every GitHub "link" closes the issue on merge, which would jump the card to Done.
+   Then **move the card to Reviewing yourself** (§2, option `01a8ebed`) and comment the PR URL on the issue
+   (`gh issue comment N -R mrafik92/reel -b "🔎 In review: <PR url>"`). The board tracks issues only; PRs
+   don't get their own cards.
+   If `main` moved meanwhile and the PR conflicts, merge `origin/main` into your branch and resolve
+   (docs: keep both sides' rows/sections), then re-run §3.
 6. **After merge** (by the owner, or by you when explicitly asked), CI builds the image. To deploy, trigger
    **Actions → deploy → Run workflow** (`gh workflow run deploy -R mrafik92/reel`, only when asked), or run
    `deploy/ct113/deploy.py` from the Mac as a fallback. It moves every ticket referenced in the shipped commits to **Deployed** and
