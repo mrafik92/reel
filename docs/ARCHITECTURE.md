@@ -279,7 +279,7 @@ Migrations are in `server/crates/core/migrations` and applied on startup.
   - Image fetches (TMDB, logos, VOD artwork) are capped in bytes and time while streaming, single-flight,
     and their caches have a disk budget (A33).
   - DLNA: SSDP answers are only followed to the sender's own IP, control URLs are bound to the TV's host,
-    no redirects, capped bodies, and SSDP discovery can be turned off (`REEL_CAST_DISCOVERY`, A33).
+    no redirects, capped bodies, and SSDP discovery can be turned off (`REEL_CAST_DISCOVERY`, A34).
 - **Container.** Non-root, `cap_drop: ALL`, read-only rootfs, read-only media, memory/PID/CPU limits. CT 113's
   Proxmox firewall blocks LAN egress apart from the Arr hosts and qBittorrent.
 - A three-reviewer security council (2026-11-03) produced the hardening backlog; see
