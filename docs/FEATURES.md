@@ -82,7 +82,7 @@ gaps are listed in [STATUS.md](STATUS.md).
 | Feature | Status | Notes |
 |---|---|---|
 | First-run setup, login, invites | ✅ | Argon2id passwords, opaque session tokens (30-day sliding window, 90-day absolute limit) |
-| Per-user library access, limits, permissions | ✅ | Streams, transcodes, bitrate cap, request quotas. Flags for IPTV / VOD / requests / casting, off by default for invited users |
+| Per-user library access, limits, permissions | ✅ | Streams, transcodes (🧪 live TV video transcodes count too, #13), bitrate cap, request quotas. Flags for IPTV / VOD / requests / casting, off by default for invited users |
 | Reconnects by itself (web) | 🧪 | API calls time out (20 s reads, 60 s writes) and reads are retried once. When the server answers again after a network failure, or the tab becomes visible / goes online, the current page is reloaded in place (not the player or Live TV), "Can't reach your Reel server" screens retry with backoff, and the events WebSocket reconnects (it is replaced after more than 60 s away). The server pings each socket every 25 s (#81) |
 | Signed media URLs | ✅ | HMAC with a per-user `sign_epoch` (revocable). Works in native players without auth headers |
 | Admin settings | ✅ | Libraries, users & invites, Radarr/Sonarr, download clients, notifications, Live TV (providers, guides, channels, live hub), now playing, transcoding, **About** (server + web app versions) |

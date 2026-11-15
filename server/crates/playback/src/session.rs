@@ -220,10 +220,23 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
+/// Transcodes started outside the session manager (live TV's shared HLS packagers), counted
+/// against the same per-user and global transcode limits.
+pub trait ExternalTranscodes: Send + Sync {
+    /// `(this user's, server-wide)` transcodes currently running. Called with the admission lock
+    /// held ([`SessionManager::admission`]); must not take it again.
+    fn counts(&self, user_id: i64) -> (usize, usize);
+}
+
 pub struct SessionManager {
     cfg: SessionConfig,
     hw: HwAccel,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    /// Serializes transcode admission between this manager and [`ExternalTranscodes`], so a VOD
+    /// transcode and a live one can't both take the user's last slot. Always taken *before* any
+    /// other lock of either side.
+    admission: Mutex<()>,
+    external: Mutex<Option<std::sync::Weak<dyn ExternalTranscodes>>>,
     degraded: Mutex<Vec<String>>,
     indexer: Arc<Indexer>,
     media: MediaCtx,
@@ -239,6 +252,8 @@ impl SessionManager {
             cfg,
             hw,
             sessions: Mutex::new(HashMap::new()),
+            admission: Mutex::new(()),
+            external: Mutex::new(None),
             degraded: Mutex::new(Vec::new()),
             indexer: Arc::new(Indexer::default()),
         })
@@ -252,6 +267,48 @@ impl SessionManager {
 
     pub fn config(&self) -> &SessionConfig {
         &self.cfg
+    }
+
+    /// Count `ext`'s transcodes against the limits of new sessions (held weakly).
+    pub fn set_external_transcodes(&self, ext: std::sync::Weak<dyn ExternalTranscodes>) {
+        *self.external.lock().unwrap() = Some(ext);
+    }
+
+    /// The transcode admission lock (see [`ExternalTranscodes`]): hold it while checking the
+    /// limits and registering a transcode outside this manager.
+    pub fn admission(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.admission.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// `(this user's, server-wide)` transcode sessions of this manager.
+    pub fn transcode_counts(&self, user_id: i64) -> (usize, usize) {
+        let map = self.sessions.lock().unwrap();
+        let live: Vec<&Arc<Session>> = map.values().filter(|s| counts_as_transcode(s)).collect();
+        (
+            live.iter().filter(|s| s.user_id == user_id).count(),
+            live.len(),
+        )
+    }
+
+    /// `(per-user, global)` transcode caps for a user whose own limit is `user_max`
+    /// (`0` = unlimited): the stricter of the server-wide per-user cap and the user's.
+    pub fn transcode_caps(&self, user_max: Option<usize>) -> (usize, usize) {
+        let user = [self.cfg.max_user_transcodes, user_max.unwrap_or(0)]
+            .into_iter()
+            .filter(|m| *m > 0)
+            .min()
+            .unwrap_or(0);
+        (user, self.cfg.max_global_transcodes)
+    }
+
+    fn external_counts(&self, user_id: i64) -> (usize, usize) {
+        let ext = self
+            .external
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|w| w.upgrade());
+        ext.map_or((0, 0), |e| e.counts(user_id))
     }
 
     /// The configured (detected) backend.
@@ -496,7 +553,13 @@ impl SessionManager {
 
         {
             // limits are checked and the session registered under one lock: concurrent requests
-            // cannot both pass the same check
+            // cannot both pass the same check (the admission lock also covers live transcodes)
+            let _admission = counts.then(|| self.admission());
+            let (ext_user, ext_global) = if counts {
+                self.external_counts(req.user_id)
+            } else {
+                (0, 0)
+            };
             let mut map = self.sessions.lock().unwrap();
             if let Some(max) = req.user_max_streams.filter(|m| *m > 0) {
                 let mine = map.values().filter(|s| s.user_id == req.user_id).count();
@@ -507,13 +570,8 @@ impl SessionManager {
                 }
             }
             if counts {
-                let live = |s: &&Arc<Session>| {
-                    matches!(
-                        s.decision.mode,
-                        PlaybackMode::Transcode | PlaybackMode::AudioTranscode
-                    )
-                };
-                let global = map.values().filter(live).count();
+                let live = |s: &&Arc<Session>| counts_as_transcode(s);
+                let global = map.values().filter(live).count() + ext_global;
                 if self.cfg.max_global_transcodes > 0 && global >= self.cfg.max_global_transcodes {
                     drop(map);
                     revoke(self);
@@ -523,15 +581,9 @@ impl SessionManager {
                     .values()
                     .filter(live)
                     .filter(|s| s.user_id == req.user_id)
-                    .count();
-                let user_max = [
-                    self.cfg.max_user_transcodes,
-                    req.user_max_transcodes.unwrap_or(0),
-                ]
-                .into_iter()
-                .filter(|m| *m > 0)
-                .min()
-                .unwrap_or(0);
+                    .count()
+                    + ext_user;
+                let (user_max, _) = self.transcode_caps(req.user_max_transcodes);
                 if user_max > 0 && user >= user_max {
                     drop(map);
                     revoke(self);
@@ -1671,6 +1723,13 @@ pub fn build_vod_playlist(duration_s: f64, seg_secs: u32) -> String {
     }
     o.push_str("#EXT-X-ENDLIST\n");
     o
+}
+
+fn counts_as_transcode(s: &Session) -> bool {
+    matches!(
+        s.decision.mode,
+        PlaybackMode::Transcode | PlaybackMode::AudioTranscode
+    )
 }
 
 #[cfg(test)]

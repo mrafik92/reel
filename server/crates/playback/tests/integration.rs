@@ -341,6 +341,69 @@ async fn concurrency_limits_enforced() {
     mgr.shutdown().await;
 }
 
+/// #13: transcodes running outside the manager (live TV packagers) count against the same
+/// per-user and global limits, and only while they run.
+#[tokio::test]
+async fn external_transcodes_count_against_the_limits() {
+    if !have_ffmpeg() {
+        return;
+    }
+    struct Live(std::sync::Mutex<(usize, usize)>);
+    impl reel_playback::ExternalTranscodes for Live {
+        fn counts(&self, user_id: i64) -> (usize, usize) {
+            let (user, all) = *self.0.lock().unwrap();
+            (if user_id == 1 { user } else { 0 }, all)
+        }
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let src = make_source(tmp.path());
+    let mut cfg = SessionConfig::new(tmp.path());
+    cfg.max_user_transcodes = 1;
+    cfg.max_global_transcodes = 2;
+    let mgr = SessionManager::new(cfg, HwAccel::Software);
+    // user 1 watches a transcoded live channel
+    let live = std::sync::Arc::new(Live(std::sync::Mutex::new((1, 1))));
+    let ext: std::sync::Arc<dyn reel_playback::ExternalTranscodes> = live.clone();
+    mgr.set_external_transcodes(std::sync::Arc::downgrade(&ext));
+    assert!(matches!(
+        mgr.create_session(request(&src, full_transcode(), 1, 0.0))
+            .await,
+        Err(PlaybackError::UserLimit(1))
+    ));
+    // two live packagers run server-wide (user 1's and another user's)
+    *live.0.lock().unwrap() = (1, 2);
+    assert!(matches!(
+        mgr.create_session(request(&src, full_transcode(), 3, 0.0))
+            .await,
+        Err(PlaybackError::GlobalLimit(2))
+    ));
+    // a remux is not a transcode
+    let mut remux = full_transcode();
+    remux.mode = PlaybackMode::DirectPlay;
+    mgr.create_session(request(&src, remux, 1, 0.0))
+        .await
+        .unwrap();
+    // the live channels end: the slots are free again
+    *live.0.lock().unwrap() = (0, 0);
+    mgr.create_session(request(&src, full_transcode(), 1, 0.0))
+        .await
+        .unwrap();
+    assert_eq!(mgr.transcode_counts(1), (1, 1));
+    assert_eq!(
+        mgr.transcode_caps(Some(3)),
+        (1, 2),
+        "stricter of server and user cap"
+    );
+    assert_eq!(mgr.transcode_caps(None), (1, 2));
+    // a dropped counter counts nothing
+    drop(ext);
+    drop(live);
+    mgr.create_session(request(&src, full_transcode(), 2, 0.0))
+        .await
+        .unwrap();
+    mgr.shutdown().await;
+}
+
 #[tokio::test]
 async fn router_serves_playlists_and_segments() {
     use axum::body::Body;

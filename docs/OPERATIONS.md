@@ -74,7 +74,7 @@ Backlog → To do → Implementing → Reviewing → **Deployed** (automatic, `d
 | `REEL_CAST_BASE_URL` | `http://10.10.10.207:8420` | Absolute LAN URLs for TVs/Chromecast |
 | `REEL_ALLOW_DIRECT_LIVE` | unset (`false`) | Lets devices play Live TV straight from the provider (opt-in per device). Turning it on sends the provider login (it is part of the stream URL) to those devices. On CT 113 it goes in `/root/reel/.env` (the compose loads it with `env_file`) |
 | `REEL_TRUST_PROXY_HEADERS` | `true` | Trust XFF from private-range peers (Caddy) |
-| `REEL_MAX_TRANSCODES` / `REEL_MAX_USER_TRANSCODES` | `3` / `2` | Transcode caps |
+| `REEL_MAX_TRANSCODES` / `REEL_MAX_USER_TRANSCODES` | `3` / `2` | Transcode caps, shared by playback and live TV: a live channel whose video is re-encoded counts once per viewer for the user and once per channel server-wide |
 | `REEL_ALLOW_PRIVATE_FETCH` / `..._LOGO_FETCH` | `true` / `false` | SSRF policy (playlists/EPG may be LAN; logos never) |
 | `REEL_IMAGE_CACHE_MAX_MB` / `REEL_IPTV_IMAGE_CACHE_MAX_MB` | unset (`4096` / `1024`) | Disk budgets of the TMDB image cache (`/appdata/images`) and the IPTV logo + VOD image caches (`/appdata/iptv/{logos,vod-images}`). Beyond them the least recently used files are deleted (log line `image cache over budget`). `0` = unlimited. Live sizes on 2026-11-15: 772 MB and 62 MB |
 | `REEL_CAST_DISCOVERY` | unset (`true`) | DLNA SSDP discovery every minute. `false` = only TVs added by IP (Settings or `POST /api/v1/admin/cast/devices`) are used; they are kept in `/appdata/cast_devices.json`. Discovered TVs must answer from the same IP their description and control URLs use (#12) |

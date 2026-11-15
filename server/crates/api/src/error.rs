@@ -138,6 +138,12 @@ impl From<reel_iptv::Error> for ApiError {
             E::Invalid(m) | E::Parse(m) => Self::BadRequest(reel_iptv::net::redact_text(&m)),
             e @ E::BudgetExhausted { .. } => Self::TooManyRequests(e.to_string()),
             E::InUseByOthers { max, .. } => Self::TooManyRequests(in_use_message(max)),
+            E::UserTranscodeLimit(n) => Self::TooManyRequests(format!(
+                "You reached your limit of {n} concurrent transcoded streams; stop another stream first"
+            )),
+            E::GlobalTranscodeLimit(n) => Self::TooManyRequests(format!(
+                "The server's transcode limit ({n} concurrent streams) is reached; try again later"
+            )),
             E::Unavailable(m) => Self::Status(
                 StatusCode::SERVICE_UNAVAILABLE,
                 reel_iptv::net::redact_text(&m),
