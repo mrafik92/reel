@@ -181,9 +181,10 @@ the container (`sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' /config/config.xml`)
 
 ## Public edge (Caddy CT 107)
 
-**Status:** step 1 (Reel trusts only Caddy) and the #108 HTTP/3 part of step 2 (PIECE 1 + the `Alt-Svc` line of PIECE 3) were **applied on 2026-11-15**; the public site (PIECE 2) is **not applied** (#31). Reel is still LAN + Tailscale only. Going public is #32 and
-waits for the M2 security tickets (#9, #12–#15, #28, then the re-review #16). Every step below changes
-infrastructure, so the owner approves and applies it (AGENTS.md §5).
+**Status:** steps 1 and 2 are **applied** (2026-11-15): Reel trusts only Caddy, HTTP/3 is off for Reel, and the
+public site (PIECE 2, including the #127 `@lan_only_writes` block) is live on CT 107 `:8443`. The #16 re-review
+(2026-11-15) gave **GO with conditions**; the owner accepted the open Medium items (#125, #126, #127's in-Reel
+part) as low impact and chose to go live. Step 3 (the public DNS record, #32) is the owner's.
 
 **Why:** abroad, the owner's mobile carrier throttles Tailscale's UDP to ~3–6 Mbit/s, while plain HTTPS
 gets ~47 Mbit/s.
@@ -271,6 +272,14 @@ settings) and hls.js with its worker playing fMP4 HLS through `blob:`, with no v
    The live file now has `Alt-Svc "clear"` and a global block, so `merge_reel_edge.py` refuses to run on it: place
    PIECE 2 (and, if wanted, the three `header_up` lines) by hand. Without the env, `validate` fails with `provision tls: … loading TLS automation` (seen 2026-11-15 on the
    current file); that is the missing token, not the config.
+   **PIECE 2 applied 2026-11-15** by hand, before the `:8443` catch-all, with the `@lan_only_writes` block (#127).
+   Backup `/etc/caddy/Caddyfile.pre-reel-public-20261115T094851Z`. Gotcha: `caddy validate` run as root creates
+   `/var/lib/caddy/logs/reel-public-access.json` owned by root, and the reload then fails with `permission denied`
+   (the old config keeps running); `chown caddy:caddy` that file and reload. Checked against `10.10.10.73:8443`:
+   health, `GET /setup`, `/` → 200; `POST /setup`, `/admin/*` (any case), `/webhooks/*`, `/cast/*`,
+   `POST /libraries[/…]`, `POST /requests/*/approve` → 403; HSTS, report-only CSP, `alt-svc: clear`, HTTP/2;
+   immich/ha/plex and the LAN site unchanged. Rollback:
+   `cp -p /etc/caddy/Caddyfile.pre-reel-public-20261115T094851Z /etc/caddy/Caddyfile && systemctl reload caddy`.
 3. **Go live = #32, not part of #31.** Cloudflare DNS: `A reel → 85.144.240.8`, **DNS-only**, TTL auto, no
    AAAA. The first public request makes Caddy issue the cert by DNS-01 (as for immich). Then run
    `deploy/ct107/verify_edge.sh` from outside (Tailscale off). Rollback: delete the record (LAN and
