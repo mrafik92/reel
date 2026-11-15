@@ -183,7 +183,7 @@ internet ──TCP 443──► OPNsense WAN (DNAT, exists) ──► Caddy CT 1
 LAN / Tailscale ──► Technitium: reel.rafikii.co = 10.10.10.73 ──► Caddy :443 (LAN block, unchanged access)
 ```
 
-- **Cloudflare DNS-only (grey cloud)**, like immich and plex today. Reasons are in ARCHITECTURE A32. The
+- **Cloudflare DNS-only (grey cloud)**, like immich and plex today. Reasons are in ARCHITECTURE A39. The
   public A record is the home IP `85.144.240.8`; no AAAA (CT 107/113 have no global IPv6).
 - **Same name, two doors.** Technitium keeps answering `10.10.10.73` on the LAN and to Tailscale clients,
   so they keep the full app, admin included. Only clients that resolve the public record get the
