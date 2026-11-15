@@ -100,6 +100,34 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
     link faster than the file's average. Chrome over HTTP/3 on Tailscale wasn't reproduced (Playwright went
     through the dev proxy over TCP).
 
+## Playback baseline (2026-11-15, build `70d03eb`, #102)
+
+Measured read-only, with the admin's 6 Mbit/s cap in place. Full numbers, the comparison with YouTube and the
+proposal are in [#102](https://github.com/mrafik92/reel/issues/102#issuecomment-6887831224).
+
+- **Test paths.** Desktop Chrome on a Mac **outside the home LAN, over Tailscale** (direct, RTT 100–230 ms, raw
+  throughput swinging 4–27 Mbit/s, default HTTP/3). Server-side numbers are from loopback inside CT 113, so they
+  show the pipeline without the network. A browser on the home LAN wasn't measured.
+- **Browser over Tailscale:**
+
+  | Title | Mode | Delivered | Decide → first frame | Seek +45 s / to 50 % |
+  |---|---|---|---|---|
+  | Paranormal Activity (1080p H.264 MP4, 2.7 Mbit/s) | direct play | 1080p, original | 8.9 s (the `moov` is at the end: 4.1 MB tail fetch first) | 9.5 s / 4.1 s |
+  | Meet Joe Black (1080p HEVC 10-bit MKV, 6.5 Mbit/s) | transcode 720p (cap) | 720p H.264 ~4 Mbit/s | 1.8 s | 12.7 s / 4.0 s |
+  | Spider-Man 2002 (1080p H.264 + EAC3, 24.7 Mbit/s) | transcode 720p (EAC3 + cap) | 720p H.264 ~4 Mbit/s | 3.0 s | 4.2 s / 11.8 s |
+  | Frankenstein (4K HEVC DV/HDR10, 25 Mbit/s) | transcode 720p, tone-mapped to SDR | 720p H.264 SDR | 9.9 s | 6.8 s / 9.7 s |
+
+  Opening the player page adds 2.3–4.1 s before decide. Every stall (2–4 per ~70 s run, 0.3–5.3 s) followed a
+  seek, on a fixed 4–5.5 Mbit/s rendition while the link dipped; one never recovered (#108).
+- **Server pipeline (no network):** decide 0.04–0.06 s; first segment ready 0.7–0.8 s after decide for 1080p
+  sources and 2.6 s for the 4K DV tone-map; far seek 1.0–2.7 s; transcodes run at 8.3× / 5.9× / 2.6× realtime.
+  CT 113 serves a file at ~1.9 Gbit/s on the host bridge, so the server isn't the throughput bottleneck.
+- **N100 (VAAPI, ffmpeg 5.1, iHD 23.1.1):** remux 107×; 1080p→720p H.264 9×; 1080p HEVC encode 3× (6× with
+  `-low_power 1`); 3-rung H.264 ladder 2.5× (4.3× low-power); 4K DV tone-map 2.6×; two concurrent 1080p→720p
+  4.5× each. H.264/HEVC (Main10)/VP9 encode in hardware; **no AV1 encode**. Plex shares the GPU on CT 113.
+- **Effect of the cap (estimate from probe data, Chrome on this Mac):** 124 of 311 files (40 %) get a video
+  transcode, 95 of them only because of the cap; without it, 29 (9 %: HDR/4K/10-bit H.264).
+
 ## Known gaps / bugs
 
 | Area | Gap |
@@ -107,6 +135,13 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
 | Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) wasn't delivered (the agent errored). For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
 | Player | A link slower than a file's peak bitrate still stalls (e.g. The Remarried Empress E1: 5.9 Mbit/s average, 11–13 Mbit/s at 2:44–3:16). The player now waits and recovers instead of stopping (#91), but only a lower rendition fixes it (#87) |
 | Network | Chrome over HTTP/3 on Tailscale (MTU 1280) sees `QUIC_TOO_MANY_RTOS` and status-0 responses (#91, #93), and the QUIC connection can wedge: response bodies stop mid-transfer and every request on it hangs (3 of 5 test runs on The Mongoose, 0 of 2 with QUIC off; #96, #108). The player and the app retry, and the player reopens a reaped session once the connection is back, but the picture freezes meanwhile. Turning off HTTP/3 for reel.rafikii.co at Caddy (CT 107) is an owner decision, not changed (#108) |
+| Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) isn't delivered. PR #69 (re-decide per switch) is open but not recommended as is (#102). For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
+| Player | **One rendition per session** (A6): no multi-variant playlist, so the player can't step down on a link dip or start low and climb (#111). A link slower than a file's peak bitrate still stalls (e.g. The Remarried Empress E1: 5.9 Mbit/s average, 11–13 Mbit/s at 2:44–3:16). The player now waits and recovers instead of stopping (#91), but only a lower rendition fixes it (#87, #111) |
+| Player | The 6 Mbit/s admin cap sends 95 of 311 files to a 720p transcode that the LAN doesn't need (#2, after #87) |
+| Player | HDR/DV files are always tone-mapped to SDR in the browser (the profile probe reports no HDR), and the tone-map is the slowest path (2.6× realtime, 9.9 s to first frame remotely) (#114) |
+| Player | Start-up costs on slow links: VOD playlists are 175–260 KB and served uncompressed (7.8 KB gzipped); MP4s with a trailing `moov` make the browser fetch the index from the end of the file first; transcode segments are 4 s from the start (#112) |
+| Transcode | VAAPI encodes don't use the N100's low-power encoders, and output is always H.264 even for HEVC-capable clients (#113) |
+| Network | Chrome over HTTP/3 on Tailscale (MTU 1280) sees `QUIC_TOO_MANY_RTOS` and status-0 responses (#91, #93). The player and the app now retry these; turning off HTTP/3 for reel.rafikii.co at Caddy (CT 107) is an owner decision, not changed |
 | IPTV | Some provider feeds stall for 8 s at a time (France 5 on 2026-11-12); the hub reconnects and the player re-tunes, but the picture freezes meanwhile |
 | Reviews | IMDb/RT/Metacritic scores need `REEL_OMDB_API_KEY` |
 | EPG | Al Jazeera guide fully covered by AE1 (fine). The EG1 guide is stale upstream (removed) |
@@ -154,7 +189,10 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 
 ## Backlog (next)
 
-1. Adaptive quality in the player (bandwidth probe, auto step, quality menu), then remove the admin's 6 Mbps cap.
+1. Playback like YouTube (#102 proposal, awaiting owner approval): quality picker with a per-device default (#87),
+   then remove the admin's 6 Mbps cap (#2); multi-variant HLS with a lazy low rung and hls.js ABR (#111, replaces
+   PR #69's re-decide stepping, #1); faster first frame (#112); low-power/HEVC encodes (#113); HDR in the browser
+   (#114); optional background pre-encode (#115).
 2. Close the security items above.
 3. Verify webOS/Tizen on real TVs; DLNA with the TV IPs; AirPlay/Chromecast.
 4. IPTV VOD playback check on the provider (#3, owner); live HLS quality ladder.
