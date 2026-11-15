@@ -59,8 +59,35 @@ jobs:
           EOF
       - uses: rui314/setup-mold@v1
       - uses: taiki-e/install-action@nextest
+      # ffmpeg's .debs are cached per runner image (ImageVersion changes ~weekly), so most runs skip
+      # `apt-get update` and the download and just dpkg-install them. Any failure falls back to apt.
+      - name: ffmpeg cache key
+        id: apt-key
+        run: echo "key=apt-ffmpeg-${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: apt
+        with:
+          path: ~/apt-ffmpeg
+          key: ${{ steps.apt-key.outputs.key }}
       - name: ffmpeg (tests generate media with it)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+        run: |
+          # needrestart's apt hook alone takes ~5 s; unsafe-io skips dpkg's per-file fsync.
+          as_root() { sudo NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive "$@"; }
+          if compgen -G "$HOME/apt-ffmpeg/*.deb" >/dev/null \
+             && as_root dpkg -i --force-unsafe-io "$HOME"/apt-ffmpeg/*.deb >/dev/null; then
+            echo "installed from cached .debs"
+          else
+            as_root apt-get update -qq
+            as_root apt-get install -y -qq -f --no-install-recommends \
+              -o Dpkg::Options::=--force-unsafe-io -o APT::Keep-Downloaded-Packages=true ffmpeg
+            rm -rf ~/apt-ffmpeg && mkdir -p ~/apt-ffmpeg && cp /var/cache/apt/archives/*.deb ~/apt-ffmpeg/
+          fi
+          ffmpeg -version | head -1
+      - uses: actions/cache/save@v4
+        if: github.ref == 'refs/heads/main' && steps.apt.outputs.cache-hit != 'true'
+        with:
+          path: ~/apt-ffmpeg
+          key: ${{ steps.apt-key.outputs.key }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: server
@@ -95,9 +122,11 @@ jobs:
       - run: |
           touch "$RUNNER_TEMP/tests-start"
           cargo nextest run --workspace --locked --profile ci
+      # The test build already linked this binary (reel-api's integration tests need its bins), with
+      # the test build's feature set. `cargo run` would rebuild the workspace crates for it (~30 s).
       - name: OpenAPI spec is up to date
         run: |
-          cargo run --locked -q -p reel-api --bin export-openapi > "$RUNNER_TEMP/openapi.json"
+          target/debug/export-openapi > "$RUNNER_TEMP/openapi.json"
           diff -u openapi.json "$RUNNER_TEMP/openapi.json"
       - name: Drop test media no test used
         if: github.ref == 'refs/heads/main' && steps.fixtures.outputs.cache-hit != 'true'
