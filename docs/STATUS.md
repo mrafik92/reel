@@ -53,7 +53,7 @@ Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LA
     Xtream credential paths or `username=`/`password=` values; the only provider URL in the logs is a masked
     guide URL (`username=***&password=***`); the running ffmpeg reads `pipe:0`. **Playback was not tried live**:
     someone was watching live TV, and the provider allows one connection.
-- **Direct (local) Live TV playback** (#77): built and tested in CI, not yet tried on a TV or against the real provider. Off until `REEL_ALLOW_DIRECT_LIVE` is set on CT 113.
+- **Direct (local) Live TV playback** (#77): built and tested in CI, not yet tried on a TV or against the real provider. `REEL_ALLOW_DIRECT_LIVE=true` **is set on CT 113** (found by #16, 2026-11-15), so every user with IPTV access is offered it and can receive the provider URL with its login; this must change before public exposure (#126).
 - **Live TV HLS upstreams through the upstream proxy** (#11): built and tested in CI with local HLS fixtures, not yet deployed. Only channels whose provider URL is HLS (`.m3u8` or an HLS content type) go through ffmpeg and the proxy; raw MPEG-TS channels are read by the hub directly, as before. Tokens of a playlist that is still in flight when its lease or session ends are no longer registered (they used to outlive the hub connection until their sliding expiry; `a_playlist_in_flight_when_its_owner_ends_registers_nothing`).
 - **Live TV transcodes under the transcode limits** (#13): built and tested in CI
   (`live_transcodes_count_against_the_transcode_limits` with an MPEG-2 fake provider,
@@ -162,9 +162,79 @@ proposal are in [#102](https://github.com/mrafik92/reel/issues/102#issuecomment-
 | Library | Episodes of a multi-episode file all start at 0:00 (no per-episode offsets) |
 | Downloads | "Common Side Effects" is stuck in Sonarr ("episodes not imported"). That's a Sonarr-side import problem, not Reel |
 | Requests | **Torrent searches fail in bursts, outside Reel** (#66). Root cause: gluetun's DNS-over-TLS to Cloudflare (1.1.1.1:853) times out or gets reset. Prowlarr runs inside gluetun, so every indexer fails at the same moment (`EAI_AGAIN`: 119 of 165 indexer errors from 2026-10-30 to 11-10). The same DoT path feeds gluetun's health check, which caused VPN reconnect loops of 4 h (11-03) and 3 h (11-05). Prowlarr's backoff then reaches Radarr/Sonarr as HTTP 429, and they escalate their own backoff up to 12 h. Requests made in that window search with **0 active indexers**, and Reel marks them `not_found`. There are no Cloudflare/VPN-IP blocks, and Prowlarr↔Arr sync is fine. Fix awaiting owner approval (CT 105): switch gluetun to Proton's in-tunnel DNS, then Retry the 8 `not_found` requests (releases exist for them). Surfacing this in Reel is covered by #67 |
-| Toolchain | rustc pinned to 1.86 (some crates pinned for it, e.g. wiremock 0.6.4). sqlx 0.9 needs 1.94, so sqlx stays on 0.8 and its bundled SQLite advisory (RUSTSEC-2026-0459, #80) is open |
+| Toolchain | rustc pinned to 1.86 (some crates pinned for it, e.g. wiremock 0.6.4). sqlx 0.9 needs 1.94, so sqlx stays on 0.8 and its bundled SQLite advisory (RUSTSEC-2026-0459, #80) is open. #16 ruled it not reachable from outside and acceptable for go-live (see Security posture) |
 
 ## Security posture
+
+### Re-review 2026-11-15 (#16): GO with conditions
+
+The go/no-go gate for the DNS-only public edge (A39, #32). Three independent reviewers worked from one brief:
+Claude Opus 5.5, Claude Sonnet 5.5 and Claude Fable 5.1. GPT wasn't available: the Codex provider is disabled
+in the orchestrator, so the council had no non-Claude member this time. The coordinator verified every finding
+against the code and dropped the ones it couldn't confirm. The review covered `origin/main` `1b5c1ed`, which is
+the live build `1a39b38` plus docs, and `deploy/ct107/reel.caddy`. Live checks were read-only.
+
+**Result: no Critical or High findings.** No auth bypass, IDOR, setup bypass, SSRF, path traversal or ffmpeg
+injection was found from the internet. Verified for this review:
+
+- **Edge path blocks.** Caddy 2.11.7, the same build as CT 107, ran locally with PIECE 2 in front of an echo
+  backend. Case, percent-encoding, `//`, `./`, `../`, `%2F` and trailing-slash variants of the blocked paths
+  get a 403.
+- **Variants Caddy lets through.** Some forms pass Caddy: `;` path parameters, a trailing `.`, `%00`, `%20`,
+  a backslash, `%5c` and `setup%3F`. Sent straight to Reel, none of them matches a route; they all fall
+  through to the SPA. Every API route is under `/api/v1`, with no second mount or alias.
+- **Client IP.** Reel on CT 113 sees `10.10.10.73` as the TCP peer, because Docker's DNAT keeps the source.
+  It trusts XFF only from that peer, so a client behind the public site gets its real address. That means the
+  LAN-only `/setup` check and the login lockout key on the real client.
+- **WAN source.** WAN connections reach Caddy `:8443` with their real public source. In 7 days of public access
+  logs, the only private source was OPNsense hairpin traffic from the LAN.
+- **Information leaks.** Unauthenticated `/api/v1/health` returns only `{"status":"ok"}`, and
+  `/api/v1/openapi.json` needs sign-in.
+- **#14 on CT 113.** `/appdata` is `0700`; `reel.db`, `-wal`, `-shm` and `signing.key` are `0600`.
+- **Slow clients.** Caddy's default read-header timeout cut a slow header off after about 65 s.
+- **Blocked admin API in the web app.** A 403 shows "You don't have access to that". It doesn't sign the user out.
+
+**M2 fixes re-checked**, all in the live build: #7, #8, #9, #10, #11, #12, #13, #14 and #28 close their findings.
+#15 is partly closed: library links are scoped, but Discover's availability badge and download progress are still
+server-wide. That gap is in #128, item 1.
+
+**New tickets** (milestone M2 for the Mediums; all in Backlog):
+
+| Severity | Ticket | Finding |
+|---|---|---|
+| Medium | #125 | A locked-out client's every login attempt writes an `audit_log` row (no sampling), and the table is never pruned: unauthenticated database growth |
+| Medium | #126 | `REEL_ALLOW_DIRECT_LIVE=true` on CT 113 hands the provider URL with its login to any IPTV user, and would do so from the internet |
+| Medium | #127 | Admin powers aren't LAN-only. An admin can sign in from the internet with a password alone, and some admin-only routes are outside `/api/v1/admin` (`POST /libraries`, `/libraries/{id}/scan`, `/requests/{id}/approve` and `/decline`, takeover, session kill) |
+| Low | #128 | Bundle of hardening items: Discover availability/progress, signed URLs surviving single logout, no default stream cap, WS ticket map flush, invite codes in debug path logs, library paths shown to users, cast URL and image-scope gating, TMDB fetch concurrency, a stale `?token=` doc string |
+
+**Dependencies** (2026-11-15):
+- `cargo audit`: one vulnerability, RUSTSEC-2026-0459 (#80). One unsound warning, RUSTSEC-2026-0486 (`rustix`
+  1.1.5 xattr functions, via `tempfile`; Reel never calls them, fixed in 1.1.6). The unmaintained `paste`.
+  The existing `rsa` ignore.
+- `bun audit`: 9 advisories (1 high, 7 moderate, 1 low), all in `vite`, `esbuild` and `launch-editor`. Those are
+  dev-server and build tools only. The image serves prebuilt static files, so none of them reach production.
+- **#80 ruling: accept, not a blocker.** The CVE needs a crafted `reel.db` plus `-wal` pair with mismatched page
+  sizes, opened by Reel. Reel opens only its own database in the `0700` data dir. Writing there already means
+  full compromise. Nothing on the network reaches it. #80 stays open for the sqlx 0.9 / rustc 1.94 move, and an
+  ignore entry with this reason may go into `server/.cargo/audit.toml`.
+
+**Verdict: GO with conditions** for the Cloudflare DNS-only exposure (#32). All of these must hold before the
+public A record and the `:8443` site go live:
+
+1. **#125 fixed and deployed:** sample `login_locked` audits and prune `audit_log`.
+2. **#126:** unset `REEL_ALLOW_DIRECT_LIVE` on CT 113, or deploy a fix that restricts direct mode to LAN clients.
+3. **#127, minimum:** add method-aware blocks to `@lan_only` in `deploy/ct107/reel.caddy` for `POST /api/v1/libraries*`
+   and `POST /api/v1/requests/*/approve|decline`. Give the admin account a password of 16+ random characters.
+   The in-Reel rule (no admin powers from non-LAN client IPs) can follow.
+4. **Out of Reel's scope, owner-postponed:** rotate the Cloudflare token (still in CT 107's journal).
+
+Recommended, not blocking:
+- Explicit `timeouts { read_header 10s idle 2m }` on `servers :8443`. Don't set `write`: it would cut long streams.
+- Flip the CSP from report-only to enforced after the DevTools check. With the session token in `localStorage`,
+  that's the main XSS mitigation.
+- Fix #128.
+
+### First council (2026-11-03)
 
 A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and GPT council members). It found
 **no Critical issues** and established no auth bypass, SQL injection, path traversal or shell injection.
@@ -177,7 +247,7 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 - Webhooks: secret of 32+ characters, header/Basic auth, constant-time comparison, per-IP lockout, `..` paths rejected.
 - WebSocket tickets; sockets closed on revoke; logs no longer contain query strings; safe post-login redirect.
 
-**Fixed in code, not deployed (🧪):**
+**Fixed and deployed (in the live build; owner verification pending):**
 
 - `/events?token=` removed (#28): the WebSocket accepts only a single-use ticket or an `Authorization` header, so the session token can't land in proxy or edge logs. The SDK (used by the web, webOS and Tizen builds) no longer falls back to `?token=` when the ticket request fails; it retries with backoff.
 - Playback errors are generic (stderr redacted server-side); atomic stream/transcode limits; global ffmpeg process budget; single-flight subtitle conversion; no software HEVC.
@@ -186,25 +256,20 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 - `stream_guard` decodes the session id (no %-encoded owner-check bypass); `/health` build info and `openapi.json` only for signed-in users.
 - Container: memory 3 GB, PIDs 512, CPUs 3; transcode caps.
 
-**Still open (must be done before any public exposure):**
+**The 2026-11-03 items** (all fixed; re-reviewed by #16 above):
 
 1. ~~Upgrade `quick-xml` to ≥ 0.41; sqlx with sqlite only~~ Fixed (#7, ✅ live): `quick-xml` 0.42 (RUSTSEC-2026-0194/-0195 gone) in the XMLTV and DLNA parsers. sqlx was already built SQLite-only; every crate now uses the one workspace entry and CI fails if `sqlx-mysql`, `sqlx-postgres` or `rsa` enter the build graph. `rsa` (RUSTSEC-2023-0071) stays listed in `Cargo.lock` only, because cargo records disabled optional deps, and is ignored with that reason in `server/.cargo/audit.toml`. Verified on `65bd851` (2026-11-11): guide refresh OK, `&` and accents correct, migrations clean. DLNA discovery on the real TV still to check. A fresh `cargo audit` also found RUSTSEC-2026-0459 (bundled SQLite in `libsqlite3-sys` 0.30), tracked in #80: the fix needs sqlx 0.9, which needs rustc 1.94.
 2. ~~IPTV/EPG ingestion budgets: bytes, gzip expansion, line/token sizes, record counts, deadlines~~ Fixed (#8, ✅ live): playlist, guide and Xtream API downloads have byte caps and deadlines, gunzipped guides an expanded-size cap, M3U lines and XML events/attributes/texts length caps, channel/programme/VOD/category lists count caps, and downloaded guides are deleted on every exit path. Limits in `server/crates/iptv/src/limits.rs` (ARCHITECTURE A21). Verified on `65bd851` (2026-11-11): a full refresh succeeds (11,950 channels, 41,338 movies, 15,147 series, ~54k programmes), no limit errors, no leftover temp files.
-3. ~~Logo/TMDB image fetches: streaming size cutoff, single-flight, cache size budget~~ Fixed in code (#9, 🧪): bodies are cut off at a byte cap (TMDB 32 MiB, logos/VOD 2 MiB) or deadline (30 s / 10 s) while streaming, concurrent fetches of one image share a single download (the lock map is emptied as fetches finish), failures are remembered briefly, and the TMDB and IPTV image caches have disk budgets with LRU eviction (`REEL_IMAGE_CACHE_MAX_MB`, `REEL_IPTV_IMAGE_CACHE_MAX_MB`; ARCHITECTURE A33). Counts as done once deployed and checked live.
-4. ~~Local artwork: canonicalize under the library roots + magic-byte sniff~~ Fixed in code (#10, 🧪): the image route resolves symlinks, requires a library root, caps size and sniffs magic bytes. Counts as done once deployed and checked on the real library.
+3. ~~Logo/TMDB image fetches: streaming size cutoff, single-flight, cache size budget~~ Fixed (#9, 🧪 deployed in `1a39b38`): bodies are cut off at a byte cap (TMDB 32 MiB, logos/VOD 2 MiB) or deadline (30 s / 10 s) while streaming, concurrent fetches of one image share a single download (the lock map is emptied as fetches finish), failures are remembered briefly, and the TMDB and IPTV image caches have disk budgets with LRU eviction (`REEL_IMAGE_CACHE_MAX_MB`, `REEL_IPTV_IMAGE_CACHE_MAX_MB`; ARCHITECTURE A33). Owner check on the live build pending.
+4. ~~Local artwork: canonicalize under the library roots + magic-byte sniff~~ Fixed (#10, 🧪 deployed in `1a39b38`): the image route resolves symlinks, requires a library root, caps size and sniffs magic bytes. Owner check on the real library pending.
 5. ~~SSRF guard gaps (IPv4-compatible v6, `64:ff9b::/96`, `2002::/16`, `192.0.0.0/24`); route **live IPTV** HLS upstreams through the upstream proxy~~ Fixed (#11, ✅ live): `net.rs` judges NAT64, 6to4, Teredo and IPv4-translated addresses by the IPv4 address they carry, refuses `::a.b.c.d`, `64:ff9b:1::/48`, `192.0.0.0/24`, `100::/64` and `fec0::/10`, and the guarded client no longer sends the previous (login) URL as `Referer` on redirects. The live hub hands ffmpeg only a loopback proxy URL. Verified on `65bd851` (2026-11-11): no provider login in ffmpeg args (472 samples) or logs. The provider has no HLS channels, so the live-HLS proxy path is covered by CI only. Live TV stalls are tracked in #93.
-6. ~~DLNA discovery trust: bind control URLs to the responding IP, cap body sizes, setting to disable discovery~~ Fixed in code (#12, 🧪): an SSDP `LOCATION` must be on the IP that answered, AVTransport/`URLBase` URLs must stay on the description's host (a foreign volume or icon URL is dropped), descriptions (256 KiB) and SOAP answers (64 KiB) are capped, redirects are not followed, an SSDP answer can't take over a TV added by IP, and `REEL_CAST_DISCOVERY=false` turns SSDP off (ARCHITECTURE A34). Counts as done once deployed and checked live.
-7. ~~Live IPTV transcodes counted against the user's `max_transcodes`~~ Fixed in code (#13, 🧪): a live HLS session whose shared packager re-encodes video counts as one transcode of its viewer (joining a running packager included) and each such packager as one server-wide, together with playback transcodes, under one admission lock. A user's own oldest live transcode gives way when they zap (newest wins); playback transcodes and other users' never do. Passthrough, direct and copy/audio-only HLS don't count. Counts as done once deployed and checked live.
-8. ~~Signing key / data dir permissions created atomically (0600/0700)~~ Fixed in code (#14, 🧪): `signing.key` is written to a new `0600` temp file and renamed into place, the data dir and any parent Reel creates are `0700`, and a new `reel.db` is created `0600` before SQLite opens it (SQLite gives `-wal`/`-shm` the same mode). At startup the data dir is tightened to `0700` and the key, `reel.db`, `-wal`, `-shm` and `-journal` to `0600` (owner bits kept; a file the process doesn't own is logged, not fatal). CT 113 before the fix (2026-11-15): everything owned by uid 1000 (the container's `reel` user); data dir `0755`, `reel.db`/`-wal`/`-shm` `0644`, `signing.key` already `0600`, 3,586 world-readable entries. Counts as done once deployed and the modes are checked on CT 113.
-9. ~~Redact `epg_urls`/source URL credentials in admin DTOs; filter `library_item_id` in Discover/Downloads by library visibility~~ Fixed in code (#15, 🧪): admin source responses mask the source URL, guide URLs and the Xtream username; edits accept the masked values back, refuse a URL that still holds `***`, and need the login again to move an Xtream source to another server. Discover (lists, search, detail), person pages, global search and Downloads link only a copy of a title in a library the viewer can open. Counts as done once deployed and checked live.
-10. Edge, if ever public: only Caddy 443 forwarded; block `/api/v1/{admin,setup,webhooks,cast}/*` from the WAN; CSP/Permissions-Policy at Caddy; rate limits/CrowdSec; geo allowlist.
-6. DLNA discovery trust: bind control URLs to the responding IP, cap body sizes, setting to disable discovery.
-7. Live IPTV transcodes counted against the user's `max_transcodes`.
-8. Signing key / data dir permissions created atomically (0600/0700).
-9. Redact `epg_urls`/source URL credentials in admin DTOs; filter `library_item_id` in Discover/Downloads by library visibility.
+6. ~~DLNA discovery trust: bind control URLs to the responding IP, cap body sizes, setting to disable discovery~~ Fixed (#12, 🧪 deployed in `1a39b38`): an SSDP `LOCATION` must be on the IP that answered, AVTransport/`URLBase` URLs must stay on the description's host (a foreign volume or icon URL is dropped), descriptions (256 KiB) and SOAP answers (64 KiB) are capped, redirects are not followed, an SSDP answer can't take over a TV added by IP, and `REEL_CAST_DISCOVERY=false` turns SSDP off (ARCHITECTURE A34). Owner check on the live build pending.
+7. ~~Live IPTV transcodes counted against the user's `max_transcodes`~~ Fixed (#13, 🧪 deployed in `1a39b38`): a live HLS session whose shared packager re-encodes video counts as one transcode of its viewer (joining a running packager included) and each such packager as one server-wide, together with playback transcodes, under one admission lock. A user's own oldest live transcode gives way when they zap (newest wins); playback transcodes and other users' never do. Passthrough, direct and copy/audio-only HLS don't count. Owner check on the live build pending.
+8. ~~Signing key / data dir permissions created atomically (0600/0700)~~ Fixed (#14, 🧪 deployed in `1a39b38`): `signing.key` is written to a new `0600` temp file and renamed into place, the data dir and any parent Reel creates are `0700`, and a new `reel.db` is created `0600` before SQLite opens it (SQLite gives `-wal`/`-shm` the same mode). At startup the data dir is tightened to `0700` and the key, `reel.db`, `-wal`, `-shm` and `-journal` to `0600` (owner bits kept; a file the process doesn't own is logged, not fatal). CT 113 before the fix (2026-11-15): everything owned by uid 1000 (the container's `reel` user); data dir `0755`, `reel.db`/`-wal`/`-shm` `0644`, `signing.key` already `0600`, 3,586 world-readable entries. Checked on CT 113 by #16 (2026-11-15): `/appdata` `0700`; `reel.db`, `-wal`, `-shm` and `signing.key` `0600`.
+9. ~~Redact `epg_urls`/source URL credentials in admin DTOs; filter `library_item_id` in Discover/Downloads by library visibility~~ Fixed (#15, 🧪 deployed in `1a39b38`): admin source responses mask the source URL, guide URLs and the Xtream username; edits accept the masked values back, refuse a URL that still holds `***`, and need the login again to move an Xtream source to another server. Discover (lists, search, detail), person pages, global search and Downloads link only a copy of a title in a library the viewer can open. Owner check on the live build pending.
 10. Edge, if ever public: only Caddy 443 forwarded; block `/api/v1/{admin,setup,webhooks,cast}/*` from the WAN; CSP/Permissions-Policy at Caddy; rate limits/CrowdSec; geo allowlist. **Prepared, not applied** (#31): a reviewed Caddy site for the public `:8443` listener (`deploy/ct107/reel.caddy`, checked with Caddy 2.11.7: path blocks incl. encoded/dot/double-slash variants, XFF overwrite, headers, no h3), a merge script, the runbook and an external check script (OPERATIONS → Public edge). Reel now takes `REEL_TRUSTED_PROXIES=10.10.10.73` in plain form (it used to refuse to start), logs whose XFF it believes, and `edge_*` tests show a spoofed XFF can't open the LAN-only setup or dodge the login lockout. Decision: Cloudflare DNS-only (A39). Not done: Caddy rate limiting (module not installed; Reel's lockout covers login), geo allowlist (optional, whole public listener), CSP still report-only. Applied 2026-11-15: CT 113 trusts only Caddy (`REEL_TRUSTED_PROXIES=10.10.10.73`, the any-LAN-peer `REEL_TRUST_PROXY_HEADERS` alias is gone) and the #108 h3 part of the Caddy change; the public `:8443` site is not applied. Go-live is #32.
 
-**Decision on record:** Reel stays **private** (LAN + Tailscale) until items 1–10 are done and re-reviewed.
+**Decision on record:** Reel stays **private** (LAN + Tailscale) until the #16 conditions above (#125, #126, #127 minimum) are met; then #32 may apply the public edge.
 
 ## Backlog (next)
 
@@ -212,7 +277,7 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
    then remove the admin's 6 Mbps cap (#2); multi-variant HLS with a lazy low rung and hls.js ABR (#111, replaces
    the closed PR #69's re-decide stepping, #1); faster first frame (#112); low-power/HEVC encodes (#113); HDR in the browser
    (#114); optional background pre-encode (#115).
-2. Close the security items above.
+2. Meet the #16 go-live conditions (#125, #126, #127), then #32; then #128.
 3. Verify webOS/Tizen on real TVs; DLNA with the TV IPs; AirPlay/Chromecast.
 4. IPTV VOD playback check on the provider (#3, owner); live HLS quality ladder.
 5. OMDb key for IMDb/RT scores.
