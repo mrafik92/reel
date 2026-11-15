@@ -10,3 +10,4 @@ pub mod text;
 pub use config::{Config, LibraryConfig};
 pub use error::{Error, Result};
 pub use events::{RequestState, ServerEvent};
+// image cache test (throwaway branch)
