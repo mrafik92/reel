@@ -99,8 +99,8 @@ To debug decisions, Settings → Now playing shows each session's mode, reasons,
 5. The web player recovers by itself ("Reconnecting…" overlay, then it reopens the session or re-tunes once). If
    it still ends on "Playback stopped", capture the browser console and network tab. Chrome on Tailscale may use
    HTTP/3 (Caddy Alt-Svc); `ERR_QUIC_PROTOCOL_ERROR` / status-0 responses point at QUIC over the 1280-byte MTU.
-   A console line `[player] stalled at … s: segment N requested … ago and still loading` means a request hung
-   in flight. Over h3 on Tailscale that's a wedged QUIC connection (#108): try Chrome with `--disable-quic`.
+   A console line `[player] stalled at … s: segment N requested … ago and still loading` (or `the playlist
+   requested … ago and still loading`) means a request hung in flight. Over h3 on Tailscale that's a wedged QUIC connection (#108): try Chrome with `--disable-quic`.
    Disabling h3 for reel.rafikii.co at Caddy (CT 107) would rule it out, but that's an owner decision.
 6. A paused converted (transcode/remux) session stays for 30 min after its last "paused" ping; others are reaped
    after 60 s without requests or pings (`reaping idle playback session` in the logs). The web player reopens a
