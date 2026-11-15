@@ -74,6 +74,12 @@ pub struct Config {
     /// Channel logos come from third-party playlists, so private/loopback targets are blocked
     /// unless this is true (default false).
     pub allow_private_logo_fetch: bool,
+    /// Disk budget of the TMDB image cache (`<data_dir>/images`, originals and resized copies) in
+    /// MiB (default 4096; 0 = unlimited). The least recently used files are deleted beyond it.
+    pub image_cache_max_mb: u64,
+    /// Disk budget shared by the IPTV logo and VOD image caches (`<data_dir>/iptv/{logos,
+    /// vod-images}`) in MiB (default 1024; 0 = unlimited).
+    pub iptv_image_cache_max_mb: u64,
     /// Base URL TVs / Chromecasts use to reach this server (LAN address, e.g.
     /// `http://10.10.10.207:8420`). Used for cast URLs (`for_cast`, `POST /playback/{id}/cast-url`).
     pub cast_base_url: Option<String>,
@@ -127,6 +133,8 @@ impl Default for Config {
             iptv_epg_days: 7,
             allow_private_fetch: true,
             allow_private_logo_fetch: false,
+            image_cache_max_mb: 4096,
+            iptv_image_cache_max_mb: 1024,
             cast_base_url: None,
             allow_direct_live: false,
             omdb_api_key: None,
@@ -165,6 +173,7 @@ mod tests {
             assert_eq!(c.bind, "0.0.0.0:8420");
             assert_eq!(c.database_path(), PathBuf::from("./data/reel.db"));
             assert!(c.tmdb_api_key.is_none());
+            assert_eq!(c.image_cache_max_mb, 4096);
             Ok(())
         });
     }
@@ -174,8 +183,10 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file("c.toml", "bind = \"127.0.0.1:1\"\ndata_dir = \"/x\"")?;
             jail.set_env("REEL_BIND", "127.0.0.1:2");
+            jail.set_env("REEL_IMAGE_CACHE_MAX_MB", "512");
             let c = Config::load(Some(Path::new("c.toml"))).unwrap();
             assert_eq!(c.bind, "127.0.0.1:2");
+            assert_eq!(c.image_cache_max_mb, 512);
             assert_eq!(c.database_path(), PathBuf::from("/x/reel.db"));
             Ok(())
         });

@@ -20,6 +20,7 @@ pub fn sanitize_profile_for_tests(
 }
 mod playback;
 pub mod prefs;
+pub mod remote_images;
 mod requests;
 mod routes;
 mod stream;
@@ -56,6 +57,10 @@ use tower_http::{
 use utoipa::{OpenApi, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+fn mib(n: u64) -> u64 {
+    n.saturating_mul(1024 * 1024)
+}
+
 /// Shared application state.
 #[derive(Clone)]
 pub struct AppState {
@@ -64,6 +69,8 @@ pub struct AppState {
     pub events: broadcast::Sender<ServerEvent>,
     pub scanner: Scanner,
     pub images: ImageCache,
+    /// Disk cache of IPTV logos and VOD images (third-party URLs).
+    pub remote_images: Arc<remote_images::RemoteImages>,
     pub playback: Arc<SessionManager>,
     pub hwaccel: Arc<HwAccelStatus>,
     pub requests: RequestsService,
@@ -85,7 +92,14 @@ pub struct AppState {
 impl AppState {
     pub fn new(db: SqlitePool, config: reel_core::Config) -> Self {
         let (events, _) = broadcast::channel(256);
-        let images = ImageCache::new(&config.data_dir);
+        let images = ImageCache::new(&config.data_dir).with_budget(
+            mib(config.image_cache_max_mb),
+            reel_metadata::images::CACHE_MAX_FILES,
+        );
+        let remote_images = Arc::new(remote_images::RemoteImages::new(
+            &config.data_dir.join("iptv"),
+            mib(config.iptv_image_cache_max_mb),
+        ));
         let hw = HwAccelStatus::software();
         let playback = new_playback(&config, hw.selected.clone());
         let requests = RequestsService::new(db.clone(), None, events.clone());
@@ -148,6 +162,7 @@ impl AppState {
                 .with_events(events.clone())
                 .with_rename_window(Duration::from_secs(20)),
             images,
+            remote_images,
             config: Arc::new(config),
             events,
             watcher: Arc::default(),

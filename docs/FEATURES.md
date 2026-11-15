@@ -13,7 +13,7 @@ gaps are listed in [STATUS.md](STATUS.md).
 | Multi-episode files (`S01E01E02`) | ✅ | File↔episode link table; finishing the file marks every episode in it |
 | TMDB metadata | ✅ | `crates/metadata`: matching, posters/backdrops, cast & crew, collections, TV seasons/episodes |
 | Local `.nfo` + artwork | ✅ | Works without a TMDB key; local files take precedence over TMDB; fields can be locked per item. Artwork symlinked outside the library roots, or not a real JPEG/PNG/WebP, is refused (🧪 fix for #10, pending deploy) |
-| Image cache & resizing | ✅ | Resized on demand (Lanczos3), cached on disk, ETag + long cache headers |
+| Image cache & resizing | ✅ | Resized on demand (Lanczos3), cached on disk, ETag + long cache headers. Downloads of TMDB images, channel logos and VOD artwork are size- and time-capped while streaming, shared between concurrent requests, and the caches stay under a disk budget (4 GiB TMDB, 1 GiB IPTV by default; least recently used files go first) (🧪 #9, pending deploy) |
 | Radarr/Sonarr webhooks → targeted rescan | ✅ | When an import completes, Reel rescans just that path |
 
 ## Browsing & discovery

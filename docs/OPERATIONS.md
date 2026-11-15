@@ -76,6 +76,7 @@ Backlog → To do → Implementing → Reviewing → **Deployed** (automatic, `d
 | `REEL_TRUST_PROXY_HEADERS` | `true` | Trust XFF from private-range peers (Caddy) |
 | `REEL_MAX_TRANSCODES` / `REEL_MAX_USER_TRANSCODES` | `3` / `2` | Transcode caps |
 | `REEL_ALLOW_PRIVATE_FETCH` / `..._LOGO_FETCH` | `true` / `false` | SSRF policy (playlists/EPG may be LAN; logos never) |
+| `REEL_IMAGE_CACHE_MAX_MB` / `REEL_IPTV_IMAGE_CACHE_MAX_MB` | unset (`4096` / `1024`) | Disk budgets of the TMDB image cache (`/appdata/images`) and the IPTV logo + VOD image caches (`/appdata/iptv/{logos,vod-images}`). Beyond them the least recently used files are deleted (log line `image cache over budget`). `0` = unlimited. Live sizes on 2026-11-15: 772 MB and 62 MB |
 | `REEL_TMDB_API_KEY`, `REEL_WEBHOOK_SECRET` | in `.env` | |
 | `REEL_OMDB_API_KEY`, `REEL_TRAKT_CLIENT_ID` | optional | IMDb/RT scores, Trakt comments |
 | `REEL_WS_PING_SECS` | unset (`25`) | Ping interval of the `/events` WebSocket, so idle proxy/VPN paths don't drop it silently. `REEL_WS_RECHECK_SECS` (`30`) re-checks the session on open sockets |
