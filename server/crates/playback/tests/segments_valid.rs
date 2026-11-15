@@ -12,18 +12,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-fn have_ffmpeg() -> bool {
-    Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
+mod common;
+use common::have_ffmpeg;
 
 fn make_mkv(dir: &Path) -> PathBuf {
-    let srt = dir.join("s.srt");
-    std::fs::write(&srt, "1\n00:00:01,000 --> 00:00:02,000\nhi\n").unwrap();
-    let out = dir.join("movie.mkv");
+    let srt = common::srt();
     let mut c = Command::new("ffmpeg");
     c.args([
         "-hide_banner",
@@ -67,10 +60,8 @@ fn make_mkv(dir: &Path) -> PathBuf {
     ])
     .args([
         "-pix_fmt", "yuv420p", "-c:a", "eac3", "-b:a", "384k", "-c:s", "srt",
-    ])
-    .arg(&out);
-    assert!(c.status().unwrap().success());
-    out
+    ]);
+    common::ffmpeg_fixture(c, &dir.join("movie.mkv"))
 }
 
 fn request(path: &Path, encode: bool) -> StartRequest {

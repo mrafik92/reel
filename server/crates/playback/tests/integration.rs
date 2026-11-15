@@ -10,45 +10,35 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-fn have_ffmpeg() -> bool {
-    Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
+mod common;
+use common::have_ffmpeg;
 
 fn make_source(dir: &Path) -> PathBuf {
-    let out = dir.join("src.mkv");
-    let st = Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc=size=320x240:rate=25:duration=12",
-        ])
-        .args([
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=440:duration=12",
-            "-c:v",
-            "libx264",
-            "-g",
-            "25",
-            "-pix_fmt",
-            "yuv420p",
-        ])
-        .args(["-c:a", "ac3", "-ac", "2"])
-        .arg(&out)
-        .status()
-        .unwrap();
-    assert!(st.success());
-    out
+    let mut c = Command::new("ffmpeg");
+    c.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=size=320x240:rate=25:duration=12",
+    ])
+    .args([
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:duration=12",
+        "-c:v",
+        "libx264",
+        "-g",
+        "25",
+        "-pix_fmt",
+        "yuv420p",
+    ])
+    .args(["-c:a", "ac3", "-ac", "2"]);
+    common::ffmpeg_fixture(c, &dir.join("src.mkv"))
 }
 
 fn streams() -> Vec<StreamInfo> {
@@ -537,47 +527,42 @@ async fn srt_and_ass_convert_to_cached_vtt() {
 
 /// 30s h264(+aac) with an irregular GOP: a keyframe every 37 frames at 25fps = 1.48s.
 fn make_irregular_source(dir: &Path) -> PathBuf {
-    let out = dir.join("irregular.mkv");
-    let st = Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc=size=320x240:rate=25:duration=30",
-        ])
-        .args([
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=330:duration=30",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-        ])
-        .args([
-            "-g",
-            "37",
-            "-keyint_min",
-            "37",
-            "-sc_threshold",
-            "0",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "64k",
-        ])
-        .arg(&out)
-        .status()
-        .unwrap();
-    assert!(st.success());
-    out
+    let mut c = Command::new("ffmpeg");
+    c.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=size=320x240:rate=25:duration=30",
+    ])
+    .args([
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=330:duration=30",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+    ])
+    .args([
+        "-g",
+        "37",
+        "-keyint_min",
+        "37",
+        "-sc_threshold",
+        "0",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "64k",
+    ]);
+    common::ffmpeg_fixture(c, &dir.join("irregular.mkv"))
 }
 
 fn extinfs(playlist: &str) -> Vec<f64> {

@@ -41,12 +41,19 @@ CT 113:  Actions → deploy → Run workflow  (runner CT 116 → ssh forced comm
 
 - CI runs **once** per PR (`pull_request`) and once per push to `main`. The `server` job is skipped on PRs
   that touch neither `server/**` nor `ci.yml` (the `clients` and `docs` checks still run). Tests run with
-  `cargo nextest run --workspace` (parallel across test binaries; no doctests exist), debug info is off
+  `cargo nextest run --workspace --profile ci` (parallel across test binaries; no doctests exist), debug info is off
   (a CARGO_HOME config written by the job) and linking uses mold. The Rust cache (`shared-key: reel`) is
   saved only from `main`; PRs restore it read-only. Locally, plain `cargo test --workspace` still works.
+- The runner has 2 vCPUs. The `ci` nextest profile (`server/.config/nextest.toml`) runs 4 tests at once,
+  and the ffmpeg-heavy playback binaries take 2 slots each, so tests that wait on timers overlap with
+  CPU-bound ones without more ffmpeg contention than before.
+- Playback tests build their media through `tests/common::ffmpeg_fixture`, once per distinct ffmpeg command
+  and ffmpeg version, into `server/target/tmp/reel-fixtures` (shared by all tests of a build; each test gets
+  its own copy). CI keeps that directory in an Actions cache (`reel-fixtures-…`, saved from `main` only,
+  unused fixtures pruned before saving) and removes it from `target/` so the Rust cache doesn't carry it.
 - `image.yml` keeps its Docker layer cache in the registry (`ghcr.io/mrafik92/reel:buildcache`), not the
   Actions cache, so it can't evict the Rust cache (10 GB repo limit).
-- Not done yet (#73): caching generated test media, caching the ffmpeg apt install, sccache.
+- Not done yet (#73): caching the ffmpeg apt install, sccache.
 - Server changes take ~10 min to build; web-only changes take ~1 min (cached Rust layer).
 - `image.yml` cancels in-flight builds on new pushes, so wait for the **latest** run.
 - Deploy (from the Mac):

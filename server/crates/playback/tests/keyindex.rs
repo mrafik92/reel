@@ -12,19 +12,13 @@ use std::process::Command;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-fn have_ffmpeg() -> bool {
-    Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
+mod common;
+use common::have_ffmpeg;
 
 /// 60s, noisy 640x360 (so the file is tens of MB), irregular 37-frame GOP, B-frames.
 fn make(dir: &Path, name: &str, extra: &[&str]) -> PathBuf {
-    let out = dir.join(name);
-    let st = Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi"])
+    let mut c = Command::new("ffmpeg");
+    c.args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi"])
         .args([
             "-i",
             "testsrc2=size=480x270:rate=25:duration=60,noise=alls=8:allf=t",
@@ -54,12 +48,8 @@ fn make(dir: &Path, name: &str, extra: &[&str]) -> PathBuf {
             "-b:a",
             "96k",
         ])
-        .args(extra)
-        .arg(&out)
-        .status()
-        .unwrap();
-    assert!(st.success());
-    out
+        .args(extra);
+    common::ffmpeg_fixture(c, &dir.join(name))
 }
 
 fn ffprobe_keyframes(path: &Path) -> Vec<f64> {
