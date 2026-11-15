@@ -45,7 +45,13 @@ async fn main() -> anyhow::Result<()> {
              anywhere with this one-time token: {t}"
         );
     }
-    state.cast.spawn_discovery(state.config.data_dir.clone());
+    state.cast.spawn_discovery(
+        state.config.data_dir.clone(),
+        state
+            .config
+            .cast_discovery
+            .then(|| reel_api::cast::SSDP_ADDR.parse().expect("ssdp addr")),
+    );
     // Stale rows from a previous run (sessions don't survive restarts).
     sqlx::query("DELETE FROM playback_sessions")
         .execute(&pool)
