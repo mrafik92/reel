@@ -89,6 +89,17 @@ https://reel.rafikii.co:8443 {
 		respond `{"error":"not available on the public address; use the home network or Tailscale"}` 403
 	}
 
+	# #127 interim: admin-only writes outside /api/v1/admin (library create/scan, request
+	# approve/decline). Reads stay open; regular users use GET on these paths.
+	@lan_only_writes {
+		path /api/v1/libraries /api/v1/libraries/* /api/v1/requests/*/approve /api/v1/requests/*/decline
+		not method GET HEAD
+	}
+	handle @lan_only_writes {
+		header Content-Type "application/json"
+		respond `{"error":"not available on the public address; use the home network or Tailscale"}` 403
+	}
+
 	handle {
 		reverse_proxy http://10.10.10.207:8420 {
 			header_up X-Forwarded-Proto https
