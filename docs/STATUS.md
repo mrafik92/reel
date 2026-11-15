@@ -135,10 +135,8 @@ proposal are in [#102](https://github.com/mrafik92/reel/issues/102#issuecomment-
 
 | Area | Gap |
 |---|---|
-| Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) wasn't delivered (the agent errored). For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
-| Player | A link slower than a file's peak bitrate still stalls (e.g. The Remarried Empress E1: 5.9 Mbit/s average, 11–13 Mbit/s at 2:44–3:16). The player now waits and recovers instead of stopping (#91), but only a lower rendition fixes it (#87) |
 | Network | Chrome over HTTP/3 on Tailscale (MTU 1280) sees `QUIC_TOO_MANY_RTOS` and status-0 responses (#91, #93), and the QUIC connection can wedge: response bodies stop mid-transfer and every request on it hangs (3 of 5 test runs on The Mongoose, 0 of 2 with QUIC off; #96, #108). The player and the app retry, and the player reopens a reaped session once the connection is back, but the picture freezes meanwhile. Turning off HTTP/3 for reel.rafikii.co at Caddy (CT 107) is an owner decision, not changed (#108) |
-| Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) isn't delivered. PR #69 (re-decide per switch) is open but not recommended as is (#102). For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
+| Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) isn't delivered. PR #69 (re-decide per switch) was closed unmerged; multi-variant HLS with hls.js ABR (#111) replaces it, and its quality menu can be reused for #87. For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
 | Player | **One rendition per session** (A6): no multi-variant playlist, so the player can't step down on a link dip or start low and climb (#111). A link slower than a file's peak bitrate still stalls (e.g. The Remarried Empress E1: 5.9 Mbit/s average, 11–13 Mbit/s at 2:44–3:16). The player now waits and recovers instead of stopping (#91), but only a lower rendition fixes it (#87, #111) |
 | Player | The 6 Mbit/s admin cap sends 95 of 311 files to a 720p transcode that the LAN doesn't need (#2, after #87) |
 | Player | HDR/DV files are always tone-mapped to SDR in the browser (the profile probe reports no HDR), and the tone-map is the slowest path (2.6× realtime, 9.9 s to first frame remotely) (#114) |
@@ -194,7 +192,7 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 
 1. Playback like YouTube (#102 proposal, awaiting owner approval): quality picker with a per-device default (#87),
    then remove the admin's 6 Mbps cap (#2); multi-variant HLS with a lazy low rung and hls.js ABR (#111, replaces
-   PR #69's re-decide stepping, #1); faster first frame (#112); low-power/HEVC encodes (#113); HDR in the browser
+   the closed PR #69's re-decide stepping, #1); faster first frame (#112); low-power/HEVC encodes (#113); HDR in the browser
    (#114); optional background pre-encode (#115).
 2. Close the security items above.
 3. Verify webOS/Tizen on real TVs; DLNA with the TV IPs; AirPlay/Chromecast.
