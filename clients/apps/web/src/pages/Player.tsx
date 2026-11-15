@@ -44,6 +44,14 @@ const HIDE_AFTER = TV ? 5000 : 3500;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const VOL_KEY = "reel.player.volume";
 const TICK_MS = 10_000;
+/**
+ * A paused player keeps its session alive with "paused" pings for this long (#95); the server then
+ * keeps a converted session for its paused timeout (30 min). Past that the transcode slot is freed,
+ * and pressing play opens a new session at the same spot.
+ */
+const PAUSED_KEEPALIVE_MS = 30 * 60_000;
+/** Paused at least this long: check the session is still there as soon as playback resumes. */
+const RESUME_CHECK_MS = 45_000;
 
 export interface PlayError {
   title: string;
@@ -107,6 +115,15 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   const [recovering, setRecovering] = createSignal<string>();
   /** Last automatic session restart after the player gave up (at most one per minute). */
   let autoRestartAt = 0;
+  /**
+   * The viewer paused (#100). Automatic restarts (a reopened session, a track change) keep the
+   * player paused instead of starting it; only the viewer's play does that.
+   */
+  let held = false;
+  /** When the player was paused (0 while playing): paused pings stop after PAUSED_KEEPALIVE_MS. */
+  let pausedAt = 0;
+  /** The server no longer knows this session (reaped, server restarted): reopen on the next play. */
+  let gone = false;
   const [scrub, setScrub] = createSignal<number | null>(null);
   const [picker, setPicker] = createSignal<"audio" | "sub" | null>(null);
   const [series, setSeries] = createSignal<string>();
@@ -175,7 +192,31 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   const report = (paused: boolean, keepalive = false) => {
     const s = session();
     if (!s || pos() < 1) return;
-    api.progress(s.session_id, { position_s: pos(), paused }, keepalive).catch(() => undefined);
+    api.progress(s.session_id, { position_s: pos(), paused }, keepalive).catch((e) => {
+      // 404: the server ended the session (idle reap, restart). Open a new one at the same spot.
+      if (e instanceof ApiError && e.status === 404 && session()?.session_id === s.session_id) sessionGone();
+    });
+  };
+  /** The session is gone on the server (#95): reopen now if playing, or on the next play if paused. */
+  const sessionGone = () => {
+    if (gone || closed || localStopped || cast()) return;
+    gone = true;
+    if (held) return;
+    setRecovering("Reconnecting to the server");
+    void start(pos());
+  };
+  /** The viewer pressed play. A session that's gone is reopened at the playhead instead. */
+  const userPlay = () => {
+    held = false;
+    if (gone) {
+      void start(pos());
+      return;
+    }
+    adapter?.play().catch(() => undefined);
+  };
+  const userPause = () => {
+    held = true;
+    adapter?.pause();
   };
   const endSession = (keepalive = false) => {
     const s = session();
@@ -198,6 +239,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     // The clock shows the start point until the first timeupdate (slow starts, remote seek).
     setPos(at);
     setBuffering(true);
+    gone = false;
     endSession();
     let d: DecideResponse;
     try {
@@ -242,7 +284,13 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       .filter((s) => s.url)
       .map((s) => ({ id: String(s.index), url: mediaUrl(s.url)!, label: subLabel(s).short, language: s.language ?? undefined }));
     try {
-      await a.load(mediaUrl(d.url)!, { startPositionSec: at || undefined, autoplay: true, textTracks });
+      // Paused by the viewer (a reopened session, a track change): load it, but stay paused (#100).
+      await a.load(mediaUrl(d.url)!, { startPositionSec: at || undefined, autoplay: !held, textTracks });
+      if (held) {
+        setPlaying(false);
+        setBuffering(false);
+        setRecovering(undefined);
+      }
     } catch {
       // Autoplay blocked: show the play button instead.
       setPlaying(false);
@@ -275,11 +323,18 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       a.on("play", () => {
         setPlaying(true);
         setBuffering(false);
+        held = false;
+        // Back from a long pause: make sure the server still has the session (a 404 reopens it).
+        if (pausedAt && Date.now() - pausedAt > RESUME_CHECK_MS) report(false);
+        pausedAt = 0;
         poke();
       }),
       a.on("pause", () => {
         setPlaying(false);
         setVisible(true);
+        // A pause the player causes while it recovers isn't the viewer's.
+        if (!recovering()) held = true;
+        if (!pausedAt) pausedAt = Date.now();
         report(true);
       }),
       a.on("buffering", (b) => setBuffering(b)),
@@ -564,6 +619,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   };
   const resumeLocal = (at: number) => {
     localStopped = false;
+    held = false;
     setPos(at);
     void start(at);
   };
@@ -652,8 +708,8 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   const toggle = () => {
     if (!adapter) return;
     // Use our state, not video.paused: AVPlay doesn't drive the <video> element.
-    if (!playing()) adapter.play().catch(() => undefined);
-    else adapter.pause();
+    if (!playing()) userPlay();
+    else userPause();
     poke();
   };
   /** ±seconds from buttons / remote keys: previewed on the scrubber, committed shortly after. */
@@ -840,6 +896,8 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
 
     tickTimer = setInterval(() => {
       if (playing()) report(false);
+      // Paused: keep the session alive (a paused player with a full buffer requests nothing, #95).
+      else if (session() && pausedAt && Date.now() - pausedAt < PAUSED_KEEPALIVE_MS) report(true);
     }, TICK_MS);
 
     const onKey = (e: KeyboardEvent) => {
@@ -940,8 +998,8 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       poke();
       if (!adapter) return true;
       if (m === "playpause") toggle();
-      else if (m === "play") adapter.play().catch(() => undefined);
-      else if (m === "pause") adapter.pause();
+      else if (m === "play") userPlay();
+      else if (m === "pause") userPause();
       else if (m === "ff") seekBy(30);
       else if (m === "rw") seekBy(-10);
       else if (m === "stop") exit();
@@ -1095,10 +1153,16 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
             <p>{e().body}</p>
             <div class="actions actions--center">
               <Show when={e().action}>
-                {(a) => <ActionButton label={a().label} run={a().run} onDone={() => void start(pos() || resumeAt())} />}
+                {(a) => <ActionButton label={a().label} run={a().run} onDone={() => {
+                  held = false;
+                  void start(pos() || resumeAt());
+                }} />}
               </Show>
               <Show when={e().retry}>
-                <button type="button" class={e().action ? "btn" : "btn btn--primary"} data-autofocus={e().action ? undefined : ""} onClick={() => void start(pos() || resumeAt())}>
+                <button type="button" class={e().action ? "btn" : "btn btn--primary"} data-autofocus={e().action ? undefined : ""} onClick={() => {
+                  held = false;
+                  void start(pos() || resumeAt());
+                }}>
                   <Icon name="retry" /> <span>Try again</span>
                 </button>
               </Show>

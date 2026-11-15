@@ -204,6 +204,12 @@ export function createMockApi(): MockApi {
   const dlc: DownloadClient[] = [{ id: 1, kind: "qbittorrent", url: "http://qbittorrent:8080", username: "admin", password_set: true }];
   const notes: NotificationTarget[] = [{ id: 1, kind: "discord", config: { webhook_url: "https://discord.com/api/webhooks/••••" } as never, events: ["available", "failed"] }];
   const playback = new Map<string, AdminSession>();
+  // Dev hook: end every session the way the server's idle reaper does (#95), e.g. from Playwright.
+  (globalThis as { reelMockReap?: () => number }).reelMockReap = () => {
+    const n = playback.size;
+    playback.clear();
+    return n;
+  };
   playback.set("s-demo", {
     id: "s-demo", user_id: 2, username: "maya", item_id: 104, item_title: "Small Hours", file_id: 1041, active: true,
     mode: "transcode", hwaccel: "vaapi", position_s: 1880, progress: 0.32, bitrate_kbps: 8000, started_at: nowS() - 1900,
@@ -376,7 +382,8 @@ export function createMockApi(): MockApi {
     },
     async progress(sid, b) {
       const s = playback.get(sid);
-      if (!s) return;
+      // Like the server: a session that was reaped or never existed is a 404.
+      if (!s) throw new ApiError(404, "Not found");
       s.position_s = b.position_s;
       s.last_ping = nowS();
       const rec = s.item_id != null ? db.byId.get(s.item_id) : undefined;
