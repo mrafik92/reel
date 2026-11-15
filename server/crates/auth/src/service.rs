@@ -91,7 +91,10 @@ fn hash_token(token: &str) -> String {
         .collect()
 }
 
-/// Load the HMAC signing key from `path` (hex), generating and persisting one (0600) if absent.
+/// Load the HMAC signing key from `path` (hex), generating and persisting one if absent.
+///
+/// The key file is written atomically as `0600` (and its directory created `0700`), so it is never readable
+/// by other users; an existing key with looser permissions is tightened (#14).
 pub fn load_or_create_signing_key(path: &Path) -> Vec<u8> {
     if let Ok(s) = std::fs::read_to_string(path) {
         let hex = s.trim();
@@ -99,6 +102,7 @@ pub fn load_or_create_signing_key(path: &Path) -> Vec<u8> {
             .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok())
             .collect();
         if let Some(b) = bytes.filter(|b| b.len() >= 32) {
+            reel_core::fsperm::repair(path);
             return b;
         }
     }
@@ -106,16 +110,10 @@ pub fn load_or_create_signing_key(path: &Path) -> Vec<u8> {
     rand::rngs::OsRng.fill_bytes(&mut key);
     let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
     let write = || -> std::io::Result<()> {
-        if let Some(d) = path.parent() {
-            std::fs::create_dir_all(d)?;
+        if let Some(d) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            reel_core::fsperm::create_private_dir_all(d)?;
         }
-        std::fs::write(path, &hex)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(())
+        reel_core::fsperm::write_private(path, hex.as_bytes())
     };
     if let Err(e) = write() {
         tracing::warn!("cannot persist signing key at {}: {e}", path.display());
@@ -1186,5 +1184,50 @@ impl AuthService {
                 ip: r.get("ip"),
             })
             .collect())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod signing_key_tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::load_or_create_signing_key;
+
+    fn mode(p: &std::path::Path) -> u32 {
+        std::fs::metadata(p).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn new_key_is_0600_in_a_0700_dir() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("data/signing.key");
+        let k = load_or_create_signing_key(&p);
+        assert_eq!(k.len(), 32);
+        assert_eq!(mode(&p), 0o600);
+        assert_eq!(mode(&t.path().join("data")), 0o700);
+        // persisted: the same key comes back
+        assert_eq!(load_or_create_signing_key(&p), k);
+    }
+
+    #[test]
+    fn existing_loose_key_is_kept_and_tightened() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("signing.key");
+        std::fs::write(&p, "ab".repeat(32)).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(load_or_create_signing_key(&p), vec![0xab; 32]);
+        assert_eq!(mode(&p), 0o600);
+    }
+
+    #[test]
+    fn invalid_key_is_replaced_atomically_with_0600() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("signing.key");
+        std::fs::write(&p, "short").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let k = load_or_create_signing_key(&p);
+        assert_eq!(k.len(), 32);
+        assert_eq!(mode(&p), 0o600);
+        assert_eq!(load_or_create_signing_key(&p), k);
     }
 }

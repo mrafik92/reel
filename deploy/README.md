@@ -32,7 +32,8 @@ Open `http://<host>:8420`. **The first visit creates the admin account** (`GET /
 
 State lives in the `reel-data` volume (`/data`): SQLite database, image cache, transcode scratch and
 `signing.key` (HMAC key for signed stream URLs). Back that volume up. The container runs as UID 1000;
-if you switch `reel-data` to a bind mount, `chown 1000:1000` it.
+if you switch `reel-data` to a bind mount, `chown -R 1000:1000` it. Reel keeps that directory `0700` and the
+database and key `0600` (it tightens them at every start), so a backup job must run as UID 1000 or root.
 
 Updating: `git pull && docker compose up -d --build`. Migrations run automatically at start.
 

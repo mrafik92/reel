@@ -17,6 +17,8 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg_path = PathBuf::from(std::env::var("REEL_CONFIG").unwrap_or("config.toml".into()));
     let config = Config::load(cfg_path.exists().then_some(cfg_path.as_path()))?;
+    // Owner-only data dir (0700): the database, signing key and caches live there (#14).
+    reel_core::fsperm::ensure_private_dir(&config.data_dir)?;
     let pool = db::connect(&config.database_path()).await?;
 
     let hw = reel_playback::detect().await;
