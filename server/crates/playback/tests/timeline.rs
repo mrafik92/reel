@@ -8,19 +8,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn have_ffmpeg() -> bool {
-    Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
+mod common;
+use common::have_ffmpeg;
 
 /// 150s H.264 (irregular GOP) + E-AC3 5.1 + `nsubs` SRT tracks in an MKV.
 fn make_mkv(dir: &Path, nsubs: usize) -> PathBuf {
-    let srt = dir.join("s.srt");
-    std::fs::write(&srt, "1\n00:00:01,000 --> 00:00:02,000\nhi\n").unwrap();
-    let out = dir.join("movie.mkv");
+    let srt = common::srt();
     let mut c = Command::new("ffmpeg");
     c.args([
         "-hide_banner",
@@ -63,10 +56,8 @@ fn make_mkv(dir: &Path, nsubs: usize) -> PathBuf {
     ])
     .args([
         "-pix_fmt", "yuv420p", "-c:a", "eac3", "-b:a", "384k", "-c:s", "srt",
-    ])
-    .arg(&out);
-    assert!(c.status().unwrap().success());
-    out
+    ]);
+    common::ffmpeg_fixture(c, &dir.join("movie.mkv"))
 }
 
 // ---- minimal ISO-BMFF parsing -------------------------------------------------------------

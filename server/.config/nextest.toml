@@ -1,0 +1,14 @@
+# cargo-nextest configuration. The `ci` profile is used by .github/workflows/ci.yml.
+
+[profile.ci]
+# The GitHub runner has 2 vCPUs, but many tests mostly wait (provider back-off timers, socket
+# timeouts), so run more tests than cores. The ffmpeg-heavy binaries below take 2 slots each, so at
+# most two of them run at once (no more CPU contention than one test per core) while waiting tests
+# fill the remaining slots.
+test-threads = 4
+# Show where the time goes in the CI log.
+slow-timeout = { period = "30s" }
+
+[[profile.ci.overrides]]
+filter = 'package(reel-playback) & (binary(=segments_valid) | binary(=keyindex) | binary(=timeline) | binary(=integration) | binary(=security) | binary(=remote_seek))'
+threads-required = 2

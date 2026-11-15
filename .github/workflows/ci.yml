@@ -67,6 +67,18 @@ jobs:
           shared-key: reel
           # PRs restore main's warm cache but don't upload multi-GB copies of their own.
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Test media that playback tests synthesize with ffmpeg (most of their CPU time). Fixtures are
+      # content-keyed (command line + ffmpeg version, see crates/playback/tests/common), so a stale
+      # restore only means a regenerate. Saved from main only, like the Rust cache.
+      - name: Test media cache key
+        id: fixtures-key
+        run: echo "key=reel-fixtures-$(ffmpeg -version | head -1 | sha256sum | cut -c1-12)-${{ hashFiles('server/crates/playback/tests/**') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: fixtures
+        with:
+          path: server/target/tmp/reel-fixtures
+          key: ${{ steps.fixtures-key.outputs.key }}
+          restore-keys: reel-fixtures-
       - run: cargo fmt --check
       - name: sqlx builds SQLite only (no MySQL/Postgres driver, no rsa)
         # sqlx-mysql and rsa stay in Cargo.lock (cargo lists disabled optional deps), so cargo-audit
@@ -78,12 +90,26 @@ jobs:
           done
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # nextest runs tests from all binaries in parallel; the crates have no doctests (the one in
-      # playback/src/lib.rs is `ignore`d), so there is no `cargo test --doc` step.
-      - run: cargo nextest run --workspace --locked
+      # playback/src/lib.rs is `ignore`d), so there is no `cargo test --doc` step. The `ci` profile
+      # (server/.config/nextest.toml) sets the parallelism for the 2-vCPU runner.
+      - run: |
+          touch "$RUNNER_TEMP/tests-start"
+          cargo nextest run --workspace --locked --profile ci
       - name: OpenAPI spec is up to date
         run: |
           cargo run --locked -q -p reel-api --bin export-openapi > "$RUNNER_TEMP/openapi.json"
           diff -u openapi.json "$RUNNER_TEMP/openapi.json"
+      - name: Drop test media no test used
+        if: github.ref == 'refs/heads/main' && steps.fixtures.outputs.cache-hit != 'true'
+        run: find target/tmp/reel-fixtures -type f ! -newer "$RUNNER_TEMP/tests-start" -delete
+      - uses: actions/cache/save@v4
+        if: github.ref == 'refs/heads/main' && steps.fixtures.outputs.cache-hit != 'true'
+        with:
+          path: server/target/tmp/reel-fixtures
+          key: ${{ steps.fixtures-key.outputs.key }}
+      - name: Keep test media out of the Rust cache
+        if: always()
+        run: rm -rf target/tmp
 
   clients:
     runs-on: ubuntu-latest
