@@ -2318,25 +2318,13 @@
     },
     "/api/v1/events": {
       "get": {
-        "summary": "WebSocket stream of [`ServerEvent`]s as JSON text frames. Authenticate with `?ticket=` (from\n`POST /auth/ws-ticket`), `Authorization: Bearer`, or the deprecated `?token=`. The socket is\nclosed when the session is revoked or the user disabled; at most 8 sockets per user. `request_progress` is delivered to the requester (and\nadmins); `scan_progress` to admins only.",
+        "summary": "WebSocket stream of [`ServerEvent`]s as JSON text frames. Authenticate with `?ticket=` (from\n`POST /auth/ws-ticket`) or `Authorization: Bearer`. The session token is never accepted in the\nURL (`?token=` was removed in #28: URLs end up in proxy and edge logs). The socket is\nclosed when the session is revoked or the user disabled; at most 8 sockets per user. `request_progress` is delivered to the requester (and\nadmins); `scan_progress` to admins only.",
         "operationId": "events",
         "parameters": [
           {
             "name": "ticket",
             "in": "query",
             "description": "Single-use ticket from `POST /auth/ws-ticket` (preferred; browsers cannot set headers on\nWebSocket upgrades).",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "description": "Deprecated: the session token in the URL (ends up in logs). Still accepted for one release.",
             "required": false,
             "schema": {
               "type": [

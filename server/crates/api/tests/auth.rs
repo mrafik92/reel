@@ -1358,19 +1358,26 @@ async fn websocket_events_are_filtered_per_user() {
         matches!(err, tokio_tungstenite::tungstenite::Error::Http(ref r) if r.status() == 401),
         "{err:?}"
     );
-    let err = tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/events?token=bogus"))
+    let err = tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/events?ticket=bogus"))
         .await
         .unwrap_err();
     assert!(matches!(err, tokio_tungstenite::tungstenite::Error::Http(ref r) if r.status() == 401));
 
-    let (mut ws_bob, _) =
-        tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/events?token={btoken}"))
-            .await
-            .unwrap();
-    let (mut ws_admin, _) =
-        tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/events?token={admin_token}"))
-            .await
-            .unwrap();
+    let ws_url = |token: String| {
+        let raw = e.raw.clone();
+        async move {
+            let r = common::with_token(raw, &token);
+            let (_, v) = send(&r, "POST", "/api/v1/auth/ws-ticket", None).await;
+            let t = v["ticket"].as_str().unwrap().to_string();
+            format!("ws://{addr}/api/v1/events?ticket={t}")
+        }
+    };
+    let (mut ws_bob, _) = tokio_tungstenite::connect_async(ws_url(btoken.clone()).await)
+        .await
+        .unwrap();
+    let (mut ws_admin, _) = tokio_tungstenite::connect_async(ws_url(admin_token.clone()).await)
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let progress = |id: i64, tmdb: i64| ServerEvent::RequestProgress {

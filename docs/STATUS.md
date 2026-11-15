@@ -165,6 +165,10 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 - Per-user permissions (IPTV / VOD / requests / casting); DLNA admin-only by default; Arr routing options admin-only.
 - Webhooks: secret of 32+ characters, header/Basic auth, constant-time comparison, per-IP lockout, `..` paths rejected.
 - WebSocket tickets; sockets closed on revoke; logs no longer contain query strings; safe post-login redirect.
+
+**Fixed in code, not deployed (🧪):**
+
+- `/events?token=` removed (#28): the WebSocket accepts only a single-use ticket or an `Authorization` header, so the session token can't land in proxy or edge logs. The SDK (used by the web, webOS and Tizen builds) no longer falls back to `?token=` when the ticket request fails; it retries with backoff.
 - Playback errors are generic (stderr redacted server-side); atomic stream/transcode limits; global ffmpeg process budget; single-flight subtitle conversion; no software HEVC.
 - **Upstream proxy for ffmpeg/ffprobe** (SSRF policy + credentials out of argv) for VOD, remote subtitles and remote probes.
 - Local ffprobe/ffmpeg restricted to `-protocol_whitelist file`; symlink-safe scanning; two-level subtitle filter escaping; scratch-disk budget.

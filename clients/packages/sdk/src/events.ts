@@ -115,9 +115,9 @@ export class ReelEvents {
     return (this.opts.baseUrl || (typeof location !== "undefined" ? location.origin : "")).replace(/\/$/, "");
   }
 
-  /** Short-lived single-use ticket, so the session token never appears in a URL. Falls back to the
-   *  deprecated `?token=` on servers without `/auth/ws-ticket`. */
-  private async url(): Promise<string> {
+  /** Short-lived single-use ticket, so the session token never appears in a URL (the server
+   *  refuses `?token=`, #28). `undefined` when no ticket could be fetched: retry later. */
+  private async url(): Promise<string | undefined> {
     const u = this.httpBase().replace(/^http/, "ws") + "/api/v1/events";
     if (!this.opts.token) return u;
     try {
@@ -135,9 +135,18 @@ export class ReelEvents {
       }
       if (r.status === 401) return u; // not signed in (any more): the upgrade will be refused
     } catch {
-      /* network hiccup or old server: fall through */
+      /* network hiccup: retry with backoff */
     }
-    return `${u}?token=${encodeURIComponent(this.opts.token)}`;
+    return undefined;
+  }
+
+  /** Try again after an exponential, jittered backoff. */
+  private retry(): void {
+    if (this.stopped) return;
+    const min = this.opts.minBackoffMs ?? 500;
+    const max = this.opts.maxBackoffMs ?? 15000;
+    const delay = Math.min(max, min * 2 ** this.attempt++) * (0.75 + Math.random() * 0.5);
+    this.timer = setTimeout(() => void this.open(), delay);
   }
 
   private async open(): Promise<void> {
@@ -146,6 +155,10 @@ export class ReelEvents {
     const url = await this.url();
     if (this.stopped || gen !== this.gen) return;
     this.opening = false;
+    if (url === undefined) {
+      this.retry();
+      return;
+    }
     const ws = new WebSocket(url);
     this.ws = ws;
     ws.onopen = () => {
@@ -166,11 +179,7 @@ export class ReelEvents {
       if (ws !== this.ws) return;
       this.ws = undefined;
       this.opts.onClose?.();
-      if (this.stopped) return;
-      const min = this.opts.minBackoffMs ?? 500;
-      const max = this.opts.maxBackoffMs ?? 15000;
-      const delay = Math.min(max, min * 2 ** this.attempt++) * (0.75 + Math.random() * 0.5);
-      this.timer = setTimeout(() => void this.open(), delay);
+      this.retry();
     };
     ws.onerror = () => ws.close();
   }
