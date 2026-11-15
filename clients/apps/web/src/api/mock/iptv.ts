@@ -241,11 +241,18 @@ export function createMockIptv(): IptvApi {
     s.epg_mode = s.epg_programme_count ? "xmltv" : s.kind === "xtream" ? "per_channel" : "none";
     return s;
   };
+  // The server masks logins in every admin response (#15); the mock does the same.
+  const maskUser = (u: string) => (u.length < 6 ? "••••" : `${u.slice(0, 2)}••••`);
+  const maskUrl = (u: string) =>
+    u
+      .replace(/([?&](?:username|password|user|pass|pwd|token)=)[^&#]*/gi, "$1***")
+      .replace(/\/\/[^/@\s]+@/, "//***:***@")
+      .replace(/\/(live|movie|series|timeshift)\/[^/]+\/[^/]+\//, "/$1/***/***/");
   const sources: SourceDto[] = empty
     ? []
     : [
         {
-          id: 1, name: "Harbour IPTV", kind: "xtream", url: "http://line.harbour-iptv.example:8080", username: "rafik", password_set: true,
+          id: 1, name: "Harbour IPTV", kind: "xtream", url: "http://line.harbour-iptv.example:8080", username: "ha••••", password_set: true,
           enabled: true, channel_count: chans.filter((c) => c.admin.source_id === 1).length, refreshing: false, open_connections: 1,
           max_connections: 2, last_refresh_at: now - 3 * 3600, last_epg_at: now - 3 * 3600, last_error: null, epg_url: null,
           epg_urls: ["AE1", "BEIN1", "ALJAZEERA1", "EG1", "UK1", "ZA1", "FR1"].map(ES),
@@ -409,9 +416,9 @@ export function createMockIptv(): IptvApi {
       await latency(200, 400);
       if (!b.name.trim() || !b.url.trim()) throw new ApiError(400, "Name and URL are required");
       const s: SourceDto = {
-        id: nextSource++, name: b.name, kind: b.kind, url: b.url, username: b.username ?? null, password_set: !!b.password, enabled: b.enabled ?? true,
+        id: nextSource++, name: b.name, kind: b.kind, url: maskUrl(b.url), username: b.username ? maskUser(b.username) : null, password_set: !!b.password, enabled: b.enabled ?? true,
         channel_count: 0, refreshing: true, open_connections: 0, max_connections: b.max_connections ?? null, last_refresh_at: null, last_epg_at: null,
-        last_error: null, epg_url: null, epg_urls: (b.epg_urls ?? []).filter(Boolean), detected_epg_url: null, refresh_interval: b.refresh_interval ?? null,
+        last_error: null, epg_url: null, epg_urls: (b.epg_urls ?? []).filter(Boolean).map(maskUrl), detected_epg_url: null, refresh_interval: b.refresh_interval ?? null,
         user_agent: b.user_agent ?? null,
       };
       guides(s);
@@ -434,7 +441,10 @@ export function createMockIptv(): IptvApi {
         if (v !== undefined) (s as unknown as Record<string, unknown>)[k] = v;
       }
       if (b.max_connections === 0) s.max_connections = null;
-      if (b.epg_urls) s.epg_urls = b.epg_urls.map((u) => u.trim()).filter((u, i, l) => u && l.indexOf(u) === i);
+      // like the server: never hand back a login
+      if (b.username) s.username = b.username.includes("••••") ? s.username : maskUser(b.username);
+      if (b.url) s.url = maskUrl(b.url);
+      if (b.epg_urls) s.epg_urls = b.epg_urls.map((u) => maskUrl(u.trim())).filter((u, i, l) => u && l.indexOf(u) === i);
       if (password) s.password_set = true;
       guides(s);
       return { ...s };

@@ -888,13 +888,16 @@ pub async fn search_all(
     // ── discover: not already in (a visible part of) the library ──
     let mut discover = vec![];
     // discover cards lead to requests: only for accounts that may request
-    for c in cards.iter().take(if u.user.can_request() { 40 } else { 0 }) {
-        let mut dto = card_dto(c, &sg);
-        if let Some(item) = c.library_item_id {
-            if u.is_admin() || st.require_item(&u.user, item).await.is_ok() {
-                continue;
-            }
-            dto.library_item_id = None;
+    let mut dtos: Vec<_> = cards
+        .iter()
+        .take(if u.user.can_request() { 40 } else { 0 })
+        .map(|c| card_dto(c, &sg))
+        .collect();
+    crate::requests::scope_cards(&st, &u.user, &mut dtos).await?;
+    for dto in dtos {
+        // in a library this user can open: already listed above
+        if dto.library_item_id.is_some() {
+            continue;
         }
         discover.push(dto);
         if discover.len() >= 12 {

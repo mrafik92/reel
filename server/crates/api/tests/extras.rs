@@ -660,6 +660,36 @@ async fn downloads_aggregate_radarr_and_sonarr_with_user_filtering() {
         .map(|i| i["id"].as_str().unwrap())
         .collect();
     assert_eq!(ids, ["1:11", "2:21"]);
+    assert_eq!(mine[0]["library_item_id"], 5);
+    // #15: once Heat sits in a library alice can't open, her download neither links to it nor
+    // shows its library poster (the admin still gets both)
+    sqlx::query("INSERT INTO libraries (id, name, kind) VALUES (2,'Private','movies')")
+        .execute(db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE media_items SET library_id = 2 WHERE id = 5")
+        .execute(db)
+        .await
+        .unwrap();
+    let (_, mine) = get(&alice, "/api/v1/downloads").await;
+    let heat = &mine[0];
+    assert_eq!(heat["id"], "1:11");
+    assert!(heat.get("library_item_id").is_none(), "{heat}");
+    assert!(
+        !heat["poster_url"]
+            .as_str()
+            .unwrap()
+            .contains("/images/poster/5"),
+        "{heat}"
+    );
+    let (_, all) = get(&e.admin, "/api/v1/downloads").await;
+    let heat = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == "1:11")
+        .unwrap();
+    assert_eq!(heat["library_item_id"], 5);
     let (_, bobs) = get(&bob, "/api/v1/downloads").await;
     let ids: Vec<&str> = bobs
         .as_array()
@@ -882,4 +912,91 @@ async fn downloads_explain_stuck_items_via_arr_messages_and_torrent_client_state
         "a sized item waiting in the client is just queued"
     );
     assert_eq!(m["1:2"]["status_text"], "Fetching metadata", "text kept");
+}
+
+/// #15: a card links to a library item only when the viewer may open it. The discovery service
+/// picks the first copy server-wide; a copy in a library the viewer can't see must not leak (its
+/// id says the title is there), and a copy in a library they can see is linked instead.
+#[tokio::test]
+async fn discover_cards_link_only_library_items_the_viewer_can_open() {
+    let tmdb = MockServer::start().await;
+    tmdb_json(&tmdb, "/movie/10", movie_body()).await;
+    tmdb_json(
+        &tmdb,
+        "/trending/all/week",
+        json!({"page": 1, "total_pages": 1, "total_results": 1, "results": [
+            {"id": 10, "media_type": "movie", "title": "Heat", "release_date": "1995-12-15", "poster_path": "/heat.jpg"}
+        ]}),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path("/person/1158"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": 1158, "name": "Al Pacino",
+            "combined_credits": {"cast": [
+                {"id": 10, "media_type": "movie", "title": "Heat", "release_date": "1995-12-15", "poster_path": "/heat.jpg", "character": "Vincent Hanna"}
+            ], "crew": []}
+        })))
+        .mount(&tmdb)
+        .await;
+    let e = env(&tmdb, None, None).await;
+    let db = &e.state.db;
+    sqlx::query("INSERT INTO libraries (id, name, kind) VALUES (1,'Movies','movies'),(2,'Private 4K','movies')")
+        .execute(db)
+        .await
+        .unwrap();
+    // Heat exists only in the library alice can't see
+    sqlx::query("INSERT INTO media_items (id, library_id, kind, title, tmdb_id) VALUES (5,2,'movie','Heat',10)")
+        .execute(db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO media_files (item_id, path, size, mtime) VALUES (5,'/4k/heat.mkv',1,1)",
+    )
+    .execute(db)
+    .await
+    .unwrap();
+    let (alice, _) = user_app(&e, "alice", vec![1]).await;
+
+    let detail =
+        |app: Router| async move { get(&app, "/api/v1/discover/movie/10").await.1["card"].clone() };
+    let trending = |app: Router| async move {
+        get(&app, "/api/v1/discover/trending").await.1["results"][0].clone()
+    };
+    let person =
+        |app: Router| async move { get(&app, "/api/v1/people/1158").await.1["credits"][0].clone() };
+
+    for (what, card) in [
+        ("detail", detail(alice.clone()).await),
+        ("trending", trending(alice.clone()).await),
+        ("person", person(alice.clone()).await),
+    ] {
+        assert_eq!(card["tmdb_id"], 10, "{what}: {card}");
+        assert!(
+            card.get("library_item_id").is_none(),
+            "{what} leaks the hidden item: {card}"
+        );
+    }
+    // the admin sees every library
+    assert_eq!(detail(e.admin.clone()).await["library_item_id"], 5);
+    assert_eq!(trending(e.admin.clone()).await["library_item_id"], 5);
+    assert_eq!(person(e.admin.clone()).await["library_item_id"], 5);
+
+    // a second copy in alice's library: she gets that one, not the lower hidden id
+    sqlx::query("INSERT INTO media_items (id, library_id, kind, title, tmdb_id) VALUES (7,1,'movie','Heat',10)")
+        .execute(db)
+        .await
+        .unwrap();
+    // without a file a movie isn't playable: still no link
+    assert!(detail(alice.clone()).await.get("library_item_id").is_none());
+    sqlx::query(
+        "INSERT INTO media_files (item_id, path, size, mtime) VALUES (7,'/m/heat.mkv',1,1)",
+    )
+    .execute(db)
+    .await
+    .unwrap();
+    assert_eq!(detail(alice.clone()).await["library_item_id"], 7);
+    assert_eq!(trending(alice.clone()).await["library_item_id"], 7);
+    assert_eq!(person(alice.clone()).await["library_item_id"], 7);
+    assert_eq!(detail(e.admin.clone()).await["library_item_id"], 5);
 }

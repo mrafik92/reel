@@ -514,8 +514,8 @@ function parseProviderLink(input: string): { base: string; username?: string; pa
   const path = u.pathname.replace(/\/(get|player_api|xmltv|panel_api)\.php$/i, "").replace(/\/+$/, "");
   return {
     base: `${u.protocol}//${u.host}${path}`,
-    username: q.get("username") || (u.username ? decodeURIComponent(u.username) : undefined),
-    password: q.get("password") || (u.password ? decodeURIComponent(u.password) : undefined),
+    username: unmasked(q.get("username") || (u.username ? decodeURIComponent(u.username) : undefined)),
+    password: unmasked(q.get("password") || (u.password ? decodeURIComponent(u.password) : undefined)),
     xtreamLink,
   };
 }
@@ -525,7 +525,8 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
   const [kind, setKind] = createSignal<"xtream" | "m3u">(src?.kind === "m3u" ? "m3u" : "xtream");
   const [name, setName] = createSignal(src?.name ?? "");
   const [url, setUrl] = createSignal(src?.url ?? "");
-  const [username, setUsername] = createSignal(src?.username ?? "");
+  // The server never returns the saved login (it masks it, e.g. "ab••••"): empty means "keep it".
+  const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
   // Ordered guide URLs (precedence). `epg_url` is deprecated and no longer sent.
   const [guides, setGuides] = createSignal<string[]>((src?.epg_urls ?? (src?.epg_url ? [src.epg_url] : [])).slice());
@@ -581,6 +582,10 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
     tidyUrl();
   };
 
+  /** The address still holds a part the server masked (`***`), so it can't be used as typed. */
+  const masked = (u: string) => u.includes("***");
+  const sameServer = () => !!src && hostPort(url()) === hostPort(src.url);
+
   const body = (): SourceBody => ({
     kind: kind(),
     name: name().trim() || hostOf(url()) || (kind() === "xtream" ? "IPTV" : "M3U playlist"),
@@ -596,8 +601,11 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
   const validate = (): string | undefined => {
     if (!url().trim()) return kind() === "xtream" ? "Enter your provider's server address." : "Enter the playlist URL.";
     if (!/^https?:\/\/[^/\s]+/i.test(url().trim())) return "The address should look like http://server:port.";
-    if (kind() === "xtream" && !username().trim()) return "Enter your Xtream username.";
+    if (kind() === "xtream" && !username().trim() && !src?.username) return "Enter your Xtream username.";
     if (kind() === "xtream" && !password() && !src?.password_set) return "Enter your Xtream password.";
+    if (kind() === "xtream" && src && !sameServer() && !(username().trim() && password()))
+      return "Enter the username and password again for the new server.";
+    if (url().trim() !== src?.url && masked(url())) return "Paste the full link: the saved login in it is hidden (***).";
     return undefined;
   };
 
@@ -610,8 +618,16 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
     setTesting(true);
     setResult(undefined);
     try {
-      // Editing without retyping the password: test the saved configuration instead.
-      const r = src && !password() && src.password_set && kind() === "xtream" ? await iptv.testSource(src.id) : await iptv.testConfig(body());
+      // Editing without retyping the login (or the playlist link): test the saved configuration.
+      const saved =
+        !!src &&
+        kind() === src.kind &&
+        url().trim() === src.url &&
+        (kind() === "m3u" || (!username().trim() && !password()));
+      if (!saved && kind() === "xtream" && src && !(username().trim() && password())) {
+        return setError("To test a new login, enter both the username and the password.");
+      }
+      const r = saved ? await iptv.testSource(src!.id) : await iptv.testConfig(body());
       setResult(r);
       const lim = r.account?.max_connections;
       if (r.ok && lim && (maxConn().trim() === "" || (!src && Number(maxConn()) !== lim))) {
@@ -637,14 +653,17 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
       if (src) {
         const b = body();
         const patch: SourcePatch = {
-          name: b.name, url: b.url, username: b.username ?? "", max_connections: b.max_connections ?? 0,
+          name: b.name, url: b.url, max_connections: b.max_connections ?? 0,
           refresh_interval: b.refresh_interval, user_agent: b.user_agent ?? "",
         };
+        // Omitted = keep the saved login; "" clears it when the source is no longer Xtream.
+        if (kind() !== "xtream") patch.username = "";
+        else if (username().trim()) patch.username = username().trim();
         if (password()) patch.password = password();
         // The full list, only when it changed (omitting keeps the saved one). Saving doesn't import it.
         const gChanged = guidesChanged();
         if (gChanged) patch.epg_urls = guides();
-        const reload = b.url !== src.url || (b.username ?? "") !== (src.username ?? "") || !!password();
+        const reload = b.url !== src.url || !!username().trim() || !!password();
         props.onDone(await iptv.updateSource(src.id, patch), reload, gChanged);
       } else {
         // The server starts the first channel + guide load itself; the row follows it.
@@ -673,7 +692,7 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
             <Field
               label="Playlist URL"
               placeholder="https://provider.example/get.php?username=…&type=m3u_plus"
-              hint="The .m3u / .m3u8 link from your provider"
+              hint={src && masked(src.url) ? "The login in the saved link is hidden. To change the link, paste it in full." : "The .m3u / .m3u8 link from your provider"}
               value={url()}
               onInput={(e) => setUrl(e.currentTarget.value)}
               onBlur={tidyUrl}
@@ -697,7 +716,15 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
             inputmode="url"
             data-autofocus
           />
-          <Field label="Username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocapitalize="off" spellcheck={false} autocomplete="off" />
+          <Field
+            label="Username"
+            placeholder={src?.username ? `Saved (${src.username}) — type to change` : ""}
+            value={username()}
+            onInput={(e) => setUsername(e.currentTarget.value)}
+            autocapitalize="off"
+            spellcheck={false}
+            autocomplete="off"
+          />
           <PasswordField
             label="Password"
             placeholder={src?.password_set ? "Saved — type to change" : ""}
@@ -764,6 +791,21 @@ function SourceForm(props: { source?: SourceDto; onDone: (s?: SourceDto, reload?
 /** Provider errors can echo the request URL — never show credentials from it. */
 function redact(msg: string | null | undefined): string {
   return (msg ?? "").replace(/((?:password|pass|pwd|token)=)[^&\s)]+/gi, "$1•••").replace(/\/\/([^/:@\s]+):([^@/\s]+)@/g, "//$1:•••@");
+}
+
+/** A value the server masked (`***`) is not a login. */
+function unmasked(v: string | undefined): string | undefined {
+  return v && !v.includes("***") ? v : undefined;
+}
+
+/** `scheme://host:port`: an Xtream login is only reused on the same server. */
+function hostPort(u: string): string {
+  try {
+    const x = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(u.trim()) ? u.trim() : "http://" + u.trim());
+    return x.origin;
+  } catch {
+    return u.trim();
+  }
 }
 
 function hostOf(u: string): string {

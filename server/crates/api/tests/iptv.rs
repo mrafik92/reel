@@ -1817,3 +1817,209 @@ async fn live_transcodes_count_against_the_transcode_limits() {
     assert_eq!(live.transcode_counts(tc_id), (1, 2));
     e.state.iptv.shutdown().await;
 }
+
+/// #15: no admin IPTV response carries the provider login, in the source URL, the guide URLs or
+/// the username, and the masked values can be sent back by an edit form without losing anything.
+#[tokio::test]
+async fn admin_source_responses_never_contain_provider_credentials() {
+    const USER: &str = "fakeuser42";
+    const PASS: &str = "fakepass42";
+    let e = env(|_| {}).await;
+    let leaks = |what: &str, v: &Value| {
+        let raw = v.to_string();
+        assert!(
+            !raw.contains(USER) && !raw.contains(PASS),
+            "{what} leaks the login: {raw}"
+        );
+    };
+    let m3u_url =
+        format!("http://127.0.0.1:9/get.php?username={USER}&password={PASS}&type=m3u_plus");
+    let guide_q = format!("http://127.0.0.1:9/xmltv.php?username={USER}&password={PASS}");
+    let guide_userinfo = format!("http://{USER}:{PASS}@127.0.0.1:9/guide.xml.gz");
+    let guide_path = format!("http://127.0.0.1:9/live/{USER}/{PASS}/guide.xml");
+    let guide_plain = "http://127.0.0.1:9/epg/plain.xml".to_string();
+    let all_guides = vec![
+        guide_q.clone(),
+        guide_userinfo.clone(),
+        guide_path.clone(),
+        guide_plain.clone(),
+    ];
+
+    let (s, m3u) = send(
+        &e.admin,
+        "POST",
+        "/api/v1/admin/iptv/sources",
+        Some(json!({"name":"Playlist","kind":"m3u","url":m3u_url,"enabled":false,"epg_urls":all_guides})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{m3u}");
+    leaks("create (m3u)", &m3u);
+    assert_eq!(
+        m3u["url"],
+        "http://127.0.0.1:9/get.php?username=***&password=***&type=m3u_plus"
+    );
+    assert_eq!(
+        m3u["epg_urls"],
+        json!([
+            "http://127.0.0.1:9/xmltv.php?username=***&password=***",
+            "http://***:***@127.0.0.1:9/guide.xml.gz",
+            "http://127.0.0.1:9/live/***/***/guide.xml",
+            guide_plain,
+        ])
+    );
+    let (s, xt) = send(
+        &e.admin,
+        "POST",
+        "/api/v1/admin/iptv/sources",
+        Some(json!({"name":"Xtream","kind":"xtream","url":"http://127.0.0.1:9","username":USER,"password":PASS,"enabled":false})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{xt}");
+    leaks("create (xtream)", &xt);
+    assert_eq!(xt["username"], "fa••••");
+    assert_eq!(xt["password_set"], true);
+    let (m3u_id, xt_id) = (m3u["id"].as_i64().unwrap(), xt["id"].as_i64().unwrap());
+    let stored = |id: i64| {
+        let db = e.state.db.clone();
+        async move {
+            sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<String>)>(
+                "SELECT url, username, password, epg_urls FROM iptv_sources WHERE id = ?",
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+
+    // every admin read of the sources
+    for uri in [
+        "/api/v1/admin/iptv/sources".to_string(),
+        format!("/api/v1/admin/iptv/sources/{m3u_id}"),
+        format!("/api/v1/admin/iptv/sources/{xt_id}"),
+        "/api/v1/admin/iptv/hub".to_string(),
+        "/api/v1/admin/iptv/sessions".to_string(),
+        "/api/v1/admin/iptv/channels".to_string(),
+        "/api/v1/admin/audit".to_string(),
+    ] {
+        let (s, v) = get(&e.admin, &uri).await;
+        assert_eq!(s, StatusCode::OK, "{uri}: {v}");
+        leaks(&uri, &v);
+    }
+
+    // an edit form sends back what it was given: everything is kept, nothing is leaked
+    let (s, v) = send(
+        &e.admin,
+        "PATCH",
+        &format!("/api/v1/admin/iptv/sources/{m3u_id}"),
+        Some(json!({"name":"Playlist 2","url":m3u["url"],"epg_urls":m3u["epg_urls"]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    leaks("patch (m3u)", &v);
+    let (url, _, _, guides) = stored(m3u_id).await;
+    assert_eq!(url, m3u_url);
+    assert_eq!(
+        serde_json::from_str::<Vec<String>>(&guides.unwrap()).unwrap(),
+        all_guides
+    );
+    // reordering and adding keep the saved entries behind the masks
+    let new_guide = "http://127.0.0.1:9/epg/new.xml";
+    let (s, v) = send(
+        &e.admin,
+        "PATCH",
+        &format!("/api/v1/admin/iptv/sources/{m3u_id}"),
+        Some(json!({"epg_urls":[new_guide, m3u["epg_urls"][1], m3u["epg_urls"][0]]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, _, _, guides) = stored(m3u_id).await;
+    assert_eq!(
+        serde_json::from_str::<Vec<String>>(&guides.unwrap()).unwrap(),
+        vec![
+            new_guide.to_string(),
+            guide_userinfo.clone(),
+            guide_q.clone()
+        ]
+    );
+    // a mask that was edited around can't be resolved: refused, nothing saved
+    for body in [
+        json!({"url":"http://127.0.0.1:9/get.php?username=***&password=***&type=m3u"}),
+        json!({"epg_urls":["http://127.0.0.1:10/xmltv.php?username=***&password=***"]}),
+    ] {
+        let (s, v) = send(
+            &e.admin,
+            "PATCH",
+            &format!("/api/v1/admin/iptv/sources/{m3u_id}"),
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{body}: {v}");
+    }
+    assert_eq!(stored(m3u_id).await.0, m3u_url);
+    // nor can a masked URL be saved or tested as a new source (the mask would reach the provider)
+    for uri in [
+        "/api/v1/admin/iptv/sources",
+        "/api/v1/admin/iptv/sources/test",
+    ] {
+        let (s, v) = send(
+            &e.admin,
+            "POST",
+            uri,
+            Some(json!({"name":"Copy","kind":"m3u","url":m3u["url"],"enabled":false})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{uri}: {v}");
+    }
+
+    // Xtream: the masked username sent back keeps the saved one
+    let (s, v) = send(
+        &e.admin,
+        "PATCH",
+        &format!("/api/v1/admin/iptv/sources/{xt_id}"),
+        Some(json!({"url":"http://127.0.0.1:9","username":"fa••••","max_connections":1})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    leaks("patch (xtream)", &v);
+    let (_, user, pass, _) = stored(xt_id).await;
+    assert_eq!((user.as_deref(), pass.as_deref()), (Some(USER), Some(PASS)));
+    // the saved login is never sent to a server the admin didn't type it for
+    let (s, v) = send(
+        &e.admin,
+        "PATCH",
+        &format!("/api/v1/admin/iptv/sources/{xt_id}"),
+        Some(json!({"url":"http://127.0.0.1:10","username":"fa••••"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert!(v.to_string().contains("username and password"), "{v}");
+    assert_eq!(stored(xt_id).await.0, "http://127.0.0.1:9");
+    let (s, v) = send(
+        &e.admin,
+        "PATCH",
+        &format!("/api/v1/admin/iptv/sources/{xt_id}"),
+        Some(json!({"url":"http://127.0.0.1:10","username":"fakeuser43","password":"fakepass43"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["username"], "fa••••");
+    assert!(!v.to_string().contains("fakeuser43") && !v.to_string().contains("fakepass43"));
+    let (url, user, pass, _) = stored(xt_id).await;
+    assert_eq!(
+        (url.as_str(), user.as_deref(), pass.as_deref()),
+        (
+            "http://127.0.0.1:10",
+            Some("fakeuser43"),
+            Some("fakepass43")
+        )
+    );
+    // a short username is masked entirely
+    sqlx::query("UPDATE iptv_sources SET username = 'abc' WHERE id = ?")
+        .bind(xt_id)
+        .execute(&e.state.db)
+        .await
+        .unwrap();
+    let (_, v) = get(&e.admin, &format!("/api/v1/admin/iptv/sources/{xt_id}")).await;
+    assert_eq!(v["username"], "••••");
+}
