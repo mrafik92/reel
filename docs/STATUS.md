@@ -60,6 +60,11 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
   browser full screen (Chrome) the speed, audio, subtitle and "Play on…" sheets open over the video, work with
   mouse and keys, and close without leaving full screen; a toast shows too. Leaving full screen with a sheet open
   keeps it open with focus inside. 1920×1080 TV mode (arrow keys, Back) is unchanged. Not checked: Safari.
+- **Settings → Playback inside the settings layout** (#88, not yet deployed). Checked 2026-11-15 with Playwright in mock
+  mode: desktop (nav kept, Playback highlighted, back/forward, prefs save in the pane), as a non-admin (rail → Settings
+  opens Playback; nav shows Playback + About; `/admin/…` says admin-only), the player sheet's "Subtitle & audio
+  preferences" link, and 1920×1080 TV mode (Right from the Playback link enters the pane, Left returns to it, up/down
+  stay on their side). Not checked live yet.
 - **Player and connection resilience** (#91, #93, #81, not yet deployed). Checked 2026-11-12 with Playwright
   (mock mode, and the new web client against the live `65bd851` server; desktop and 1920×1080 TV mode):
   - Chrome had been playing HLS with its **built-in player**, not hls.js (`canPlayType(mpegurl)` is now "maybe"

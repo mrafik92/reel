@@ -239,12 +239,15 @@ export function Shell(props: ParentProps): JSX.Element {
               </For>
             </ul>
             <div class="rail__foot">
-              <Show when={isAdmin()}>
-                <a class="rail__link" href={href("/admin")} aria-current={loc.pathname.indexOf("/admin") === 0 ? "page" : undefined}>
-                  <Icon name="gear" class="rail__icon" />
-                  <span class="rail__label">Settings</span>
-                </a>
-              </Show>
+              {/* Everyone has their own settings (Playback); admins land on the server sections (#88). */}
+              <a
+                class="rail__link"
+                href={href(isAdmin() ? "/admin" : "/settings/playback")}
+                aria-current={loc.pathname.indexOf("/admin") === 0 || loc.pathname.indexOf("/settings") === 0 ? "page" : undefined}
+              >
+                <Icon name="gear" class="rail__icon" />
+                <span class="rail__label">Settings</span>
+              </a>
               <Show when={MOCK || import.meta.env.DEV}>
                 <a class="rail__link rail__link--quiet" href={href("/dev/rings")} aria-current={loc.pathname.indexOf("/dev") === 0 ? "page" : undefined}>
                   <Icon name="layers" class="rail__icon" />
