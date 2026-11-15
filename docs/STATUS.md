@@ -71,7 +71,7 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
   opens Playback; nav shows Playback + About; `/admin/…` says admin-only), the player sheet's "Subtitle & audio
   preferences" link, and 1920×1080 TV mode (Right from the Playback link enters the pane, Left returns to it, up/down
   stay on their side). Not checked live yet.
-- **Pause and session loss** (#95, #100, #96; built and tested in CI, not deployed). A paused player keeps its
+- **Pause and session loss** (#95, #100, #96; deployed in `bc6c69b`, owner verification pending). A paused player keeps its
   converted session: it pings `paused: true` every 10 s (up to 30 min of pause), and the server gives such a session
   30 min instead of 60 s (`paused_session_*`/`an_abandoned_paused_session_*` tests). A session the server ended
   anyway is reopened at the same position, right away if playing and on the next play if paused. A recovery (reload,
@@ -85,6 +85,15 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
   included), so the server saw nothing and reaped the session. 2 of 2 runs with `--disable-quic` played past the first
   minute. The transport is #108 (owner decision at Caddy); the player now reopens the session once the connection
   is back, and a stall's error says whether a segment is stuck in flight.
+  Live on `bc6c69b` (2026-11-15, Playwright, Chrome over Tailscale, The Mongoose from 85 s; desktop and 1920×1080
+  TV mode with arrow keys and Enter): over TCP (`--disable-quic`), a 5.5 min pause sent 33 `paused: true` pings
+  10 s apart, the session stayed on the server the whole time (no reap), the video stayed on the same frame and
+  resumed from it on play; with its session ended while paused it stayed paused without an error, and play opened
+  a new session at the same spot. Over HTTP/3 the same start wedged again (`segment 9 requested … ago and still
+  loading` while the segment was ready on the server), and the automatic reopen's `decide` hung on the same
+  connection ("Can't reach your Reel server"): that's #108, not fixable in the app. The stall message after a
+  rebuild reported the old pipeline's last segment; it now reports the rebuilt player's own state (playlist in
+  flight, or nothing since the restart).
 - **Player and connection resilience** (#91, #93, #81, not yet deployed). Checked 2026-11-12 with Playwright
   (mock mode, and the new web client against the live `65bd851` server; desktop and 1920×1080 TV mode):
   - Chrome had been playing HLS with its **built-in player**, not hls.js (`canPlayType(mpegurl)` is now "maybe"

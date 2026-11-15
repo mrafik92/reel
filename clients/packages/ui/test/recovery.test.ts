@@ -257,6 +257,21 @@ describe("HlsJsAdapter stall diagnostics (#96)", () => {
     expect(a.stallDetails(31_000)).toBe("stalled at 105.5 s: segment 12 requested 24 s ago and still loading");
     a.destroy();
   });
+
+  test("a rebuilt player reports its own state, not the previous pipeline's (live run on bc6c69b)", async () => {
+    const v = playableVideo();
+    const a = new HlsJsAdapter(v as unknown as HTMLVideoElement);
+    const priv = a as unknown as { fragLoadedAt: number; playlistLoading?: { what: string; at: number }; attachedAt: number };
+    priv.fragLoadedAt = 1000; // a segment arrived on the old pipeline…
+    await a.load("http://s/stream/x.mp4", { startPositionSec: 86 }); // …then the player was rebuilt
+    expect(priv.fragLoadedAt).toBe(0);
+    v.currentTime = 0;
+    priv.attachedAt = 5000;
+    expect(a.stallDetails(30_000)).toBe("stalled at 0.0 s: no segment arrived since the player was (re)started 25 s ago");
+    priv.playlistLoading = { what: "the playlist", at: 10_000 };
+    expect(a.stallDetails(30_000)).toBe("stalled at 0.0 s: the playlist requested 20 s ago and still loading");
+    a.destroy();
+  });
 });
 
 describe("prefersNativeHls", () => {

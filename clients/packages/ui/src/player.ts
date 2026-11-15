@@ -162,6 +162,9 @@ export class HlsJsAdapter implements PlayerAdapter {
   /** The segment hls.js is fetching and since when; when the last one arrived (stall diagnostics). */
   private fragLoading?: { sn: number | string; at: number };
   private fragLoadedAt = 0;
+  /** A playlist request in flight, and when the current pipeline was built (stall diagnostics). */
+  private playlistLoading?: { what: string; at: number };
+  private attachedAt = 0;
 
   /** `maxAttempts`: recovery attempts before a fatal `error` (default 8). */
   constructor(private video: HTMLVideoElement, o: { maxAttempts?: number } = {}) {
@@ -224,7 +227,11 @@ export class HlsJsAdapter implements PlayerAdapter {
   private async attach(start: number | undefined): Promise<void> {
     this.hls?.destroy();
     this.hls = undefined;
+    // Diagnostics describe this pipeline only: a rebuild starts with nothing loaded.
     this.fragLoading = undefined;
+    this.fragLoadedAt = 0;
+    this.playlistLoading = undefined;
+    this.attachedAt = Date.now();
     const v = this.video;
     const url = this.url;
     const isHls = /\.m3u8(\?|$)/.test(url);
@@ -263,6 +270,13 @@ export class HlsJsAdapter implements PlayerAdapter {
         this.fragLoading = undefined;
         this.fragLoadedAt = Date.now();
       });
+      const playlist = (what: string | undefined) => () => {
+        if (hls === this.hls) this.playlistLoading = what ? { what, at: Date.now() } : undefined;
+      };
+      hls.on(Hls.Events.MANIFEST_LOADING, playlist("the playlist"));
+      hls.on(Hls.Events.MANIFEST_LOADED, playlist(undefined));
+      hls.on(Hls.Events.LEVEL_LOADING, playlist("the media playlist"));
+      hls.on(Hls.Events.LEVEL_LOADED, playlist(undefined));
       hls.loadSource(url);
       hls.attachMedia(v);
     } else {
@@ -369,7 +383,9 @@ export class HlsJsAdapter implements PlayerAdapter {
     const s = (ms: number) => `${Math.round(ms / 1000)} s`;
     const base = `stalled at ${this.video.currentTime.toFixed(1)} s`;
     if (this.fragLoading) return `${base}: segment ${this.fragLoading.sn} requested ${s(now - this.fragLoading.at)} ago and still loading`;
+    if (this.playlistLoading) return `${base}: ${this.playlistLoading.what} requested ${s(now - this.playlistLoading.at)} ago and still loading`;
     if (this.fragLoadedAt) return `${base}: no segment requested since one arrived ${s(now - this.fragLoadedAt)} ago`;
+    if (this.attachedAt) return `${base}: no segment arrived since the player was (re)started ${s(now - this.attachedAt)} ago`;
     return `${base}: no data`;
   }
   private clearStall(): void {
