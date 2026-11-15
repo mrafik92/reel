@@ -51,9 +51,17 @@ CT 113:  Actions → deploy → Run workflow  (runner CT 116 → ssh forced comm
   and ffmpeg version, into `server/target/tmp/reel-fixtures` (shared by all tests of a build; each test gets
   its own copy). CI keeps that directory in an Actions cache (`reel-fixtures-…`, saved from `main` only,
   unused fixtures pruned before saving) and removes it from `target/` so the Rust cache doesn't carry it.
+- ffmpeg's `.deb`s are cached per runner image (`apt-ffmpeg-<ImageOS>-<ImageVersion>`, saved from `main`)
+  and installed with `dpkg -i`, falling back to `apt-get` on a miss or any error. The OpenAPI check runs
+  `target/debug/export-openapi`, which the test build already linked (`cargo run` would rebuild with the
+  non-test feature set).
+- No sccache: it can only cache the workspace library crates (~25 s of compile; `reel-api`, the biggest,
+  changes in most PRs). Test binaries and linking, the other ~95 s, can't be cached, and dependencies
+  already come from the Rust cache.
 - `image.yml` keeps its Docker layer cache in the registry (`ghcr.io/mrafik92/reel:buildcache`), not the
-  Actions cache, so it can't evict the Rust cache (10 GB repo limit).
-- Not done yet (#73): caching the ffmpeg apt install, sccache.
+  Actions cache, so it can't evict the Rust cache (10 GB repo limit). The Dockerfile builds dependencies
+  with cargo-chef in their own layer, keyed by `Cargo.toml`/`Cargo.lock` only, so a server change rebuilds
+  just the workspace crates. BuildKit cache mounts don't help there, because each runner starts empty.
 - Server changes take ~10 min to build; web-only changes take ~1 min (cached Rust layer).
 - `image.yml` cancels in-flight builds on new pushes, so wait for the **latest** run.
 - Deploy (from the Mac):

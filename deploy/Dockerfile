@@ -24,13 +24,21 @@ ARG BUILD_DATE
 RUN cd apps/web && VITE_GIT_SHA="$GIT_SHA" VITE_BUILD_DATE="$BUILD_DATE" bun run build
 
 # ── 2. server ───────────────────────────────────────────────────────────────────────────────────
-FROM rust:${RUST_VERSION}-bookworm AS build
+# cargo-chef: the dependencies are built in their own layer, keyed only by Cargo.toml/Cargo.lock (the
+# "recipe"), so CI's registry layer cache reuses them until a dependency changes. BuildKit cache
+# mounts can't do that on CI: they live on the builder, and every GitHub runner starts empty.
+FROM lukemathwalker/cargo-chef:0.1.71-rust-${RUST_VERSION}-bookworm AS chef
 WORKDIR /src
+
+FROM chef AS planner
 COPY server/ ./
-# BuildKit cache mounts keep the registry + target dir between builds.
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p reel-api --bin reel-server \
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS build
+COPY --from=planner /src/recipe.json recipe.json
+RUN cargo chef cook --release --locked -p reel-api --bin reel-server --recipe-path recipe.json
+COPY server/ ./
+RUN cargo build --release --locked -p reel-api --bin reel-server \
     && strip target/release/reel-server \
     && cp target/release/reel-server /reel-server
 
