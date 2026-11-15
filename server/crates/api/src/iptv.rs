@@ -15,7 +15,6 @@ use reel_iptv::{
 use reel_playback::DeviceProfile;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::{
@@ -26,7 +25,6 @@ use crate::{
 
 const LOGO_TTL: i64 = 2 * 86_400;
 const LOGO_QUANTUM: i64 = 86_400;
-const MAX_LOGO_BYTES: usize = 2 * 1024 * 1024;
 
 fn now() -> i64 {
     reel_auth::signing::now_unix()
@@ -710,32 +708,9 @@ pub async fn live_file(
 
 // ───────────────────────── logos ─────────────────────────
 
-fn sniff_image(b: &[u8]) -> Option<&'static str> {
-    match b {
-        [0x89, b'P', b'N', b'G', ..] => Some("image/png"),
-        [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),
-        [b'G', b'I', b'F', b'8', ..] => Some("image/gif"),
-        [
-            b'R',
-            b'I',
-            b'F',
-            b'F',
-            _,
-            _,
-            _,
-            _,
-            b'W',
-            b'E',
-            b'B',
-            b'P',
-            ..,
-        ] => Some("image/webp"),
-        _ => None,
-    }
-}
-
 /// Download (once) and cache a remote image: SSRF rules of channel logos apply (private targets
-/// refused unless `allow_private_logo_fetch`), size-capped, only real images are served.
+/// refused unless `allow_private_logo_fetch`); size, time and disk budgets and single-flight are
+/// in [`crate::remote_images`]. Only real images are served.
 pub(crate) async fn fetch_image_cached(
     st: &AppState,
     url: &str,
@@ -744,41 +719,10 @@ pub(crate) async fn fetch_image_cached(
     if reel_iptv::net::check_url(url, st.config.allow_private_logo_fetch).is_err() {
         return Err(ApiError::NotFound);
     }
-    let key: String = Sha256::digest(url.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    let dir = st.config.data_dir.join("iptv").join(cache_dir);
-    let file = dir.join(&key);
-    let bytes = match tokio::fs::read(&file).await {
-        Ok(b) => b,
-        Err(_) => {
-            let resp = st
-                .iptv
-                .logo_http
-                .get(url)
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await
-                .map_err(|_| ApiError::NotFound)?;
-            if !resp.status().is_success()
-                || resp
-                    .content_length()
-                    .is_some_and(|l| l as usize > MAX_LOGO_BYTES)
-            {
-                return Err(ApiError::NotFound);
-            }
-            let b = resp.bytes().await.map_err(|_| ApiError::NotFound)?;
-            if b.len() > MAX_LOGO_BYTES || sniff_image(&b).is_none() {
-                return Err(ApiError::NotFound);
-            }
-            let _ = tokio::fs::create_dir_all(&dir).await;
-            let _ = tokio::fs::write(&file, &b).await;
-            b.to_vec()
-        }
-    };
-    let ct = sniff_image(&bytes).ok_or(ApiError::NotFound)?;
-    Ok((bytes, ct))
+    st.remote_images
+        .get(&st.iptv.logo_http, url, cache_dir)
+        .await
+        .ok_or(ApiError::NotFound)
 }
 
 /// Channel logo, fetched once from the provider and cached on disk.

@@ -1,6 +1,7 @@
 //! Metadata: TMDB client, matching, enrichment (TMDB + `.nfo`/local art), image cache.
 
 pub mod enricher;
+pub mod fetch;
 pub mod images;
 pub mod matcher;
 pub mod nfo;
@@ -25,10 +26,23 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("image error: {0}")]
     Image(#[from] image::ImageError),
+    /// An upstream answer that won't be accepted however often it is retried (too large, not
+    /// an image).
+    #[error("rejected: {0}")]
+    Rejected(String),
     #[error("item {0} not found")]
     ItemNotFound(i64),
     #[error("{0}")]
     Other(String),
+}
+
+impl From<fetch::FetchError> for Error {
+    fn from(e: fetch::FetchError) -> Self {
+        match e {
+            fetch::FetchError::Http(e) => Error::Http(e),
+            e => Error::Other(e.to_string()),
+        }
+    }
 }
 
 impl From<reqwest::Error> for Error {

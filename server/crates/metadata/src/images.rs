@@ -3,18 +3,34 @@
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
-use dashmap::DashMap;
 use image::{ImageEncoder, codecs::jpeg::JpegEncoder, imageops::FilterType};
-use tokio::sync::Mutex;
 
-use crate::{Error, Result};
+use crate::{
+    Error, Result,
+    fetch::{
+        DiskBudget, FAIL_TTL_PERMANENT, FAIL_TTL_TRANSIENT, FailCache, FetchError, SingleFlight,
+        read_capped, touch, write_atomic,
+    },
+};
 
 pub const DEFAULT_IMAGE_BASE: &str = "https://image.tmdb.org/t/p/original";
 /// Allowed output widths. Anything above the largest means "original".
 pub const WIDTHS: &[u32] = &[92, 185, 342, 500, 780, 1280];
 const JPEG_QUALITY: u8 = 85;
+/// Largest TMDB original we download (the biggest real one is ~4 MB).
+pub const MAX_REMOTE_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+/// Wall-clock limit for one TMDB download, body included.
+pub const REMOTE_IMAGE_DEADLINE: Duration = Duration::from_secs(30);
+/// Default disk budget of the image cache (`image_cache_max_mb`).
+pub const DEFAULT_CACHE_MAX_BYTES: u64 = 4096 * 1024 * 1024;
+/// Most files kept in the image cache, whatever their size.
+pub const CACHE_MAX_FILES: u64 = 200_000;
+/// Decoder limits for resizing: no side over 16k px, no more than 512 MiB of pixels.
+const MAX_DECODE_SIDE: u32 = 16_384;
+const MAX_DECODE_ALLOC: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageKind {
@@ -44,12 +60,18 @@ pub fn clamp_width(w: u32) -> Option<u32> {
     WIDTHS.iter().copied().find(|a| *a >= w)
 }
 
+/// Disk cache of TMDB images. Downloads are size- and time-capped, concurrent requests for one
+/// file collapse into one download or resize, recent failures are remembered for a while, and
+/// the directory is kept under a disk budget (least recently used files go first).
 #[derive(Debug, Clone)]
 pub struct ImageCache {
     root: PathBuf,
     base: String,
     http: reqwest::Client,
-    locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
+    flights: Arc<SingleFlight>,
+    failures: Arc<FailCache>,
+    budget: Arc<DiskBudget>,
+    max_bytes: u64,
 }
 
 impl ImageCache {
@@ -59,15 +81,50 @@ impl ImageCache {
     }
 
     pub fn with_base_url(data_dir: &Path, base: impl Into<String>) -> Self {
+        let root = data_dir.join("images");
         Self {
-            root: data_dir.join("images"),
+            budget: Arc::new(DiskBudget::new(
+                vec![root.clone()],
+                DEFAULT_CACHE_MAX_BYTES,
+                CACHE_MAX_FILES,
+            )),
+            root,
             base: base.into().trim_end_matches('/').to_string(),
             http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(REMOTE_IMAGE_DEADLINE)
                 .build()
                 .expect("reqwest client"),
-            locks: Arc::new(DashMap::new()),
+            flights: Arc::default(),
+            failures: Arc::default(),
+            max_bytes: MAX_REMOTE_IMAGE_BYTES,
         }
+    }
+
+    /// Disk budget for the whole cache (originals and resized copies); `0` = unlimited.
+    pub fn with_budget(mut self, max_bytes: u64, max_files: u64) -> Self {
+        self.budget = Arc::new(DiskBudget::new(
+            vec![self.root.clone()],
+            max_bytes,
+            max_files,
+        ));
+        self
+    }
+
+    /// Largest original accepted from TMDB.
+    pub fn with_max_download(mut self, max_bytes: u64) -> Self {
+        self.max_bytes = max_bytes;
+        self
+    }
+
+    /// The budget, for maintenance and tests.
+    pub fn budget(&self) -> &DiskBudget {
+        &self.budget
+    }
+
+    /// Keys being downloaded or resized right now.
+    pub fn in_flight(&self) -> usize {
+        self.flights.in_flight()
     }
 
     /// Return a cached file for a TMDB `source` (`/abc.jpg`) at `width`. Width is
@@ -98,10 +155,10 @@ impl ImageCache {
             .join(kind.as_str())
             .join(format!("{name}.jpg"));
         if out.exists() {
+            touch(&out).await;
             return Ok(out);
         }
-        let lock = self.lock_for(out.to_string_lossy().into_owned());
-        let _g = lock.lock().await;
+        let _g = self.flights.lock(&out.to_string_lossy()).await;
         if out.exists() {
             return Ok(out);
         }
@@ -110,14 +167,13 @@ impl ImageCache {
             .await
             .map_err(|e| Error::Other(e.to_string()))?;
         match res? {
-            true => Ok(out),
+            Some(size) => {
+                self.budget.added(size).await;
+                Ok(out)
+            }
             // Source already narrower than requested: serve original.
-            false => Ok(orig),
+            None => Ok(orig),
         }
-    }
-
-    fn lock_for(&self, key: String) -> Arc<Mutex<()>> {
-        self.locks.entry(key).or_default().clone()
     }
 
     async fn original(&self, kind: ImageKind, source: &str, roots: &[PathBuf]) -> Result<PathBuf> {
@@ -130,21 +186,56 @@ impl ImageCache {
             .join(kind.as_str())
             .join(file_key(source));
         if path.exists() {
+            touch(&path).await;
             return Ok(path);
         }
-        let lock = self.lock_for(path.to_string_lossy().into_owned());
-        let _g = lock.lock().await;
+        let key = path.to_string_lossy().into_owned();
+        let _g = self.flights.lock(&key).await;
+        // whoever held the key before us may have fetched it, or failed
         if path.exists() {
             return Ok(path);
         }
+        if let Some(f) = self.failures.get(&key) {
+            return Err(match f.status {
+                Some(s) => Error::Status(s),
+                None => Error::Rejected("image fetch failed recently".into()),
+            });
+        }
+        match self.download(source).await {
+            Ok(bytes) => {
+                write_atomic(&path, &bytes).await?;
+                self.budget.added(bytes.len() as u64).await;
+                Ok(path)
+            }
+            Err(e) => {
+                let (status, ttl) = match &e {
+                    Error::Status(s) if (400..500).contains(s) => (Some(*s), FAIL_TTL_PERMANENT),
+                    Error::Status(s) => (Some(*s), FAIL_TTL_TRANSIENT),
+                    Error::Rejected(_) => (None, FAIL_TTL_PERMANENT),
+                    _ => (None, FAIL_TTL_TRANSIENT),
+                };
+                self.failures.put(&key, status, ttl);
+                Err(e)
+            }
+        }
+    }
+
+    async fn download(&self, source: &str) -> Result<Vec<u8>> {
         let url = format!("{}/{}", self.base, source.trim_start_matches('/'));
         let resp = self.http.get(url).send().await?;
         if !resp.status().is_success() {
             return Err(Error::Status(resp.status().as_u16()));
         }
-        let bytes = resp.bytes().await?;
-        write_atomic(&path, &bytes).await?;
-        Ok(path)
+        let bytes = read_capped(resp, self.max_bytes, REMOTE_IMAGE_DEADLINE)
+            .await
+            .map_err(|e| match e {
+                FetchError::TooLarge(_) => Error::Rejected(e.to_string()),
+                e => e.into(),
+            })?;
+        if !is_image_magic(&bytes) {
+            return Err(Error::Rejected("not a JPEG/PNG/WebP file".into()));
+        }
+        Ok(bytes)
     }
 }
 
@@ -220,22 +311,19 @@ fn sanitize(s: &str) -> String {
         .to_string()
 }
 
-async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    if let Some(d) = path.parent() {
-        tokio::fs::create_dir_all(d).await?;
-    }
-    let tmp = path.with_extension("tmp");
-    tokio::fs::write(&tmp, bytes).await?;
-    tokio::fs::rename(&tmp, path).await?;
-    Ok(())
-}
-
-/// Resize `src` to width `w` (Lanczos3, JPEG q85). Returns false (nothing
-/// written) when the source is not wider than `w`.
-fn resize_to(src: &Path, dst: &Path, w: u32) -> Result<bool> {
-    let img = image::open(src)?;
+/// Resize `src` to width `w` (Lanczos3, JPEG q85). Returns the written size, or `None`
+/// (nothing written) when the source is not wider than `w`. Decoding is bounded by
+/// [`MAX_DECODE_SIDE`] and [`MAX_DECODE_ALLOC`] (a small file can claim huge dimensions).
+fn resize_to(src: &Path, dst: &Path, w: u32) -> Result<Option<u64>> {
+    let mut reader = image::ImageReader::open(src)?.with_guessed_format()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_DECODE_SIDE);
+    limits.max_image_height = Some(MAX_DECODE_SIDE);
+    limits.max_alloc = Some(MAX_DECODE_ALLOC);
+    reader.limits(limits);
+    let img = reader.decode()?;
     if img.width() <= w {
-        return Ok(false);
+        return Ok(None);
     }
     let h = ((img.height() as f64) * (w as f64) / (img.width() as f64))
         .round()
@@ -244,7 +332,9 @@ fn resize_to(src: &Path, dst: &Path, w: u32) -> Result<bool> {
     if let Some(d) = dst.parent() {
         std::fs::create_dir_all(d)?;
     }
-    let tmp = dst.with_extension("tmp");
+    let mut name = dst.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}.tmp", std::process::id()));
+    let tmp = dst.with_file_name(name);
     {
         let f = std::fs::File::create(&tmp)?;
         JpegEncoder::new_with_quality(std::io::BufWriter::new(f), JPEG_QUALITY).write_image(
@@ -254,8 +344,9 @@ fn resize_to(src: &Path, dst: &Path, w: u32) -> Result<bool> {
             image::ExtendedColorType::Rgb8,
         )?;
     }
+    let size = std::fs::metadata(&tmp)?.len();
     std::fs::rename(&tmp, dst)?;
-    Ok(true)
+    Ok(Some(size))
 }
 
 #[cfg(test)]
@@ -310,6 +401,166 @@ mod tests {
         // wider than source → original
         let big = c.get(ImageKind::Poster, "/abc.jpg", 1280).await.unwrap();
         assert_eq!(big, orig);
+    }
+
+    #[tokio::test]
+    async fn concurrent_fetches_collapse_into_one() {
+        let s = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/slow.jpg"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(jpeg_bytes(400, 600))
+                    .set_delay(Duration::from_millis(200)),
+            )
+            .expect(1)
+            .mount(&s)
+            .await;
+        // a missing image: the failure is shared too, not retried by every waiter
+        Mock::given(method("GET"))
+            .and(path("/missing.jpg"))
+            .respond_with(ResponseTemplate::new(404).set_delay(Duration::from_millis(100)))
+            .expect(1)
+            .mount(&s)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let c = ImageCache::with_base_url(dir.path(), s.uri());
+        let mut tasks = vec![];
+        for i in 0..16u32 {
+            let c = c.clone();
+            tasks.push(tokio::spawn(async move {
+                let w = [0, 185, 342][(i % 3) as usize];
+                (
+                    c.get(ImageKind::Poster, "/slow.jpg", w).await.is_ok(),
+                    c.get(ImageKind::Poster, "/missing.jpg", w).await,
+                )
+            }));
+        }
+        for t in tasks {
+            let (ok, missing) = t.await.unwrap();
+            assert!(ok);
+            assert!(matches!(missing, Err(Error::Status(404))));
+        }
+        assert_eq!(c.in_flight(), 0, "no lock entries left behind");
+        // MockServer verifies `expect(1)` on drop
+    }
+
+    #[tokio::test]
+    async fn oversized_and_non_image_originals_are_refused() {
+        let s = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/huge.jpg"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0xFF; 64 * 1024]))
+            .expect(1)
+            .mount(&s)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/page.jpg"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>nope</html>"))
+            .expect(1)
+            .mount(&s)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let c = ImageCache::with_base_url(dir.path(), s.uri()).with_max_download(16 * 1024);
+        for p in ["/huge.jpg", "/page.jpg"] {
+            // asked twice: the second answer comes from the failure memory
+            for _ in 0..2 {
+                assert!(matches!(
+                    c.get(ImageKind::Poster, p, 0).await,
+                    Err(Error::Rejected(_))
+                ));
+            }
+        }
+        let orig = dir.path().join("images").join("orig").join("poster");
+        let left = std::fs::read_dir(&orig).map(|d| d.count()).unwrap_or(0);
+        assert_eq!(left, 0, "nothing written for refused downloads");
+    }
+
+    #[tokio::test]
+    async fn cache_stays_under_its_disk_budget() {
+        let s = MockServer::start().await;
+        let img = jpeg_bytes(300, 450);
+        let size = img.len() as u64;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(img))
+            .mount(&s)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let budget = size * 5;
+        let c = ImageCache::with_base_url(dir.path(), s.uri()).with_budget(budget, 1000);
+        // make the budget delete without waiting for the default grace period
+        let c = ImageCache {
+            budget: Arc::new(
+                DiskBudget::new(vec![dir.path().join("images")], budget, 1000)
+                    .with_grace(Duration::ZERO),
+            ),
+            ..c
+        };
+        for i in 0..20 {
+            c.get(ImageKind::Poster, &format!("/p{i}.jpg"), 0)
+                .await
+                .unwrap();
+        }
+        let mut used = 0;
+        let mut n = 0;
+        for e in walkdir(&dir.path().join("images")) {
+            used += std::fs::metadata(&e).unwrap().len();
+            n += 1;
+        }
+        assert!(used <= budget, "cache uses {used} > budget {budget}");
+        assert!((1..=5).contains(&n), "{n} files kept");
+        // the newest download is still there
+        assert!(dir.path().join("images/orig/poster/p19.jpg").exists());
+    }
+
+    fn walkdir(d: &Path) -> Vec<PathBuf> {
+        let mut out = vec![];
+        for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(walkdir(&p));
+            } else {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn decoder_refuses_absurd_dimensions() {
+        // a valid PNG header that claims 100000 x 100000 pixels
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("bomb.png");
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[0u8; 3], 1, 1, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        // patch width/height in the IHDR chunk (bytes 16..24) and fix its CRC
+        png[16..20].copy_from_slice(&100_000u32.to_be_bytes());
+        png[20..24].copy_from_slice(&100_000u32.to_be_bytes());
+        let crc = crc32(&png[12..29]);
+        png[29..33].copy_from_slice(&crc.to_be_bytes());
+        std::fs::write(&src, &png).unwrap();
+        let r = resize_to(&src, &dir.path().join("out.jpg"), 185);
+        assert!(
+            matches!(r, Err(Error::Image(image::ImageError::Limits(_)))),
+            "{r:?}"
+        );
+    }
+
+    fn crc32(data: &[u8]) -> u32 {
+        let mut c = 0xFFFF_FFFFu32;
+        for &b in data {
+            c ^= u32::from(b);
+            for _ in 0..8 {
+                c = if c & 1 != 0 {
+                    (c >> 1) ^ 0xEDB8_8320
+                } else {
+                    c >> 1
+                };
+            }
+        }
+        !c
     }
 
     #[tokio::test]
