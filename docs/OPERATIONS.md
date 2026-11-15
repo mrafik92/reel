@@ -10,7 +10,7 @@
 | Reel container | Proxmox `minix` → **CT 113** (`plex`, 10.10.10.207) | `/root/reel/docker-compose.yml` + `.env` (root-only). Shares the iGPU (`/dev/dri`) and the read-only media mount with Plex |
 | Data | CT 113 `/opt/appdata/reel` → container `/appdata` | `reel.db` (SQLite WAL), `signing.key`, image/transcode caches. Owned by uid 1000 (the container's `reel` user); Reel keeps the dir `0700` and the key and DB files `0600` (tightened at startup, #14), so other readers need uid 1000 or root |
 | Media | `/mnt/media/media` → container `/data` (ro) | Same paths as Radarr/Sonarr (`/data/media/...`), so webhooks need no path mapping |
-| TLS / name | Caddy **CT 107** (10.10.10.73), LAN block `*.rafikii.co` → `@reel host reel.rafikii.co` → `10.10.10.207:8420` (`flush_interval -1`) | LAN only. Backups: `/etc/caddy/Caddyfile.pre-reel-*` |
+| TLS / name | Caddy **CT 107** (10.10.10.73, Caddy 2.11.7 + `dns.providers.cloudflare` only), LAN block `*.rafikii.co` on :443 → `@reel host reel.rafikii.co` → `10.10.10.207:8420` (`flush_interval -1`) | LAN only. Backups: `/etc/caddy/Caddyfile.pre-reel-*`. CT 107 also has a **public listener :8443** (WAN TCP/443 is DNATed there) for immich, ha and plex; Reel has no site on it yet. Ready-to-apply Reel edge: [`deploy/ct107/reel.caddy`](../deploy/ct107/reel.caddy), runbook [below](#public-edge-caddy-ct-107) |
 | DNS | Technitium `10.10.10.2` zone `reel.rafikii.co` → A `10.10.10.73` | API token at `/root/.technitium-token` on minix |
 | Arr stack | **CT 105** (10.10.10.122): Radarr :7878, Sonarr :8989, Sonarr Anime :8990, Prowlarr :9696, qBittorrent :8200 | Each Arr has a "Reel" webhook connection. Compose: `/mnt/stacks/docker-compose-{vpn,media}.yaml` (project `mediastack`). **Only Prowlarr** runs inside gluetun's network namespace (Proton WireGuard, NL); Radarr/Sonarr reach it at `10.10.10.122:9696`. qBittorrent has been on the plain `mediastack` network (direct WAN) since 2026-10-30, a temporary exception the owner asked for (see the comment in the compose file) |
 | Firewall | CT 113 Proxmox firewall drops LAN egress apart from the Arr ports and **qBittorrent :8200** (added for Reel) | Backup: `/root/113.fw.bak-*` |
@@ -75,6 +75,9 @@ Backlog → To do → Implementing → Reviewing → **Deployed** (automatic, `d
 | `REEL_ALLOW_DIRECT_LIVE` | unset (`false`) | Lets devices play Live TV straight from the provider (opt-in per device). Turning it on sends the provider login (it is part of the stream URL) to those devices. On CT 113 it goes in `/root/reel/.env` (the compose loads it with `env_file`) |
 | `REEL_TRUST_PROXY_HEADERS` | `true` | Trust XFF from private-range peers (Caddy) |
 | `REEL_MAX_TRANSCODES` / `REEL_MAX_USER_TRANSCODES` | `3` / `2` | Transcode caps, shared by playback and live TV: a live channel whose video is re-encoded counts once per viewer for the user and once per channel server-wide |
+| `REEL_TRUST_PROXY_HEADERS` | `true` | Deprecated: believes `X-Forwarded-For` from **any** private-range peer, so any LAN host can choose its client IP. Logs a warning at startup. Replace it with `REEL_TRUSTED_PROXIES` before going public (runbook step 1) |
+| `REEL_TRUSTED_PROXIES` | unset | Proxies whose `X-Forwarded-For` is believed: `10.10.10.73` (comma-separated for more). The client is the right-most XFF entry that isn't a trusted proxy. The plain spelling needs this PR's build; older builds only take `[10.10.10.73]` and fail to start on the plain one |
+| `REEL_MAX_TRANSCODES` / `REEL_MAX_USER_TRANSCODES` | `3` / `2` | Transcode caps |
 | `REEL_ALLOW_PRIVATE_FETCH` / `..._LOGO_FETCH` | `true` / `false` | SSRF policy (playlists/EPG may be LAN; logos never) |
 | `REEL_IMAGE_CACHE_MAX_MB` / `REEL_IPTV_IMAGE_CACHE_MAX_MB` | unset (`4096` / `1024`) | Disk budgets of the TMDB image cache (`/appdata/images`) and the IPTV logo + VOD image caches (`/appdata/iptv/{logos,vod-images}`). Beyond them the least recently used files are deleted (log line `image cache over budget`). `0` = unlimited. Live sizes on 2026-11-15: 772 MB and 62 MB |
 | `REEL_CAST_DISCOVERY` | unset (`true`) | DLNA SSDP discovery every minute. `false` = only TVs added by IP (Settings or `POST /api/v1/admin/cast/devices`) are used; they are kept in `/appdata/cast_devices.json`. Discovered TVs must answer from the same IP their description and control URLs use (#12) |
@@ -105,6 +108,9 @@ To debug decisions, Settings → Now playing shows each session's mode, reasons,
 6. A paused converted (transcode/remux) session stays for 30 min after its last "paused" ping; others are reaped
    after 60 s without requests or pings (`reaping idle playback session` in the logs). The web player reopens a
    reaped session by itself at the same position.
+   HTTP/3 (Caddy Alt-Svc); `ERR_QUIC_PROTOCOL_ERROR` / status-0 responses point at QUIC over the 1280-byte MTU
+   (#108). The fix (Reel's LAN handler sends `Alt-Svc: clear`) is ready in `deploy/ct107/reel.caddy` PIECE 3,
+   waiting for the owner to apply it.
 
 **Live TV stops or freezes**
 Browser live HLS keeps a 30 s window (2 s segments) plus ~20 s of rotated-out segments on disk (`hls.rs`,
@@ -160,3 +166,129 @@ the container (`sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' /config/config.xml`)
 
 **Bootstrap a fresh instance**
 `deploy/ct113/bootstrap.py` (on minix) creates the admin, libraries, Arr servers and webhooks. It's idempotent and never prints keys.
+
+## Public edge (Caddy CT 107)
+
+**Status: prepared, not applied** (#31, #108). Reel is still LAN + Tailscale only. Going public is #32 and
+waits for the M2 security tickets (#9, #12–#15, #28, then the re-review #16). Every step below changes
+infrastructure, so the owner approves and applies it (AGENTS.md §5).
+
+**Why:** abroad, the owner's mobile carrier throttles Tailscale's UDP to ~3–6 Mbit/s, while plain HTTPS
+gets ~47 Mbit/s.
+
+### Design
+
+```
+internet ──TCP 443──► OPNsense WAN (DNAT, exists) ──► Caddy CT 107 :8443 ──► Reel CT 113 :8420
+LAN / Tailscale ──► Technitium: reel.rafikii.co = 10.10.10.73 ──► Caddy :443 (LAN block, unchanged access)
+```
+
+- **Cloudflare DNS-only (grey cloud)**, like immich and plex today. Reasons are in ARCHITECTURE A39. The
+  public A record is the home IP `85.144.240.8`; no AAAA (CT 107/113 have no global IPv6).
+- **Same name, two doors.** Technitium keeps answering `10.10.10.73` on the LAN and to Tailscale clients,
+  so they keep the full app, admin included. Only clients that resolve the public record get the
+  restricted `:8443` site.
+- **Blocked on the public site** (403 JSON `{"error": …}` from Caddy): `/api/v1/admin/*`, `/api/v1/setup`
+  except `GET` (the web app reads `needs_setup` on every anonymous load; blocking it shows "Can't reach
+  your Reel server"), `/api/v1/webhooks/*` and `/api/v1/cast/*`. **What stops working from outside:** every
+  server section of Settings (Users, Invites, Libraries, Live TV, Requests setup, Now playing, Audit),
+  "Play on…" to home TVs, and first-run setup. Playback, Live TV, requests, invites (`/invite/…`), personal
+  Settings → Playback and the `/events` socket all work. Admin work stays on the LAN or Tailscale.
+- **Client IP.** Caddy's `:8443` has no `trusted_proxies`, so `{client_ip}` is the TCP peer, and Caddy
+  **overwrites** `X-Forwarded-For` / `X-Real-IP` with it and drops `Forwarded`. Reel believes those headers
+  only from `10.10.10.73` (`REEL_TRUSTED_PROXIES`). Proven by `edge_*` tests in
+  `server/crates/api/tests/security.rs`: no header combination from an internet client opens the LAN-only
+  setup, and a spoofed prefix doesn't escape the login lockout.
+- **Headers:** HSTS, CSP (**report-only** first), Permissions-Policy (only features Reel never uses),
+  no `Server`, `Alt-Svc: clear`. Reel adds `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`.
+- **HTTP/3 (#108):** off on `:8443` (`servers :8443 { protocols h1 h2 }`; UDP 8443 is not forwarded
+  anyway). On the LAN `:443`, Caddy can't turn h3 off per site, so Reel's handler sends `Alt-Svc: clear`
+  instead of `h3=":443"`, which also clears the 30-day h3 entry browsers cached.
+- **Rate limits:** CT 107's Caddy has **no** `caddy-ratelimit` and no CrowdSec. OPNsense runs CrowdSec
+  (`os-crowdsec`, firewall bouncer, community blocklists `crowdsec_blocklists`) but it doesn't read Caddy's
+  logs. Reel's own lockout (per IP with /64 buckets, per (user, IP), exponential) covers login once client
+  IPs are real. Caddy rate limiting is optional (commented block in the snippet; needs
+  `caddy add-package github.com/mholt/caddy-ratelimit`).
+- **Logs:** `import public-access-log reel` → `/var/lib/caddy/logs/reel-public-access.json`, with URIs and
+  headers deleted (signed URLs, tokens and tickets never reach disk).
+
+The snippet was checked locally with Caddy 2.11.7 (same as CT 107): `caddy validate`, the blocked and
+allowed paths (also `/API/V1/ADMIN`, `%61dmin`, `//admin`, `./`, `../`, `admin%2F`), header overwriting,
+no UDP listener on :8443, `Alt-Svc: clear` on an h3-enabled listener, and the access-log filter. The CSP
+was checked **enforced** in Chromium: the built web app in mock mode (home, search, live, item, player,
+settings) and hls.js with its worker playing fMP4 HLS through `blob:`, with no violations.
+
+### Steps (each with its rollback)
+
+1. **Reel trusts only Caddy** (CT 113 compose, after this PR's build is deployed). In
+   `/root/reel/docker-compose.yml`, replace `REEL_TRUST_PROXY_HEADERS: "true"` with
+   `REEL_TRUSTED_PROXIES: "10.10.10.73"`, then `docker compose up -d`. Check the log line
+   `client IP taken from X-Forwarded-For of these proxies` and a login from the LAN (audit shows the
+   client's IP, not 10.10.10.73). Rollback: put the old line back and `up -d`.
+   Can be done now, independent of going public.
+2. **Caddy (CT 107).** Build the candidate on the Mac, back up, install, validate, reload:
+   ```sh
+   # from the repo on the Mac (the script only prints; --only-h3 = PIECE 1 + 3, the #108 fix alone)
+   /usr/bin/ssh minix-local 'pct exec 107 -- cat /etc/caddy/Caddyfile' \
+     | deploy/ct107/merge_reel_edge.py > /tmp/Caddyfile.reel-edge
+   diff <(/usr/bin/ssh minix-local 'pct exec 107 -- cat /etc/caddy/Caddyfile') /tmp/Caddyfile.reel-edge   # review
+   /usr/bin/ssh minix-local 'pct exec 107 -- cp -p /etc/caddy/Caddyfile /etc/caddy/Caddyfile.pre-reel-edge-$(date -u +%Y%m%dT%H%M%SZ)'
+   /usr/bin/ssh minix-local 'pct exec 107 -- sh -c "cat > /etc/caddy/Caddyfile"' < /tmp/Caddyfile.reel-edge
+   ssh minix-local
+   # validate needs the Cloudflare token env (the DNS module provisions); sourced, never printed
+   pct exec 107 -- sh -c 'set -a; . /etc/caddy/cloudflare.env; set +a; caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile'
+   pct exec 107 -- caddy fmt --diff /etc/caddy/Caddyfile      # whitespace only
+   pct exec 107 -- systemctl reload caddy
+   ```
+   Check from the LAN: `curl -sI https://reel.rafikii.co/ | grep -i alt-svc` → `alt-svc: clear`.
+   PIECE 1 + 3 alone are the #108 fix and can go in before PIECE 2. Without a public DNS record, PIECE 2
+   is unreachable (and the `:8443` catch-all keeps answering 404 for other names). Rollback:
+   `cp -p /etc/caddy/Caddyfile.pre-reel-edge-<ts> /etc/caddy/Caddyfile && systemctl reload caddy`.
+   If `validate` fails, copy the backup back before anything reloads or restarts Caddy (the running
+   process still has the old config). Without the env, `validate` fails with `provision tls: … loading TLS automation` (seen 2026-11-15 on the
+   current file); that is the missing token, not the config.
+3. **Go live = #32, not part of #31.** Cloudflare DNS: `A reel → 85.144.240.8`, **DNS-only**, TTL auto, no
+   AAAA. The first public request makes Caddy issue the cert by DNS-01 (as for immich). Then run
+   `deploy/ct107/verify_edge.sh` from outside (Tailscale off). Rollback: delete the record (LAN and
+   Tailscale are unaffected; they resolve through Technitium).
+4. **After about a week of clean report-only CSP** (DevTools → Console shows `[Report Only]` lines): rename
+   `Content-Security-Policy-Report-Only` to `Content-Security-Policy` in PIECE 2, validate, reload.
+   Rollback: rename back.
+
+**OPNsense: nothing to change for DNS-only.** The WAN `TCP 443 → 10.10.10.73:8443` DNAT and its pass
+rule exist (immich/plex use them). Note: that pass rule's description says "Cloudflare_IPv4 only", but the
+loaded pf rule allows **any** source (checked 2026-11-15 with `pfctl -s rules`). That's right for the
+DNS-only names, but the description is misleading, and `ha.rafikii.co` (proxied) is reachable directly
+too. Owner's call.
+
+**Optional, owner's choice:**
+- *Geo allowlist (NL + EG).* With DNS-only it can only be done at OPNsense, for the whole public listener
+  (immich, ha and plex share the WAN 443 rule): a GeoIP alias (Firewall → Aliases → GeoIP settings,
+  needs a MaxMind GeoLite2 licence URL) as the source of the WAN 443 pass rule, plus the
+  `Cloudflare_IPv4` alias for ha. Rollback: source back to any. Mobile data abroad often exits in the home
+  country (NL) when roaming; a local SIM shows the local country. CrowdSec's blocklists already apply.
+- *Caddy rate limit:* `caddy add-package github.com/mholt/caddy-ratelimit` on CT 107, then uncomment the
+  block in PIECE 2 and add `order rate_limit before basic_auth` to the global block. Rollback: comment out
+  and `caddy remove-package`.
+
+### If the owner picks Cloudflare-proxied (orange cloud) instead
+
+- Use PIECE 1b instead of PIECE 1 (`trusted_proxies` = Cloudflare ranges, `client_ip_headers
+  CF-Connecting-IP`, `trusted_proxies_strict`). Caddy then reads the client from Cloudflare only when the
+  TCP peer is a Cloudflare address, so a direct connection can't forge it.
+- Cloudflare: a Cache Rule "Bypass cache" for `reel.rafikii.co` (by default Cloudflare caches `.mp4`/`.mkv`
+  and similar extensions); Network → HTTP/3 is a zone setting (it also covers ha); WebSockets are on by
+  default (100 s idle; Reel pings every 25 s); the 100 MB request body limit doesn't matter (Reel takes
+  4 MiB). Geo: a WAF custom rule `(http.host eq "reel.rafikii.co" and not ip.src.country in {"NL" "EG"})`
+  → Block, per host. Login rate limiting: a rate-limiting rule on `/api/v1/auth/login`.
+- OPNsense can **not** restrict WAN 443 to Cloudflare's ranges while immich and plex stay DNS-only on the
+  same port.
+
+### Cloudflare Tunnel + Access (the alternative the owner was told about)
+
+No open port and a Cloudflare login in front of Reel. But: Access breaks every client that can't do the
+Access login flow, which is the TV apps used away from home, external players opening signed media URLs,
+and Chromecast receivers. Video through the tunnel falls under the same Cloudflare terms as the proxy. And
+`cloudflared` connects from the LAN: if it pointed at Caddy's `:443` block, every internet client would
+look like a LAN address to Reel (LAN-only setup, shared lockout bucket). It would need its own Caddy site
+with `trusted_proxies <cloudflared IP>` + `client_ip_headers CF-Connecting-IP` and the same path blocks.

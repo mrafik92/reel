@@ -31,7 +31,8 @@ data_dir = "./data"
 # session_ttl_days = 30           # sliding session lifetime
 # signed_url_ttl_secs = 21600     # lifetime of signed stream/direct/subtitle URLs
 # public_url = "https://reel.example.com"   # base for invite links
-# trust_proxy_headers = true      # behind Caddy/nginx: use X-Forwarded-For for rate limiting
+# trusted_proxies = ["10.0.0.5"]  # behind Caddy/nginx: believe X-Forwarded-For from these (CIDRs)
+# trust_proxy_headers = true      # deprecated: believes ANY private-range peer
 # cors_origins = ["https://app.example.com"] # empty = same-origin only
 # max_body_bytes = 4194304
 

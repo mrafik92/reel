@@ -1,0 +1,172 @@
+# Reel on Caddy CT 107 (10.10.10.73): public edge (#31) and the HTTP/3 fix (#108).
+#
+# NOT a standalone Caddyfile. Three pieces to paste into /etc/caddy/Caddyfile on CT 107, in the
+# places named below. The runbook (backup, validate, reload, rollback, external checks) is in
+# docs/OPERATIONS.md → "Public edge (Caddy CT 107)". Uses the snippets that file already has:
+# (cloudflare-tls) and (public-access-log).
+#
+# Mode: Cloudflare DNS-only (grey cloud), like immich/plex today. WAN TCP/443 is DNATed to :8443,
+# so Caddy sees the real client address as the TCP peer. The Cloudflare-proxied variant is at the
+# end (PIECE 1b).
+#
+# Reel side (CT 113 compose): REEL_TRUSTED_PROXIES=10.10.10.73 and REEL_TRUST_PROXY_HEADERS unset,
+# so Reel believes X-Forwarded-For from this Caddy only, and Caddy always overwrites it.
+
+
+# ─── PIECE 1: global options. The FIRST block of the Caddyfile (above the snippets). ───────────
+# If a global block already exists, merge the `servers :8443` entry into it.
+#
+# HTTP/3 on the public listener: UDP 8443 is not forwarded from the WAN, so h3 there is never
+# reachable; Caddy would still advertise `Alt-Svc: h3=":8443"`. Turning it off for :8443 changes
+# nothing that works today for immich/ha/plex. The LAN listener (:443) keeps h3 for the other LAN
+# services; Reel opts out per site in PIECE 3.
+
+{
+	servers :8443 {
+		protocols h1 h2
+	}
+}
+
+
+# ─── PIECE 2: the public site. Under "Public listener (:8443)", BEFORE `https://:8443 { … }`. ───
+
+https://reel.rafikii.co:8443 {
+	import cloudflare-tls
+	# Access log without URIs or headers: signed media URLs and session tokens never reach disk.
+	import public-access-log reel
+
+	# Small API bodies only (Reel itself caps at 4 MiB); media flows the other way.
+	request_body {
+		max_size 8MB
+	}
+
+	# Security headers on every response, the 403s below included. `defer` applies them after
+	# Reel answers, replacing any it set.
+	# Reel already sends X-Content-Type-Options, X-Frame-Options DENY and Referrer-Policy
+	# no-referrer; those are left as they are (no-referrer is stricter than the
+	# (security-headers) snippet, which is why that snippet isn't imported here).
+	header {
+		defer
+		Strict-Transport-Security "max-age=31536000"
+		# CSP: report-only first. Watch DevTools for "[Report Only]" violations, then rename the
+		# header to Content-Security-Policy (runbook step). Sources the web app needs:
+		#   'self'            app, API, /events WebSocket and EventSource, all images (TMDB,
+		#                     logos and artwork are proxied by Reel)
+		#   blob:             hls.js MediaSource and its worker
+		#   data:             inline SVG/icons
+		#   www.gstatic.com   Chromecast sender SDK
+		#   youtube-nocookie  trailers (iframe)
+		#   'unsafe-inline'   style= attributes set by Solid components
+		Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' wss://reel.rafikii.co; frame-src https://www.youtube-nocookie.com; font-src 'self' data:; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		# Only features Reel never uses. Fullscreen, picture-in-picture, autoplay and
+		# encrypted-media (player, trailers) keep their defaults.
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=(), midi=(), accelerometer=(), gyroscope=(), magnetometer=(), browsing-topics=()"
+		-Server
+		# #108 on the public side: never advertise h3 (see PIECE 1).
+		Alt-Svc "clear"
+	}
+
+	# LAN/Tailscale-only API areas. Everything an admin, the Arr stack or a home TV needs.
+	#   /api/v1/admin/*     every admin endpoint (Settings → server sections stop working publicly)
+	#   /api/v1/setup       first-run setup (POST). GET stays open: the web app reads
+	#                       {"needs_setup": false} on every anonymous load, and without it the
+	#                       login page shows "Can't reach your Reel server" instead.
+	#   /api/v1/webhooks/*  Radarr/Sonarr on CT 105 (LAN)
+	#   /api/v1/cast/*      "Play on…" for TVs on the home network
+	# Caddy's path matcher is case-insensitive and matches the decoded, cleaned path, so
+	# /API/V1/ADMIN, /api/v1/%61dmin, /api/v1//admin, /api/v1/./admin, /api/v1/x/../admin and
+	# /api/v1/admin%2Fusers are all refused (checked with Caddy 2.11.7). /api/v1/castle or the web
+	# app's own /admin/… pages are not matched.
+	@lan_only {
+		path /api/v1/admin /api/v1/admin/* /api/v1/setup /api/v1/setup/* /api/v1/webhooks /api/v1/webhooks/* /api/v1/cast /api/v1/cast/*
+		not {
+			method GET HEAD
+			path /api/v1/setup
+		}
+	}
+	handle @lan_only {
+		header Content-Type "application/json"
+		respond `{"error":"not available on the public address; use the home network or Tailscale"}` 403
+	}
+
+	handle {
+		reverse_proxy http://10.10.10.207:8420 {
+			header_up X-Forwarded-Proto https
+			# Client IP: OVERWRITE, never append. {client_ip} is the TCP peer (no trusted_proxies
+			# on :8443), so nothing the client sends survives. Reel believes these headers from
+			# 10.10.10.73 only (REEL_TRUSTED_PROXIES), and they drive its login lockout and the
+			# LAN-only setup check.
+			header_up X-Forwarded-For {client_ip}
+			header_up X-Real-IP {client_ip}
+			header_up -Forwarded
+			# Reel never reads it; dropped so nothing downstream starts trusting it.
+			header_up -CF-Connecting-IP
+			# Stream immediately: HLS playlists, live MPEG-TS, the /events WebSocket, direct play.
+			flush_interval -1
+			transport http {
+				dial_timeout 10s
+				# Cold transcode starts can take 20+ s before the first playlist byte.
+				response_header_timeout 2m
+				keepalive 2m
+			}
+		}
+	}
+
+	# Optional rate limit. Needs the caddy-ratelimit module, which CT 107's Caddy does NOT have
+	# (`caddy list-modules` shows only dns.providers.cloudflare). Install with
+	# `caddy add-package github.com/mholt/caddy-ratelimit`, then add `order rate_limit before
+	# basic_auth` to the global block and uncomment. Reel's own per-IP / per-(user, IP) login
+	# lockout already works once client IPs are real, so this is defence in depth.
+	# rate_limit {
+	# 	zone reel_auth {
+	# 		match {
+	# 			method POST
+	# 			path /api/v1/auth/* /api/v1/invites/*
+	# 		}
+	# 		key {client_ip}
+	# 		events 30
+	# 		window 1m
+	# 	}
+	# }
+}
+
+
+# ─── PIECE 3: the LAN handler. REPLACES `handle @reel { … }` inside `*.rafikii.co { … }`. ───────
+#
+# #108: Chrome over Tailscale (MTU 1280) wedges on HTTP/3. Caddy can't turn h3 off for one site
+# (`protocols` is per listener, and :443 serves every LAN service), but a site can stop
+# advertising it: Caddy sets Alt-Svc before the handlers run, and this replaces it with `clear`,
+# which also tells browsers to forget the h3 they cached (Caddy's ma is 30 days).
+# Stronger alternative, if wedges persist: `servers :443 { protocols h1 h2 }` in the global block,
+# which turns h3 off for every LAN service.
+
+	@reel host reel.rafikii.co
+	handle @reel {
+		header Alt-Svc "clear"
+		reverse_proxy http://10.10.10.207:8420 {
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-For {client_ip}
+			header_up X-Real-IP {client_ip}
+			header_up -Forwarded
+			# stream HLS/live TS without buffering
+			flush_interval -1
+		}
+	}
+
+
+# ─── PIECE 1b (only if the owner chooses Cloudflare-PROXIED instead of DNS-only) ──────────────
+#
+# Replace PIECE 1 with this. Caddy then takes the client from CF-Connecting-IP, but only when the
+# TCP peer is a Cloudflare address, so a client that reaches :8443 directly can't set it. Applies
+# to every :8443 site (it also gives ha.rafikii.co, already proxied, its real client IPs).
+# Ranges from https://www.cloudflare.com/ips-v4 and ips-v6 (2026-11-15); re-check before use, or
+# use the caddy-cloudflare-ip module (`trusted_proxies cloudflare { interval 12h }`).
+#
+# {
+# 	servers :8443 {
+# 		protocols h1 h2
+# 		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+# 		client_ip_headers CF-Connecting-IP
+# 		trusted_proxies_strict
+# 	}
+# }

@@ -37,6 +37,7 @@ services:
       REEL_ALLOW_DIRECT_LIVE: ${REEL_ALLOW_DIRECT_LIVE:-false}
       # set true when a reverse proxy (Caddy/nginx) is in front: per-IP rate limits use X-Forwarded-For
       REEL_TRUST_PROXY_HEADERS: ${REEL_TRUST_PROXY_HEADERS:-false}
+      REEL_TRUSTED_PROXIES: ${REEL_TRUSTED_PROXIES:-}
       # SSRF hardening for server-side fetches of admin-supplied URLs (see README)
       REEL_ALLOW_PRIVATE_FETCH: ${REEL_ALLOW_PRIVATE_FETCH:-true}
       REEL_ALLOW_PRIVATE_LOGO_FETCH: ${REEL_ALLOW_PRIVATE_LOGO_FETCH:-false}

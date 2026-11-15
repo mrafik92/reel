@@ -43,7 +43,9 @@
 			keepalive 2m
 		}
 
-		# Real client IP for rate limiting / audit (set REEL_TRUST_PROXY_HEADERS=true).
-		header_up X-Real-IP {remote_host}
+		# Real client IP for rate limiting / audit (set REEL_TRUSTED_PROXIES to this container's
+		# network). Overwrite, never append what the client sent.
+		header_up X-Forwarded-For {client_ip}
+		header_up X-Real-IP {client_ip}
 	}
 }
