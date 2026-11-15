@@ -10,7 +10,7 @@
 | Reel container | Proxmox `minix` → **CT 113** (`plex`, 10.10.10.207) | `/root/reel/docker-compose.yml` + `.env` (root-only). Shares the iGPU (`/dev/dri`) and the read-only media mount with Plex |
 | Data | CT 113 `/opt/appdata/reel` → container `/appdata` | `reel.db` (SQLite WAL), `signing.key`, image/transcode caches. Owned by uid 1000 (the container's `reel` user); Reel keeps the dir `0700` and the key and DB files `0600` (tightened at startup, #14), so other readers need uid 1000 or root |
 | Media | `/mnt/media/media` → container `/data` (ro) | Same paths as Radarr/Sonarr (`/data/media/...`), so webhooks need no path mapping |
-| TLS / name | Caddy **CT 107** (10.10.10.73, Caddy 2.11.7 + `dns.providers.cloudflare` only), LAN block `*.rafikii.co` on :443 → `@reel host reel.rafikii.co` → `10.10.10.207:8420` (`flush_interval -1`) | LAN only. Backups: `/etc/caddy/Caddyfile.pre-reel-*`. CT 107 also has a **public listener :8443** (WAN TCP/443 is DNATed there) for immich, ha and plex; Reel has no site on it yet. Ready-to-apply Reel edge: [`deploy/ct107/reel.caddy`](../deploy/ct107/reel.caddy), runbook [below](#public-edge-caddy-ct-107) |
+| TLS / name | Caddy **CT 107** (10.10.10.73, Caddy 2.11.7 + `dns.providers.cloudflare` only), LAN block `*.rafikii.co` on :443 → `@reel host reel.rafikii.co` → `10.10.10.207:8420` (`flush_interval -1`, `Alt-Svc: clear`) | LAN only. Backups: `/etc/caddy/Caddyfile.pre-reel-*` (h3 change: `Caddyfile.pre-reel-h3-20261115T034930Z`). CT 107 also has a **public listener :8443** (WAN TCP/443 is DNATed there) for immich, ha and plex, with h3 off (`servers :8443 { protocols h1 h2 }`); Reel has no site on it yet. Unit: drop-in `/etc/systemd/system/caddy.service.d/no-environ.conf` replaces the packaged `caddy run --environ` (it printed the Cloudflare token to the journal) with plain `caddy run`; `override.conf` loads `/etc/caddy/cloudflare.env`. Ready-to-apply Reel edge: [`deploy/ct107/reel.caddy`](../deploy/ct107/reel.caddy), runbook [below](#public-edge-caddy-ct-107) |
 | DNS | Technitium `10.10.10.2` zone `reel.rafikii.co` → A `10.10.10.73` | API token at `/root/.technitium-token` on minix |
 | Arr stack | **CT 105** (10.10.10.122): Radarr :7878, Sonarr :8989, Sonarr Anime :8990, Prowlarr :9696, qBittorrent :8200 | Each Arr has a "Reel" webhook connection. Compose: `/mnt/stacks/docker-compose-{vpn,media}.yaml` (project `mediastack`). **Only Prowlarr** runs inside gluetun's network namespace (Proton WireGuard, NL); Radarr/Sonarr reach it at `10.10.10.122:9696`. qBittorrent has been on the plain `mediastack` network (direct WAN) since 2026-10-30, a temporary exception the owner asked for (see the comment in the compose file) |
 | Firewall | CT 113 Proxmox firewall drops LAN egress apart from the Arr ports and **qBittorrent :8200** (added for Reel) | Backup: `/root/113.fw.bak-*` |
@@ -27,6 +27,7 @@
 | TMDB key, webhook secret, (OMDb, Trakt) | CT 113 `/root/reel/.env` |
 | IPTV provider login, qBittorrent password, Arr API keys | Reel DB (entered in Settings) |
 | `PROJECT_TOKEN` (classic PAT: `repo`, `project`) | GitHub repo secret, used by the `deploy` workflow to comment on tickets and move them to Deployed |
+| Cloudflare API token for Caddy DNS-01 (`CF_API_TOKEN`: zone rafikii.co, Zone Read + DNS Edit) | CT 107 `/etc/caddy/cloudflare.env` (root, 0600), loaded by the caddy unit's `override.conf`. Was written to the journal by `--environ` until 2026-11-15; **rotation pending** (owner deferred it), see Public edge → Token rotation |
 | OPNsense API key (firewall automation) | Mac `~/.config/opnsense-api` (0600). Revoke in OPNsense if no longer needed |
 
 ## Build & deploy pipeline
@@ -80,10 +81,9 @@ Backlog → To do → Implementing → Reviewing → **Deployed** (automatic, `d
 | `REEL_PUBLIC_URL` | `https://reel.rafikii.co` | Invite links; never derive URLs from Host |
 | `REEL_CAST_BASE_URL` | `http://10.10.10.207:8420` | Absolute LAN URLs for TVs/Chromecast |
 | `REEL_ALLOW_DIRECT_LIVE` | unset (`false`) | Lets devices play Live TV straight from the provider (opt-in per device). Turning it on sends the provider login (it is part of the stream URL) to those devices. On CT 113 it goes in `/root/reel/.env` (the compose loads it with `env_file`) |
-| `REEL_TRUST_PROXY_HEADERS` | `true` | Trust XFF from private-range peers (Caddy) |
 | `REEL_MAX_TRANSCODES` / `REEL_MAX_USER_TRANSCODES` | `3` / `2` | Transcode caps, shared by playback and live TV: a live channel whose video is re-encoded counts once per viewer for the user and once per channel server-wide |
-| `REEL_TRUST_PROXY_HEADERS` | `true` | Deprecated: believes `X-Forwarded-For` from **any** private-range peer, so any LAN host can choose its client IP. Logs a warning at startup. Replace it with `REEL_TRUSTED_PROXIES` before going public (runbook step 1) |
-| `REEL_TRUSTED_PROXIES` | unset | Proxies whose `X-Forwarded-For` is believed: `10.10.10.73` (comma-separated for more). The client is the right-most XFF entry that isn't a trusted proxy. The plain spelling needs this PR's build; older builds only take `[10.10.10.73]` and fail to start on the plain one |
+| `REEL_TRUST_PROXY_HEADERS` | `true` | Deprecated: believes `X-Forwarded-For` from **any** private-range peer, so any LAN host can choose its client IP. Logs a warning at startup. **Not set on CT 113** since 2026-11-15 (replaced by `REEL_TRUSTED_PROXIES`) |
+| `REEL_TRUSTED_PROXIES` | `10.10.10.73` | Proxies whose `X-Forwarded-For` is believed (comma-separated for more): Caddy CT 107 only. The client is the right-most XFF entry that isn't a trusted proxy. Startup logs `client IP taken from X-Forwarded-For of these proxies proxies=["10.10.10.73"]`. Set since 2026-11-15 (build `1a39b38`; older builds only took `[10.10.10.73]`). Compose backup: `/root/reel/docker-compose.yml.pre-trusted-proxies-20261115T034742Z` |
 | `REEL_MAX_TRANSCODES` / `REEL_MAX_USER_TRANSCODES` | `3` / `2` | Transcode caps |
 | `REEL_ALLOW_PRIVATE_FETCH` / `..._LOGO_FETCH` | `true` / `false` | SSRF policy (playlists/EPG may be LAN; logos never) |
 | `REEL_IMAGE_CACHE_MAX_MB` / `REEL_IPTV_IMAGE_CACHE_MAX_MB` | unset (`4096` / `1024`) | Disk budgets of the TMDB image cache (`/appdata/images`) and the IPTV logo + VOD image caches (`/appdata/iptv/{logos,vod-images}`). Beyond them the least recently used files are deleted (log line `image cache over budget`). `0` = unlimited. Live sizes on 2026-11-15: 772 MB and 62 MB |
@@ -110,14 +110,11 @@ To debug decisions, Settings → Now playing shows each session's mode, reasons,
    it still ends on "Playback stopped", capture the browser console and network tab. Chrome on Tailscale may use
    HTTP/3 (Caddy Alt-Svc); `ERR_QUIC_PROTOCOL_ERROR` / status-0 responses point at QUIC over the 1280-byte MTU.
    A console line `[player] stalled at … s: segment N requested … ago and still loading` (or `the playlist
-   requested … ago and still loading`) means a request hung in flight. Over h3 on Tailscale that's a wedged QUIC connection (#108): try Chrome with `--disable-quic`.
-   Disabling h3 for reel.rafikii.co at Caddy (CT 107) would rule it out, but that's an owner decision.
+   requested … ago and still loading`) means a request hung in flight. Since 2026-11-15 Caddy sends `Alt-Svc: clear`
+   for reel.rafikii.co, so browsers should use HTTP/2; check DevTools → Network → Protocol shows `h2`, not `h3` (#108).
 6. A paused converted (transcode/remux) session stays for 30 min after its last "paused" ping; others are reaped
    after 60 s without requests or pings (`reaping idle playback session` in the logs). The web player reopens a
    reaped session by itself at the same position.
-   HTTP/3 (Caddy Alt-Svc); `ERR_QUIC_PROTOCOL_ERROR` / status-0 responses point at QUIC over the 1280-byte MTU
-   (#108). The fix (Reel's LAN handler sends `Alt-Svc: clear`) is ready in `deploy/ct107/reel.caddy` PIECE 3,
-   waiting for the owner to apply it.
 
 **Live TV stops or freezes**
 Browser live HLS keeps a 30 s window (2 s segments) plus ~20 s of rotated-out segments on disk (`hls.rs`,
@@ -176,7 +173,7 @@ the container (`sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' /config/config.xml`)
 
 ## Public edge (Caddy CT 107)
 
-**Status: prepared, not applied** (#31, #108). Reel is still LAN + Tailscale only. Going public is #32 and
+**Status:** step 1 (Reel trusts only Caddy) and the #108 HTTP/3 part of step 2 (PIECE 1 + the `Alt-Svc` line of PIECE 3) were **applied on 2026-11-15**; the public site (PIECE 2) is **not applied** (#31). Reel is still LAN + Tailscale only. Going public is #32 and
 waits for the M2 security tickets (#9, #12–#15, #28, then the re-review #16). Every step below changes
 infrastructure, so the owner approves and applies it (AGENTS.md §5).
 
@@ -233,6 +230,10 @@ settings) and hls.js with its worker playing fMP4 HLS through `blob:`, with no v
    `client IP taken from X-Forwarded-For of these proxies` and a login from the LAN (audit shows the
    client's IP, not 10.10.10.73). Rollback: put the old line back and `up -d`.
    Can be done now, independent of going public.
+   **Applied 2026-11-15.** Backup `/root/reel/docker-compose.yml.pre-trusted-proxies-20261115T034742Z`. Checked:
+   health ok, the log line names `10.10.10.73` with no warning, and failed logins through
+   https://reel.rafikii.co were audited as `10.10.10.10` (minix) and `10.10.10.1` (a Tailscale client, routed),
+   not `10.10.10.73`. Rollback: `cp -p` that backup over `docker-compose.yml`, then `docker compose up -d reel`.
 2. **Caddy (CT 107).** Build the candidate on the Mac, back up, install, validate, reload:
    ```sh
    # from the repo on the Mac (the script only prints; --only-h3 = PIECE 1 + 3, the #108 fix alone)
@@ -252,7 +253,15 @@ settings) and hls.js with its worker playing fMP4 HLS through `blob:`, with no v
    is unreachable (and the `:8443` catch-all keeps answering 404 for other names). Rollback:
    `cp -p /etc/caddy/Caddyfile.pre-reel-edge-<ts> /etc/caddy/Caddyfile && systemctl reload caddy`.
    If `validate` fails, copy the backup back before anything reloads or restarts Caddy (the running
-   process still has the old config). Without the env, `validate` fails with `provision tls: … loading TLS automation` (seen 2026-11-15 on the
+   process still has the old config).
+   **Applied 2026-11-15 (#108 part only):** `--only-h3` output minus PIECE 3's three `header_up X-Forwarded-For /
+   X-Real-IP / -Forwarded` lines (kept out to change only h3; Caddy already sets XFF to the peer on `:443`). Backup
+   `/etc/caddy/Caddyfile.pre-reel-h3-20261115T034930Z`; `validate` ok, then `reload`. Checked: `alt-svc: clear` on
+   reel.rafikii.co, the other 16 LAN sites keep their status codes and `h3=":443"`, immich/ha/plex on `:8443` answer
+   without Alt-Svc, no UDP listener on 8443. Rollback:
+   `cp -p /etc/caddy/Caddyfile.pre-reel-h3-20261115T034930Z /etc/caddy/Caddyfile && systemctl reload caddy`.
+   The live file now has `Alt-Svc "clear"` and a global block, so `merge_reel_edge.py` refuses to run on it: place
+   PIECE 2 (and, if wanted, the three `header_up` lines) by hand. Without the env, `validate` fails with `provision tls: … loading TLS automation` (seen 2026-11-15 on the
    current file); that is the missing token, not the config.
 3. **Go live = #32, not part of #31.** Cloudflare DNS: `A reel → 85.144.240.8`, **DNS-only**, TTL auto, no
    AAAA. The first public request makes Caddy issue the cert by DNS-01 (as for immich). Then run
@@ -261,6 +270,22 @@ settings) and hls.js with its worker playing fMP4 HLS through `blob:`, with no v
 4. **After about a week of clean report-only CSP** (DevTools → Console shows `[Report Only]` lines): rename
    `Content-Security-Policy-Report-Only` to `Content-Security-Policy` in PIECE 2, validate, reload.
    Rollback: rename back.
+
+**Caddy unit and the Cloudflare token.** The packaged unit ran `caddy run --environ`, which prints the whole
+environment, `CF_API_TOKEN` included, to the journal at every start. Since 2026-11-15 the drop-in
+`/etc/systemd/system/caddy.service.d/no-environ.conf` resets `ExecStart` to `/usr/bin/caddy run --config
+/etc/caddy/Caddyfile`; Caddy was restarted once and that start logged no `CF_API_TOKEN` (rollback: delete the
+drop-in, `systemctl daemon-reload`). **Token rotation is pending** (owner deferred it):
+1. Cloudflare → API Tokens → new token, Zone → Zone → Read + Zone → DNS → Edit, zone rafikii.co (the current
+   token's scope).
+2. Back up `/etc/caddy/cloudflare.env` (`cp -p`), write the new value (root, 0600), `systemctl restart caddy` at a
+   quiet moment (Reel `GET /api/v1/admin/sessions` and `/admin/iptv/hub` empty), and check the start log has no
+   `tls`/`dns` errors. A quick DNS-01 check: `curl -H "Authorization: Bearer $CF_API_TOKEN"
+   https://api.cloudflare.com/client/v4/user/tokens/verify` from CT 107 with the env sourced.
+3. Revoke the old token in Cloudflare.
+4. Purge the old journal entries: `journalctl --rotate`, then `journalctl --vacuum-time=<time since the restart>`
+   (vacuum works per journal file for the whole system journal, not per unit, so say what it removes).
+   `journalctl -u caddy -o cat | grep -c CF_API_TOKEN` (name only, never print matches) should then be 0.
 
 **OPNsense: nothing to change for DNS-only.** The WAN `TCP 443 → 10.10.10.73:8443` DNAT and its pass
 rule exist (immich/plex use them). Note: that pass rule's description says "Cloudflare_IPv4 only", but the

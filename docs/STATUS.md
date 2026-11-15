@@ -1,6 +1,6 @@
 # Status: 2026-11-15
 
-Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
+Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
 ## What's verified on real hardware and data
 
@@ -144,18 +144,16 @@ proposal are in [#102](https://github.com/mrafik92/reel/issues/102#issuecomment-
 
 | Area | Gap |
 |---|---|
-| Network | Chrome over HTTP/3 on Tailscale (MTU 1280) sees `QUIC_TOO_MANY_RTOS` and status-0 responses (#91, #93), and the QUIC connection can wedge: response bodies stop mid-transfer and every request on it hangs (3 of 5 test runs on The Mongoose, 0 of 2 with QUIC off; #96, #108). The player and the app retry, and the player reopens a reaped session once the connection is back, but the picture freezes meanwhile. Turning off HTTP/3 for reel.rafikii.co at Caddy (CT 107) is an owner decision, not changed (#108) |
+| Network | Chrome over HTTP/3 on Tailscale (MTU 1280) saw `QUIC_TOO_MANY_RTOS`, status-0 responses and wedged QUIC connections (#91, #93, #96, #108). **Applied 2026-11-15 on CT 107:** Reel's LAN handler sends `Alt-Svc: clear` and h3 is off on the public `:8443` listener, so Chrome uses HTTP/2 for reel.rafikii.co (checked: a reload over Tailscale was all h2). Other LAN sites keep h3. Not yet re-checked: a long playback over Tailscale without wedges (#108) |
+| Ops | Caddy's packaged unit ran `caddy run --environ`, which wrote CT 107's Cloudflare token (`CF_API_TOKEN`) to the journal at every start. `--environ` is removed (drop-in, 2026-11-15) and later starts are clean, but the token is **not rotated yet** (owner deferred it) and the old journal entries are still there; purge them after the rotation (OPERATIONS → Public edge) |
 | Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) isn't delivered. PR #69 (re-decide per switch) was closed unmerged; multi-variant HLS with hls.js ABR (#111) replaces it, and its quality menu can be reused for #87. For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
 | Player | **One rendition per session** (A6): no multi-variant playlist, so the player can't step down on a link dip or start low and climb (#111). A link slower than a file's peak bitrate still stalls (e.g. The Remarried Empress E1: 5.9 Mbit/s average, 11–13 Mbit/s at 2:44–3:16). The player now waits and recovers instead of stopping (#91), but only a lower rendition fixes it (#87, #111) |
 | Player | The 6 Mbit/s admin cap sends 95 of 311 files to a 720p transcode that the LAN doesn't need (#2, after #87) |
 | Player | HDR/DV files are always tone-mapped to SDR in the browser (the profile probe reports no HDR), and the tone-map is the slowest path (2.6× realtime, 9.9 s to first frame remotely) (#114) |
 | Player | Start-up costs on slow links: VOD playlists are 175–260 KB and served uncompressed (7.8 KB gzipped); MP4s with a trailing `moov` make the browser fetch the index from the end of the file first; transcode segments are 4 s from the start (#112) |
 | Transcode | VAAPI encodes don't use the N100's low-power encoders, and output is always H.264 even for HEVC-capable clients (#113) |
-| Network | Chrome over HTTP/3 on Tailscale (MTU 1280) sees `QUIC_TOO_MANY_RTOS` and status-0 responses (#91, #93). The player and the app now retry these; turning off HTTP/3 for reel.rafikii.co at Caddy (CT 107) is an owner decision, not changed |
 | Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) wasn't delivered (the agent errored). For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
 | Player | A link slower than a file's peak bitrate still stalls (e.g. The Remarried Empress E1: 5.9 Mbit/s average, 11–13 Mbit/s at 2:44–3:16). The player now waits and recovers instead of stopping (#91), but only a lower rendition fixes it (#87) |
-| Network | Chrome over HTTP/3 on Tailscale (MTU 1280) sees `QUIC_TOO_MANY_RTOS` and status-0 responses, and its QUIC connection can wedge mid-segment (#91, #93, #108). The player and the app retry these. The Caddy fix (Reel's LAN handler sends `Alt-Svc: clear`; h3 off on the public `:8443`) is ready in `deploy/ct107/reel.caddy`, waiting for the owner to apply it on CT 107 |
-| Network | CT 113 still runs `REEL_TRUST_PROXY_HEADERS=true`, which believes `X-Forwarded-For` from any LAN host. Switch to `REEL_TRUSTED_PROXIES=10.10.10.73` (OPERATIONS → Public edge, step 1) |
 | IPTV | Some provider feeds stall for 8 s at a time (France 5 on 2026-11-12); the hub reconnects and the player re-tunes, but the picture freezes meanwhile |
 | Reviews | IMDb/RT/Metacritic scores need `REEL_OMDB_API_KEY` |
 | EPG | Al Jazeera guide fully covered by AE1 (fine). The EG1 guide is stale upstream (removed) |
@@ -204,7 +202,7 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 7. Live IPTV transcodes counted against the user's `max_transcodes`.
 8. Signing key / data dir permissions created atomically (0600/0700).
 9. Redact `epg_urls`/source URL credentials in admin DTOs; filter `library_item_id` in Discover/Downloads by library visibility.
-10. Edge, if ever public: only Caddy 443 forwarded; block `/api/v1/{admin,setup,webhooks,cast}/*` from the WAN; CSP/Permissions-Policy at Caddy; rate limits/CrowdSec; geo allowlist. **Prepared, not applied** (#31): a reviewed Caddy site for the public `:8443` listener (`deploy/ct107/reel.caddy`, checked with Caddy 2.11.7: path blocks incl. encoded/dot/double-slash variants, XFF overwrite, headers, no h3), a merge script, the runbook and an external check script (OPERATIONS → Public edge). Reel now takes `REEL_TRUSTED_PROXIES=10.10.10.73` in plain form (it used to refuse to start), logs whose XFF it believes, and `edge_*` tests show a spoofed XFF can't open the LAN-only setup or dodge the login lockout. Decision: Cloudflare DNS-only (A39). Not done: Caddy rate limiting (module not installed; Reel's lockout covers login), geo allowlist (optional, whole public listener), CSP still report-only. Owner applies the Caddy change; go-live is #32.
+10. Edge, if ever public: only Caddy 443 forwarded; block `/api/v1/{admin,setup,webhooks,cast}/*` from the WAN; CSP/Permissions-Policy at Caddy; rate limits/CrowdSec; geo allowlist. **Prepared, not applied** (#31): a reviewed Caddy site for the public `:8443` listener (`deploy/ct107/reel.caddy`, checked with Caddy 2.11.7: path blocks incl. encoded/dot/double-slash variants, XFF overwrite, headers, no h3), a merge script, the runbook and an external check script (OPERATIONS → Public edge). Reel now takes `REEL_TRUSTED_PROXIES=10.10.10.73` in plain form (it used to refuse to start), logs whose XFF it believes, and `edge_*` tests show a spoofed XFF can't open the LAN-only setup or dodge the login lockout. Decision: Cloudflare DNS-only (A39). Not done: Caddy rate limiting (module not installed; Reel's lockout covers login), geo allowlist (optional, whole public listener), CSP still report-only. Applied 2026-11-15: CT 113 trusts only Caddy (`REEL_TRUSTED_PROXIES=10.10.10.73`, the any-LAN-peer `REEL_TRUST_PROXY_HEADERS` alias is gone) and the #108 h3 part of the Caddy change; the public `:8443` site is not applied. Go-live is #32.
 
 **Decision on record:** Reel stays **private** (LAN + Tailscale) until items 1–10 are done and re-reviewed.
 
