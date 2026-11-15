@@ -422,7 +422,7 @@ fn snake<T: Serialize>(v: &T) -> String {
     responses(
         (status = 200, body = TuneResponse),
         (status = 404, body = ErrorBody),
-        (status = 429, description = "Provider connection limit or user stream limit reached", body = ErrorBody),
+        (status = 429, description = "Provider connection limit, user stream limit, or user/server transcode limit reached", body = ErrorBody),
         (status = 503, description = "Channel did not deliver a stream", body = ErrorBody)
     )
 )]
@@ -482,10 +482,21 @@ pub async fn tune(
         }
     }
     let takeover = u.is_admin() && b.takeover.unwrap_or(false);
+    // a live HLS session that re-encodes video is a transcode like a playback one (#13)
+    let (user_max, global_max) = st.playback.transcode_caps(
+        u.user
+            .limits
+            .max_transcodes
+            .and_then(|v| usize::try_from(v).ok()),
+    );
+    let limits = reel_iptv::TranscodeLimits {
+        user_max,
+        global_max,
+    };
     let s = match st
         .iptv
         .live
-        .tune_ex(u.id(), id, mode, &opts, takeover)
+        .tune_limited(u.id(), id, mode, &opts, takeover, limits)
         .await
     {
         Ok(s) => s,

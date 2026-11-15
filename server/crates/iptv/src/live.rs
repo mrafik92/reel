@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     ChannelHub, Error, Holder, Result, Subscription,
     hls::{AudioMode, HlsLease, HlsManager, HlsOptions, VideoMode, valid_hls_file},
+    transcode::{LiveTranscodes, TranscodeLimits, TranscodeSlot},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +83,17 @@ struct Session {
     direct_url: Option<String>,
 }
 
+impl Session {
+    /// The session is over (stopped, taken over, reaped): end its stream and give its transcode
+    /// slot back now, even if a request still holds the session for a moment.
+    fn end(&self) {
+        self.cancel.cancel();
+        if let Some(l) = &self.lease {
+            l.release_transcode();
+        }
+    }
+}
+
 /// HLS sessions with no playlist/segment request for this long are closed (slot released).
 const HLS_IDLE: Duration = Duration::from_secs(15);
 /// A direct session is closed when its client has not sent a keepalive for this long (or the
@@ -121,6 +133,16 @@ pub struct LiveManager {
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     vod: Mutex<HashMap<String, Arc<VodLease>>>,
     idle: Duration,
+    /// Live transcodes (video re-encoding HLS sessions), counted with the playback ones.
+    transcodes: LiveTranscodes,
+    /// Playback session manager whose transcodes share the limits (and its admission lock).
+    playback: Mutex<Option<Arc<reel_playback::SessionManager>>>,
+}
+
+impl reel_playback::ExternalTranscodes for LiveManager {
+    fn counts(&self, user_id: i64) -> (usize, usize) {
+        self.transcodes.counts(user_id)
+    }
 }
 
 /// Anything that holds a provider connection on behalf of a user.
@@ -186,6 +208,8 @@ impl LiveManager {
             sessions: Mutex::default(),
             vod: Mutex::default(),
             idle: session_idle,
+            transcodes: LiveTranscodes::default(),
+            playback: Mutex::default(),
         })
     }
 
@@ -202,6 +226,69 @@ impl LiveManager {
 
     pub fn hub(&self) -> &ChannelHub {
         &self.hub
+    }
+
+    /// Share the transcode limits with `playback`: each side counts the other's transcodes, under
+    /// one admission lock.
+    pub fn link_playback(self: &Arc<Self>, playback: Arc<reel_playback::SessionManager>) {
+        let me: Arc<dyn reel_playback::ExternalTranscodes> = self.clone();
+        playback.set_external_transcodes(Arc::downgrade(&me));
+        *self.playback.lock().unwrap() = Some(playback);
+    }
+
+    /// `(this user's, server-wide)` live transcodes.
+    pub fn transcode_counts(&self, user_id: i64) -> (usize, usize) {
+        self.transcodes.counts(user_id)
+    }
+
+    /// Admit `user_id` to the video-transcoding packager `key` under `limits`. Their own oldest
+    /// live transcode gives way when it is the one in the way (zapping: newest wins); playback
+    /// transcodes and other users' never do.
+    fn admit_transcode(
+        &self,
+        user_id: i64,
+        key: &str,
+        limits: TranscodeLimits,
+    ) -> Result<TranscodeSlot> {
+        let playback = self.playback.lock().unwrap().clone();
+        let _admission = playback.as_ref().map(|p| p.admission());
+        loop {
+            let (pb_user, pb_all) = playback
+                .as_ref()
+                .map_or((0, 0), |p| p.transcode_counts(user_id));
+            let (live_user, live_all) = self.transcodes.counts(user_id);
+            if limits.user_max > 0 && pb_user + live_user >= limits.user_max {
+                if live_user > 0 && self.end_oldest_transcode_of(user_id) {
+                    continue;
+                }
+                return Err(Error::UserTranscodeLimit(limits.user_max));
+            }
+            // joining a packager that already runs starts no new ffmpeg
+            if limits.global_max > 0
+                && !self.transcodes.has_pipe(key)
+                && pb_all + live_all >= limits.global_max
+            {
+                return Err(Error::GlobalTranscodeLimit(limits.global_max));
+            }
+            return Ok(self.transcodes.reserve(user_id, key));
+        }
+    }
+
+    /// Stop the user's oldest live session that holds a transcode slot.
+    fn end_oldest_transcode_of(&self, user_id: i64) -> bool {
+        let mut map = self.sessions.lock().unwrap();
+        let oldest = map
+            .values()
+            .filter(|s| s.user_id == user_id)
+            .filter(|s| s.lease.as_ref().is_some_and(HlsLease::holds_transcode))
+            .min_by_key(|s| s.started_at)
+            .map(|s| s.id.clone());
+        let Some(s) = oldest.and_then(|id| map.remove(&id)) else {
+            return false;
+        };
+        drop(map);
+        s.end();
+        true
     }
 
     pub fn spawn_reaper(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
@@ -232,7 +319,7 @@ impl LiveManager {
                     }
                 };
                 if !keep {
-                    v.cancel.cancel();
+                    v.end();
                 }
                 keep
             });
@@ -265,6 +352,30 @@ impl LiveManager {
         opts: &HlsOptions,
         takeover: bool,
     ) -> Result<LiveSessionInfo> {
+        self.tune_limited(
+            user_id,
+            channel_id,
+            mode,
+            opts,
+            takeover,
+            TranscodeLimits::default(),
+        )
+        .await
+    }
+
+    /// [`Self::tune_ex`] under the user's transcode `limits`: an HLS session whose packager
+    /// re-encodes video counts as one transcode of the user (and its packager as one server-wide),
+    /// together with their playback transcodes ([`Error::UserTranscodeLimit`] /
+    /// [`Error::GlobalTranscodeLimit`]). Passthrough, direct and copy/audio-only HLS don't count.
+    pub async fn tune_limited(
+        &self,
+        user_id: i64,
+        channel_id: i64,
+        mode: LiveMode,
+        opts: &HlsOptions,
+        takeover: bool,
+        limits: TranscodeLimits,
+    ) -> Result<LiveSessionInfo> {
         if mode == LiveMode::Direct {
             return self.tune_direct(user_id, channel_id, takeover).await;
         }
@@ -279,9 +390,10 @@ impl LiveManager {
             }
             LiveMode::Direct => unreachable!("handled by tune_direct"),
             LiveMode::Hls => {
+                let admit = |key: &str| self.admit_transcode(user_id, key, limits);
                 let lease = self
                     .hls
-                    .acquire(&self.hub, channel_id, Some(user_id), opts)
+                    .acquire(&self.hub, channel_id, Some(user_id), opts, Some(&admit))
                     .await?;
                 let name = self
                     .hub
@@ -390,7 +502,7 @@ impl LiveManager {
 
     /// Stop one session right now: its stream ends, its upstream/packager is released.
     async fn release_session(&self, s: Arc<Session>) {
-        s.cancel.cancel();
+        s.end();
         self.sessions.lock().unwrap().remove(&s.id);
         drop(s);
         self.hls.release_unwatched(i64::MIN).await;
@@ -662,7 +774,7 @@ impl LiveManager {
     pub fn stop(&self, id: &str) -> bool {
         match self.sessions.lock().unwrap().remove(id) {
             Some(s) => {
-                s.cancel.cancel();
+                s.end();
                 true
             }
             None => false,
@@ -673,7 +785,7 @@ impl LiveManager {
     pub async fn stop_and_release(&self, id: &str) -> bool {
         let s = self.sessions.lock().unwrap().remove(id);
         let Some(s) = s else { return false };
-        s.cancel.cancel();
+        s.end();
         let limited = s.source.is_some();
         drop(s);
         if limited {

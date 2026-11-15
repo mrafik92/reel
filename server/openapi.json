@@ -2838,7 +2838,7 @@
             }
           },
           "429": {
-            "description": "Provider connection limit or user stream limit reached",
+            "description": "Provider connection limit, user stream limit, or user/server transcode limit reached",
             "content": {
               "application/json": {
                 "schema": {

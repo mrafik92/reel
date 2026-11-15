@@ -1694,3 +1694,126 @@ async fn direct_live_is_opt_in_holds_the_provider_slot_and_needs_a_heartbeat() {
     assert_eq!(s, 200, "{v}");
     e.state.iptv.shutdown().await;
 }
+
+/// An invited user who may watch live TV, with these limits; returns (app, user id).
+async fn limited_user(e: &Env, name: &str, limits: Value) -> (Router, i64) {
+    let (s, inv) = send(
+        &e.admin,
+        "POST",
+        "/api/v1/admin/invites",
+        Some(json!({"limits": limits, "permissions": {"iptv_access": true, "vod_access": false, "can_request": false, "can_cast": false}})),
+    )
+    .await;
+    assert_eq!(s, 201, "{inv}");
+    let (s, v) = send(
+        &e.raw,
+        "POST",
+        &format!(
+            "/api/v1/auth/invite/{}/accept",
+            inv["code"].as_str().unwrap()
+        ),
+        Some(json!({"username": name, "password": "correct horse battery"})),
+    )
+    .await;
+    assert_eq!(s, 201, "{v}");
+    let me = common::with_token(e.raw.clone(), v["token"].as_str().unwrap());
+    let id = v["user"]["id"].as_i64().unwrap();
+    (me, id)
+}
+
+/// #13: a live HLS session whose packager re-encodes video is a transcode: it counts against the
+/// user's `max_transcodes` (the user's own oldest live transcode gives way when zapping) and its
+/// packager against the server's cap; copy sessions don't count.
+#[tokio::test]
+async fn live_transcodes_count_against_the_transcode_limits() {
+    if !have_ffmpeg() {
+        return;
+    }
+    // MPEG-2 SD, like many provider channels: browsers can't play it, so the packager re-encodes
+    let dir = tempfile::tempdir().unwrap();
+    let ts = dir.path().join("mpeg2.ts");
+    let ok = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+        .arg("testsrc=size=128x96:rate=25:duration=4")
+        .args(["-f", "lavfi", "-i", "sine=duration=4"])
+        .args(["-c:v", "mpeg2video", "-g", "25", "-bf", "0"])
+        .args(["-c:a", "aac", "-b:a", "64k", "-f", "mpegts"])
+        .arg(&ts)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok);
+    let (prov, _) = Provider::start(&ts, 4).await;
+    let e = env(|c| {
+        c.max_transcodes = 2;
+        c.max_user_transcodes = 0;
+    })
+    .await;
+    add_source(&e, &prov, None).await;
+    let (news, sport, cinema) = (
+        channel_id(&e, "UK News HD").await,
+        channel_id(&e, "UK Sport").await,
+        channel_id(&e, "Cinema").await,
+    );
+    let transcode = json!({"mode": "hls"});
+    let tune = |app: &Router, ch: i64, body: &Value| {
+        send(
+            app,
+            "POST",
+            &format!("/api/v1/iptv/channels/{ch}/tune"),
+            Some(body.clone()),
+        )
+    };
+    let live = &e.state.iptv.live;
+    let (tc, tc_id) =
+        limited_user(&e, "zapper", json!({"max_streams": 5, "max_transcodes": 1})).await;
+
+    let (s, a) = tune(&tc, news, &transcode).await;
+    assert_eq!(s, StatusCode::OK, "{a}");
+    assert_eq!(a["hls"]["video"], "transcode", "{a}");
+    assert_eq!(live.transcode_counts(tc_id), (1, 1));
+    // zapping to another transcoded channel: newest wins within the user's own live transcodes
+    let (s, b) = tune(&tc, sport, &transcode).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(live.session(a["session_id"].as_str().unwrap()).is_none());
+    assert_eq!(live.transcode_counts(tc_id), (1, 1));
+    // passthrough (raw MPEG-TS for a native player) doesn't transcode
+    let (s, c) = tune(&tc, news, &json!({"mode": "passthrough"})).await;
+    assert_eq!(s, StatusCode::OK, "{c}");
+    assert_eq!(live.transcode_counts(tc_id), (1, 1));
+
+    // server-wide cap: two packagers
+    let (s, d) = tune(&e.admin, cinema, &transcode).await;
+    assert_eq!(s, StatusCode::OK, "{d}");
+    assert_eq!(live.transcode_counts(tc_id).1, 2);
+    let (other, other_id) = limited_user(&e, "other", json!({"max_streams": 5})).await;
+    let (s, v) = tune(&other, news, &transcode).await;
+    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    assert!(v.to_string().contains("transcode limit"), "{v}");
+    // joining a packager that already runs starts no ffmpeg: allowed, counted for the viewer
+    let (s, v) = tune(&other, sport, &transcode).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(live.transcode_counts(other_id), (1, 2));
+
+    // stopping gives the slot back at once
+    let (s, _) = send(
+        &tc,
+        "DELETE",
+        &format!(
+            "/api/v1/iptv/sessions/{}",
+            b["session_id"].as_str().unwrap()
+        ),
+        None,
+    )
+    .await;
+    assert!(s.is_success(), "{s}");
+    assert_eq!(
+        live.transcode_counts(tc_id),
+        (0, 2),
+        "sport still held by 'other'"
+    );
+    let (s, v) = tune(&tc, cinema, &transcode).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(live.transcode_counts(tc_id), (1, 2));
+    e.state.iptv.shutdown().await;
+}

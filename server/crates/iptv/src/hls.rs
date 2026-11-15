@@ -22,6 +22,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     ChannelHub, Error, Result,
+    transcode::TranscodeSlot,
     ts::{AudioCodec, StreamInfo, VideoCodec},
 };
 
@@ -362,13 +363,32 @@ pub struct HlsPipe {
 /// A viewer's hold on an [`HlsPipe`].
 pub struct HlsLease {
     pipe: Arc<HlsPipe>,
+    /// Held while the pipe transcodes video (counts against the transcode limits).
+    slot: Option<TranscodeSlot>,
 }
 
 impl HlsLease {
     pub fn pipe(&self) -> &Arc<HlsPipe> {
         &self.pipe
     }
+
+    /// The viewer's transcode slot, if this pipe re-encodes video and it is still held.
+    pub fn holds_transcode(&self) -> bool {
+        self.slot.as_ref().is_some_and(|s| !s.is_released())
+    }
+
+    /// Give the transcode slot back now (the session was stopped; the lease may outlive it
+    /// briefly while a request finishes).
+    pub fn release_transcode(&self) {
+        if let Some(s) = &self.slot {
+            s.release();
+        }
+    }
 }
+
+/// Admission of a viewer to a pipe that re-encodes video: called with the pipe's key, under the
+/// pipes lock, before the viewer joins or starts it. The slot it returns is held by the lease.
+pub type Admit<'a> = &'a (dyn Fn(&str) -> Result<TranscodeSlot> + Send + Sync);
 
 impl Drop for HlsLease {
     fn drop(&mut self) {
@@ -515,13 +535,15 @@ impl HlsManager {
         }
     }
 
-    /// Join (or start) the shared HLS output of a channel.
+    /// Join (or start) the shared HLS output of a channel. When it re-encodes video, `admit`
+    /// decides (and its slot is held by the lease) before the viewer joins or ffmpeg starts.
     pub async fn acquire(
         &self,
         hub: &ChannelHub,
         channel_id: i64,
         user_id: Option<i64>,
         opts: &HlsOptions,
+        admit: Option<Admit<'_>>,
     ) -> Result<HlsLease> {
         let sub = hub.subscribe(channel_id, user_id).await?;
         sub.wait_ready(Duration::from_secs(6)).await?;
@@ -540,10 +562,14 @@ impl HlsManager {
             .is_some_and(|(_, m)| m == 1);
         let key = format!("{channel_id}-{}-{}", vname(v), aname(a));
         let mut map = self.pipes.lock().await;
+        let slot = match (v, admit) {
+            (VideoMode::Transcode, Some(f)) => Some(f(&key)?),
+            _ => None,
+        };
         if let Some(p) = map.get(&key).filter(|p| p.is_alive()).cloned() {
             p.viewers.fetch_add(1, Relaxed);
             *p.last_used.lock().unwrap() = Instant::now();
-            return Ok(HlsLease { pipe: p });
+            return Ok(HlsLease { pipe: p, slot });
         }
         let hw = self.current_hw();
         let mut pipe = self
@@ -618,7 +644,7 @@ impl HlsManager {
             }
         }
         map.insert(key, pipe.clone());
-        Ok(HlsLease { pipe })
+        Ok(HlsLease { pipe, slot })
     }
 
     #[allow(clippy::too_many_arguments)]

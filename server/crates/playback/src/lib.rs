@@ -40,4 +40,4 @@ pub use plan::SegmentPlan;
 pub use profile::DeviceProfile;
 pub use quality::{Quality, QualityDecision, QualityOption, QualityRequest, decide_quality};
 pub use select::{Pick, PlaybackPrefs, Selected, SubtitleMode};
-pub use session::{SessionConfig, SessionInfo, SessionManager, StartRequest};
+pub use session::{ExternalTranscodes, SessionConfig, SessionInfo, SessionManager, StartRequest};

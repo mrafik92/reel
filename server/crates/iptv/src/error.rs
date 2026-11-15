@@ -36,6 +36,12 @@ pub enum Error {
     },
     #[error("{0}")]
     Unavailable(String),
+    /// The user's concurrent-transcode limit (live and playback transcodes together) is reached.
+    #[error("transcode limit of {0} concurrent stream(s) per user reached")]
+    UserTranscodeLimit(usize),
+    /// The server's concurrent-transcode limit is reached.
+    #[error("server transcode limit of {0} concurrent stream(s) reached")]
+    GlobalTranscodeLimit(usize),
 }
 
 /// A live session holding a provider connection.

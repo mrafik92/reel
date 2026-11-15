@@ -137,6 +137,8 @@ impl AppState {
                 ..Default::default()
             },
         );
+        // live TV transcodes count against the same limits as playback ones (#13)
+        iptv.live.link_playback(playback.clone());
         Self {
             vod: Arc::default(),
             cast: Arc::default(),
@@ -204,6 +206,7 @@ impl AppState {
     /// Use detected hardware acceleration (rebuilds the session manager).
     pub fn with_hwaccel(mut self, hw: HwAccelStatus) -> Self {
         self.playback = new_playback(&self.config, hw.selected.clone());
+        self.iptv.live.link_playback(self.playback.clone());
         // IPTV transcodes (non-H.264 sources, e.g. MPEG-2 SD) use the same hardware encoder.
         self.iptv.live.set_hwaccel(hw.selected.clone());
         self.hwaccel = Arc::new(hw);
