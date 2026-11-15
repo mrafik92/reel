@@ -8,7 +8,7 @@
 | Piece | Where | Notes |
 |---|---|---|
 | Reel container | Proxmox `minix` → **CT 113** (`plex`, 10.10.10.207) | `/root/reel/docker-compose.yml` + `.env` (root-only). Shares the iGPU (`/dev/dri`) and the read-only media mount with Plex |
-| Data | CT 113 `/opt/appdata/reel` → container `/appdata` | `reel.db` (SQLite WAL), `signing.key` (0600), image/transcode caches |
+| Data | CT 113 `/opt/appdata/reel` → container `/appdata` | `reel.db` (SQLite WAL), `signing.key`, image/transcode caches. Owned by uid 1000 (the container's `reel` user); Reel keeps the dir `0700` and the key and DB files `0600` (tightened at startup, #14), so other readers need uid 1000 or root |
 | Media | `/mnt/media/media` → container `/data` (ro) | Same paths as Radarr/Sonarr (`/data/media/...`), so webhooks need no path mapping |
 | TLS / name | Caddy **CT 107** (10.10.10.73), LAN block `*.rafikii.co` → `@reel host reel.rafikii.co` → `10.10.10.207:8420` (`flush_interval -1`) | LAN only. Backups: `/etc/caddy/Caddyfile.pre-reel-*` |
 | DNS | Technitium `10.10.10.2` zone `reel.rafikii.co` → A `10.10.10.73` | API token at `/root/.technitium-token` on minix |
