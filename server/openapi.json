@@ -9474,7 +9474,8 @@
         ],
         "properties": {
           "paused": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "The player is paused: the server keeps a converted session alive longer\n(`paused_idle_timeout`, 30 min) instead of reaping it after 60 s without requests."
           },
           "position_s": {
             "type": "number",

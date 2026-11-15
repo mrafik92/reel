@@ -153,6 +153,15 @@ export class HlsJsAdapter implements PlayerAdapter {
   private destroyed = false;
   /** Position to resume from on a rebuild (the element may already be reset). */
   private resumeAt = 0;
+  /**
+   * The viewer wants it playing (play()/autoplay, or the element's own controls/media keys).
+   * Recovery restores this state and never starts a paused video by itself (#100): a reload or
+   * a rebuild resets the element, so `video.paused` can't tell afterwards.
+   */
+  private wantPlay = false;
+  /** The segment hls.js is fetching and since when; when the last one arrived (stall diagnostics). */
+  private fragLoading?: { sn: number | string; at: number };
+  private fragLoadedAt = 0;
 
   /** `maxAttempts`: recovery attempts before a fatal `error` (default 8). */
   constructor(private video: HTMLVideoElement, o: { maxAttempts?: number } = {}) {
@@ -163,6 +172,38 @@ export class HlsJsAdapter implements PlayerAdapter {
     video.addEventListener("playing", () => this.clearStall());
     video.addEventListener("pause", () => this.clearStall());
     video.addEventListener("timeupdate", () => this.onProgress());
+    // Play/pause from outside the app (media keys, PiP window): follow it, except for the
+    // pause/play a recovery step causes itself.
+    video.addEventListener("play", () => {
+      if (!this.inRecovery()) this.wantPlay = true;
+    });
+    video.addEventListener("pause", () => {
+      if (!this.inRecovery() && !video.error && !video.ended) this.wantPlay = false;
+    });
+    video.addEventListener("canplay", () => this.loadedWhilePaused());
+    video.addEventListener("loadeddata", () => this.loadedWhilePaused());
+  }
+
+  /** Recovered while paused: the stream is back once data arrives (the picture won't move). */
+  private loadedWhilePaused(): void {
+    if (this.recovering && !this.pending && !this.wantPlay) this.setRecovering(null);
+  }
+
+  /** A recovery step is scheduled or running (the element events it causes aren't the viewer's). */
+  private inRecovery(): boolean {
+    return this.recovering || !!this.pending;
+  }
+
+  /** Back to the state the viewer wanted: play only if it was playing (#100). */
+  private resume(): void {
+    if (this.destroyed || !this.wantPlay) return;
+    this.video.play().catch(() => undefined);
+    this.armStall();
+  }
+
+  /** Whether the viewer wants it playing, and whether a recovery is under way (tests, diagnostics). */
+  get state(): { wantPlay: boolean; recovering: boolean } {
+    return { wantPlay: this.wantPlay, recovering: this.recovering };
   }
 
   async load(url: string, opts: LoadOptions = {}): Promise<void> {
@@ -174,6 +215,7 @@ export class HlsJsAdapter implements PlayerAdapter {
     this.opts = opts;
     this.live = !!opts.live;
     this.resumeAt = opts.startPositionSec ?? 0;
+    this.wantPlay = !!opts.autoplay;
     await this.attach(opts.startPositionSec);
     if (opts.autoplay) await this.play();
   }
@@ -182,6 +224,7 @@ export class HlsJsAdapter implements PlayerAdapter {
   private async attach(start: number | undefined): Promise<void> {
     this.hls?.destroy();
     this.hls = undefined;
+    this.fragLoading = undefined;
     const v = this.video;
     const url = this.url;
     const isHls = /\.m3u8(\?|$)/.test(url);
@@ -208,6 +251,17 @@ export class HlsJsAdapter implements PlayerAdapter {
       });
       hls.on(Hls.Events.LEVEL_LOADED, (_e, d) => {
         if (hls === this.hls && d.details?.live) this.live = true;
+      });
+      hls.on(Hls.Events.FRAG_BUFFERED, () => {
+        if (hls === this.hls) this.loadedWhilePaused();
+      });
+      hls.on(Hls.Events.FRAG_LOADING, (_e, d) => {
+        if (hls === this.hls) this.fragLoading = { sn: d.frag.sn, at: Date.now() };
+      });
+      hls.on(Hls.Events.FRAG_LOADED, () => {
+        if (hls !== this.hls) return;
+        this.fragLoading = undefined;
+        this.fragLoadedAt = Date.now();
       });
       hls.loadSource(url);
       hls.attachMedia(v);
@@ -272,24 +326,18 @@ export class HlsJsAdapter implements PlayerAdapter {
       // Live: we fell out of the window — go to where the edge is now.
       const edge = (hls as unknown as { liveSyncPosition?: number | null }).liveSyncPosition;
       if (this.live && edge != null && isFinite(edge) && v.currentTime < edge - 1) v.currentTime = edge;
-      v.play().catch(() => undefined);
-      this.armStall();
+      this.resume();
       return;
     }
     if (a.kind === "recoverMedia" && hls) {
       if (a.swapAudio) hls.swapAudioCodec();
       hls.recoverMediaError();
-      v.play().catch(() => undefined);
-      this.armStall();
+      this.resume();
       return;
     }
     // reload (or no hls.js instance to nudge: direct play / native HLS)
     const at = a.kind === "reload" || a.kind === "startLoad" ? a.position : this.position();
-    void this.attach(at > 0 ? at : undefined).then(() => {
-      if (this.destroyed) return;
-      v.play().catch(() => undefined);
-      this.armStall();
-    });
+    void this.attach(at > 0 ? at : undefined).then(() => this.resume());
   }
 
   private setRecovering(r: { attempt: number; reason: string } | null): void {
@@ -307,8 +355,22 @@ export class HlsJsAdapter implements PlayerAdapter {
       if (this.destroyed || v.paused || v.ended) return;
       // Still no data ahead of the playhead?
       if (v.readyState >= 3) return;
-      this.fail("network", "stalled");
+      const why = this.stallDetails();
+      console.warn(`[player] ${why}`);
+      this.fail("network", why);
     }, this.live ? STALL_LIVE_MS : STALL_VOD_MS);
+  }
+  /**
+   * Why playback stalled, for the console and the error card (#96): a segment request that never
+   * finishes (a wedged connection, e.g. HTTP/3 over Tailscale) reads differently from a player that
+   * stopped asking for segments.
+   */
+  stallDetails(now = Date.now()): string {
+    const s = (ms: number) => `${Math.round(ms / 1000)} s`;
+    const base = `stalled at ${this.video.currentTime.toFixed(1)} s`;
+    if (this.fragLoading) return `${base}: segment ${this.fragLoading.sn} requested ${s(now - this.fragLoading.at)} ago and still loading`;
+    if (this.fragLoadedAt) return `${base}: no segment requested since one arrived ${s(now - this.fragLoadedAt)} ago`;
+    return `${base}: no data`;
   }
   private clearStall(): void {
     if (this.stallTimer) clearTimeout(this.stallTimer);
@@ -338,9 +400,11 @@ export class HlsJsAdapter implements PlayerAdapter {
   }
 
   play(): Promise<void> {
+    this.wantPlay = true;
     return this.video.play();
   }
   pause(): void {
+    this.wantPlay = false;
     this.video.pause();
   }
   seek(positionSec: number): void {

@@ -1,4 +1,4 @@
-# Status: 2026-11-12
+# Status: 2026-11-15
 
 Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
@@ -65,6 +65,20 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
   opens Playback; nav shows Playback + About; `/admin/…` says admin-only), the player sheet's "Subtitle & audio
   preferences" link, and 1920×1080 TV mode (Right from the Playback link enters the pane, Left returns to it, up/down
   stay on their side). Not checked live yet.
+- **Pause and session loss** (#95, #100, #96; built and tested in CI, not deployed). A paused player keeps its
+  converted session: it pings `paused: true` every 10 s (up to 30 min of pause), and the server gives such a session
+  30 min instead of 60 s (`paused_session_*`/`an_abandoned_paused_session_*` tests). A session the server ended
+  anyway is reopened at the same position, right away if playing and on the next play if paused. A recovery (reload,
+  decoder restart) or an automatic reopen no longer starts a paused video: that was #100 (the adapter called
+  `play()` after every recovery step, and the app's reopen used `autoplay: true`). Checked 2026-11-15 with Playwright
+  in mock mode, desktop and 1920×1080 TV mode (Enter on the play button): paused + session reaped → stays paused, no
+  overlay → play reopens at the same spot; a media error while paused → reloaded at the playhead, still paused (the
+  old code started playing by itself); reaped while playing → reopened within ~10 s, still playing.
+  #96 (The Mongoose stalls): reproduced live on `70d03eb`. Chrome's HTTP/3 connection over Tailscale wedged in 3 of 5
+  runs (segment headers arrive, the body never does, and every request on the connection hangs, progress pings
+  included), so the server saw nothing and reaped the session. 2 of 2 runs with `--disable-quic` played past the first
+  minute. The transport is #108 (owner decision at Caddy); the player now reopens the session once the connection
+  is back, and a stall's error says whether a segment is stuck in flight.
 - **Player and connection resilience** (#91, #93, #81, not yet deployed). Checked 2026-11-12 with Playwright
   (mock mode, and the new web client against the live `65bd851` server; desktop and 1920×1080 TV mode):
   - Chrome had been playing HLS with its **built-in player**, not hls.js (`canPlayType(mpegurl)` is now "maybe"
@@ -89,7 +103,7 @@ Live build: **`65bd851`** (2026-11-11) on CT 113 → https://reel.rafikii.co (LA
 |---|---|
 | Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) wasn't delivered (the agent errored). For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
 | Player | A link slower than a file's peak bitrate still stalls (e.g. The Remarried Empress E1: 5.9 Mbit/s average, 11–13 Mbit/s at 2:44–3:16). The player now waits and recovers instead of stopping (#91), but only a lower rendition fixes it (#87) |
-| Network | Chrome over HTTP/3 on Tailscale (MTU 1280) sees `QUIC_TOO_MANY_RTOS` and status-0 responses (#91, #93). The player and the app now retry these; turning off HTTP/3 for reel.rafikii.co at Caddy (CT 107) is an owner decision, not changed |
+| Network | Chrome over HTTP/3 on Tailscale (MTU 1280) sees `QUIC_TOO_MANY_RTOS` and status-0 responses (#91, #93), and the QUIC connection can wedge: response bodies stop mid-transfer and every request on it hangs (3 of 5 test runs on The Mongoose, 0 of 2 with QUIC off; #96, #108). The player and the app retry, and the player reopens a reaped session once the connection is back, but the picture freezes meanwhile. Turning off HTTP/3 for reel.rafikii.co at Caddy (CT 107) is an owner decision, not changed (#108) |
 | IPTV | Some provider feeds stall for 8 s at a time (France 5 on 2026-11-12); the hub reconnects and the player re-tunes, but the picture freezes meanwhile |
 | Reviews | IMDb/RT/Metacritic scores need `REEL_OMDB_API_KEY` |
 | EPG | Al Jazeera guide fully covered by AE1 (fine). The EG1 guide is stale upstream (removed) |

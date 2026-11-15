@@ -149,6 +149,116 @@ describe("HlsJsAdapter recovery (direct play)", () => {
   }, 10_000);
 });
 
+/** A fake whose play()/pause() behave like the element: they flip `paused` and fire the event. */
+function playableVideo() {
+  const v = fakeVideo();
+  const p = Object.assign(v, {
+    plays: 0,
+    paused: true,
+    play: () => {
+      p.plays++;
+      p.paused = false;
+      v.fire("play");
+      return Promise.resolve();
+    },
+    pause: () => {
+      p.paused = true;
+      v.fire("pause");
+    },
+  });
+  return p;
+}
+const settle = async () => {
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+};
+
+describe("HlsJsAdapter keeps a paused video paused (#100)", () => {
+  test("a recovery while paused reloads the stream but doesn't start playback", async () => {
+    const v = playableVideo();
+    const a = new HlsJsAdapter(v as unknown as HTMLVideoElement);
+    const recovering: (number | null)[] = [];
+    a.on("recovering", (r) => recovering.push(r ? r.attempt : null));
+    await a.load("http://s/stream/x.mp4", { autoplay: true });
+    expect(v.plays).toBe(1);
+    v.currentTime = 600;
+    v.fire("timeupdate");
+    a.pause();
+    expect(a.state.wantPlay).toBe(false);
+    // e.g. a segment fetched to fill the buffer failed while paused
+    v.error = { message: "PIPELINE_ERROR_READ" };
+    v.fire("error");
+    await settle();
+    expect(v.loads).toBe(2); // reloaded…
+    expect(v.plays).toBe(1); // …but not played
+    expect(v.paused).toBe(true);
+    // Data is back: the overlay goes away without waiting for the picture to move.
+    v.error = null;
+    v.fire("loadedmetadata");
+    expect(v.currentTime).toBe(600);
+    v.fire("loadeddata");
+    expect(recovering).toEqual([1, null]);
+    // The viewer presses play later: it plays from where it was.
+    await a.play();
+    expect(v.plays).toBe(2);
+    a.destroy();
+  });
+
+  test("a recovery while playing resumes playback", async () => {
+    const v = playableVideo();
+    const a = new HlsJsAdapter(v as unknown as HTMLVideoElement);
+    await a.load("http://s/stream/x.mp4", { autoplay: true });
+    v.currentTime = 30;
+    v.fire("timeupdate");
+    v.error = { message: "PIPELINE_ERROR_DECODE" };
+    v.fire("error");
+    await settle();
+    expect(v.loads).toBe(2);
+    expect(v.plays).toBe(2);
+    a.destroy();
+  });
+
+  test("a pause from outside the app (media keys) counts; the pause a recovery causes doesn't", async () => {
+    const v = playableVideo();
+    const a = new HlsJsAdapter(v as unknown as HTMLVideoElement);
+    await a.load("http://s/stream/x.mp4", { autoplay: true });
+    v.fire("pause"); // hardware media key: the element pauses itself
+    expect(a.state.wantPlay).toBe(false);
+    v.fire("play");
+    expect(a.state.wantPlay).toBe(true);
+    // A failure while playing: the element pauses as it is reset, the viewer still wants it playing.
+    v.error = { message: "x" };
+    v.fire("error");
+    v.fire("pause");
+    expect(a.state.wantPlay).toBe(true);
+    a.destroy();
+  });
+
+  test("a load without autoplay stays paused through recovery", async () => {
+    const v = playableVideo();
+    const a = new HlsJsAdapter(v as unknown as HTMLVideoElement);
+    await a.load("http://s/stream/x.mp4", { startPositionSec: 90 });
+    v.fire("error");
+    await settle();
+    expect(v.plays).toBe(0);
+    a.destroy();
+  });
+});
+
+describe("HlsJsAdapter stall diagnostics (#96)", () => {
+  test("says whether a segment is stuck in flight or none was requested", () => {
+    const v = playableVideo();
+    v.currentTime = 105.5;
+    const a = new HlsJsAdapter(v as unknown as HTMLVideoElement);
+    const priv = a as unknown as { fragLoading?: { sn: number; at: number }; fragLoadedAt: number };
+    expect(a.stallDetails(1000)).toBe("stalled at 105.5 s: no data");
+    priv.fragLoadedAt = 1000;
+    expect(a.stallDetails(31_000)).toBe("stalled at 105.5 s: no segment requested since one arrived 30 s ago");
+    priv.fragLoading = { sn: 12, at: 7000 };
+    expect(a.stallDetails(31_000)).toBe("stalled at 105.5 s: segment 12 requested 24 s ago and still loading");
+    a.destroy();
+  });
+});
+
 describe("prefersNativeHls", () => {
   const el = (answer: string) => ({ canPlayType: () => answer }) as unknown as HTMLVideoElement;
   const g = globalThis as { MediaSource?: unknown };

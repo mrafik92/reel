@@ -991,7 +991,7 @@ pub async fn get_session(
         // the TV is the player: this poll is the "sender ping" that keeps the session alive
         let _ = st
             .playback
-            .update_progress(&o.playback_id, position_s, None);
+            .update_progress(&o.playback_id, position_s, None, state == "paused");
     }
     Ok(Json(CastSessionState {
         state: state.into(),

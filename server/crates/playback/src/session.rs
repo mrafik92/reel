@@ -36,6 +36,11 @@ pub struct SessionConfig {
     pub idle_timeout: Duration,
     /// Direct-play sessions without a progress ping this long are dropped.
     pub direct_idle_timeout: Duration,
+    /// ffmpeg-backed sessions whose last progress ping said `paused` get this long instead of
+    /// `idle_timeout` (#95): a paused player with a full buffer requests nothing, and a background
+    /// tab may throttle its pings. ffmpeg is already SIGSTOPped by the read-ahead throttle, so a
+    /// paused session costs only its scratch directory and its transcode slot.
+    pub paused_idle_timeout: Duration,
     pub reaper_interval: Duration,
     /// Max concurrent (audio-)transcode sessions overall; 0 = unlimited.
     pub max_global_transcodes: usize,
@@ -85,6 +90,7 @@ impl SessionConfig {
             segment_secs: 4,
             idle_timeout: Duration::from_secs(60),
             direct_idle_timeout: Duration::from_secs(300),
+            paused_idle_timeout: Duration::from_secs(30 * 60),
             reaper_interval: Duration::from_secs(5),
             max_global_transcodes: 0,
             max_user_transcodes: 0,
@@ -147,6 +153,10 @@ pub struct SessionInfo {
     /// ffmpeg is paused by the read-ahead throttle.
     #[serde(default)]
     pub paused: bool,
+    /// The client's last progress ping said the player is paused (the session then gets
+    /// `paused_idle_timeout` before it is reaped).
+    #[serde(default)]
+    pub client_paused: bool,
     /// No keyframe index was available: ffmpeg's own growing EVENT playlist is served. Players treat
     /// it as live and can't seek. Local files are indexed in the background (the next session is
     /// seekable); remote files only when their container has an index readable over `Range`.
@@ -157,6 +167,8 @@ pub struct SessionInfo {
 struct Meta {
     last_ping: i64,
     last_activity: Instant,
+    /// The last progress ping said the player is paused.
+    client_paused: bool,
     position_s: f64,
     bitrate_kbps: Option<u32>,
 }
@@ -470,6 +482,7 @@ impl SessionManager {
             meta: Mutex::new(Meta {
                 last_ping: now_unix(),
                 last_activity: Instant::now(),
+                client_paused: false,
                 position_s: req.start_position_s,
                 bitrate_kbps: None,
             }),
@@ -728,6 +741,7 @@ impl SessionManager {
             hwaccel: s.hw.lock().unwrap().name().into(),
             active,
             paused,
+            client_paused: m.client_paused,
             fallback_playlist: s.event_mode,
         }
     }
@@ -757,25 +771,29 @@ impl SessionManager {
         out
     }
 
-    /// Progress ping from the client; also keeps the session alive.
     /// Keep a session alive: any request for its media (segments, playlists, proxied bytes) from
     /// any client counts, e.g. a Chromecast fetching while the sender only pings progress.
+    /// Media requests don't change the paused state: a paused player still fills its buffer.
     pub fn touch_session(&self, id: &str) {
         if let Ok(s) = self.get(id) {
             s.meta.lock().unwrap().last_activity = Instant::now();
         }
     }
 
+    /// Progress ping from the client; also keeps the session alive. `paused`: the player is paused,
+    /// so the session may stay idle up to `paused_idle_timeout` (#95).
     pub fn update_progress(
         &self,
         id: &str,
         position_s: f64,
         bitrate_kbps: Option<u32>,
+        paused: bool,
     ) -> Result<(), PlaybackError> {
         let s = self.get(id)?;
         let mut m = s.meta.lock().unwrap();
         m.last_ping = now_unix();
         m.last_activity = Instant::now();
+        m.client_paused = paused;
         m.position_s = position_s;
         if bitrate_kbps.is_some() {
             m.bitrate_kbps = bitrate_kbps;
@@ -820,18 +838,27 @@ impl SessionManager {
         self.indexer.abort_all();
     }
 
+    /// How long a session may go without activity before it is reaped. Direct play keeps
+    /// `direct_idle_timeout` whatever the player does (no ffmpeg to keep; a VOD direct-play
+    /// response holds a provider connection, A25).
+    fn idle_limit(&self, mode: PlaybackMode, client_paused: bool) -> Duration {
+        if !mode.needs_ffmpeg() {
+            self.cfg.direct_idle_timeout
+        } else if client_paused {
+            self.cfg.idle_timeout.max(self.cfg.paused_idle_timeout)
+        } else {
+            self.cfg.idle_timeout
+        }
+    }
+
     /// Kill sessions idle beyond their timeout; returns the reaped ids.
     pub async fn reap_idle(&self) -> Vec<String> {
         let victims: Vec<String> = {
             let map = self.sessions.lock().unwrap();
             map.values()
                 .filter(|s| {
-                    let limit = if s.decision.mode.needs_ffmpeg() {
-                        self.cfg.idle_timeout
-                    } else {
-                        self.cfg.direct_idle_timeout
-                    };
-                    s.meta.lock().unwrap().last_activity.elapsed() >= limit
+                    let m = s.meta.lock().unwrap();
+                    m.last_activity.elapsed() >= self.idle_limit(s.decision.mode, m.client_paused)
                 })
                 .map(|s| s.id.clone())
                 .collect()
