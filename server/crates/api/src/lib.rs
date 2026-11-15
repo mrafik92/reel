@@ -426,12 +426,11 @@ pub struct EventsQuery {
     /// Single-use ticket from `POST /auth/ws-ticket` (preferred; browsers cannot set headers on
     /// WebSocket upgrades).
     pub ticket: Option<String>,
-    /// Deprecated: the session token in the URL (ends up in logs). Still accepted for one release.
-    pub token: Option<String>,
 }
 
 /// WebSocket stream of [`ServerEvent`]s as JSON text frames. Authenticate with `?ticket=` (from
-/// `POST /auth/ws-ticket`), `Authorization: Bearer`, or the deprecated `?token=`. The socket is
+/// `POST /auth/ws-ticket`) or `Authorization: Bearer`. The session token is never accepted in the
+/// URL (`?token=` was removed in #28: URLs end up in proxy and edge logs). The socket is
 /// closed when the session is revoked or the user disabled; at most 8 sockets per user. `request_progress` is delivered to the requester (and
 /// admins); `scan_progress` to admins only.
 #[utoipa::path(
@@ -464,18 +463,8 @@ pub async fn events(
         }
         (user, sid)
     } else {
-        let token = auth::bearer(&headers)
-            .map(str::to_string)
-            .or_else(|| {
-                q.token.inspect(|_| {
-                    tracing::warn!(
-                        "WebSocket authenticated with ?token= (deprecated, token visible in URLs); \
-                         use POST /auth/ws-ticket and ?ticket="
-                    )
-                })
-            })
-            .ok_or_else(unauthorized)?;
-        let (user, s) = st.auth.authenticate(&token).await?;
+        let token = auth::bearer(&headers).ok_or_else(unauthorized)?;
+        let (user, s) = st.auth.authenticate(token).await?;
         (user, s.id)
     };
     let slot = st.ws.acquire(user.id).ok_or_else(|| {

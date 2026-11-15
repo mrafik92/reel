@@ -1014,16 +1014,57 @@ async fn websockets_use_single_use_tickets_are_capped_and_closed_when_access_is_
     })
     .await;
     assert_eq!(closed, Ok(true), "socket closed after revoke");
-    // the deprecated ?token= still works for one release (new session)
-    let l2 = e
+}
+
+/// #28: the session token is never accepted in the `/events` URL (it would land in proxy and edge
+/// logs); a ticket and the `Authorization` header still work.
+#[tokio::test]
+async fn websocket_rejects_session_token_in_url_but_accepts_tickets() {
+    use tokio_tungstenite::tungstenite::{Error, client::IntoClientRequest};
+    let e = env_with(|_| {}, opts(100, 100), true).await;
+    let addr = serve(&e).await;
+    let login = e
         .state
         .auth
         .login("admin", PW, dev("127.0.0.1"))
         .await
         .unwrap();
+    let token = login.token.clone();
+    let is_401 = |r: Result<_, Error>| matches!(r, Err(Error::Http(ref r)) if r.status() == 401);
+
+    // a valid, live session token in the query string is refused
+    let r = tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/events?token={token}"))
+        .await
+        .map(|_| ());
+    assert!(is_401(r), "?token= must be rejected");
+    // ...also next to a bogus ticket (no fallback from a failed ticket to the token)
+    let r = tokio_tungstenite::connect_async(format!(
+        "ws://{addr}/api/v1/events?ticket=nope&token={token}"
+    ))
+    .await
+    .map(|_| ());
+    assert!(is_401(r), "a bad ticket must not fall back to ?token=");
+
+    // the same session still opens a socket with a ticket...
+    let admin = authed_as(&e, &token);
+    let t = api(&admin, "POST", "/api/v1/auth/ws-ticket", None).await.1["ticket"]
+        .as_str()
+        .unwrap()
+        .to_string();
     assert!(
-        tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/events?token={}", l2.token))
+        tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/events?ticket={t}"))
             .await
-            .is_ok()
+            .is_ok(),
+        "ticket works"
+    );
+    // ...and with the Authorization header (native clients; nothing in the URL)
+    let mut req = format!("ws://{addr}/api/v1/events")
+        .into_client_request()
+        .unwrap();
+    req.headers_mut()
+        .insert("authorization", format!("Bearer {token}").parse().unwrap());
+    assert!(
+        tokio_tungstenite::connect_async(req).await.is_ok(),
+        "Authorization header works"
     );
 }

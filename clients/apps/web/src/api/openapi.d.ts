@@ -671,8 +671,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * WebSocket stream of [`ServerEvent`]s as JSON text frames. Authenticate with
-         *     `Authorization: Bearer` or `?token=`. `request_progress` is delivered to the requester (and
+         * WebSocket stream of [`ServerEvent`]s as JSON text frames. Authenticate with `?ticket=` (from
+         *     `POST /auth/ws-ticket`) or `Authorization: Bearer`. The session token is never accepted in the
+         *     URL (`?token=` was removed in #28: URLs end up in proxy and edge logs). The socket is
+         *     closed when the session is revoked or the user disabled; at most 8 sockets per user. `request_progress` is delivered to the requester (and
          *     admins); `scan_progress` to admins only.
          */
         get: operations["events"];
@@ -4248,8 +4250,11 @@ export interface operations {
     events: {
         parameters: {
             query?: {
-                /** @description Session token (browsers cannot set headers on WebSocket upgrades). */
-                token?: string | null;
+                /**
+                 * @description Single-use ticket from `POST /auth/ws-ticket` (preferred; browsers cannot set headers on
+                 *     WebSocket upgrades).
+                 */
+                ticket?: string | null;
             };
             header?: never;
             path?: never;
