@@ -176,7 +176,8 @@ async fn audio_transcode_session_serves_master_segments_and_seeks() {
     ));
     assert_eq!(mgr.list().await.len(), 1);
 
-    mgr.update_progress(&info.id, 9.0, Some(700)).unwrap();
+    mgr.update_progress(&info.id, 9.0, Some(700), false)
+        .unwrap();
     assert_eq!(mgr.session(&info.id).await.unwrap().position_s, 9.0);
 
     assert!(mgr.remove(&info.id).await);
@@ -233,6 +234,75 @@ async fn reaper_cleans_idle_sessions() {
     mgr.segment_path(&info.id, "seg_00000.m4s").await.unwrap();
     assert!(dir.exists());
     assert!(wait_gone(&dir).await, "idle session dir should be removed");
+    assert!(mgr.list().await.is_empty());
+}
+
+/// #95: a paused player with a full buffer requests nothing. Its "paused" ping keeps the session
+/// past the normal idle timeout; a session whose last ping said "playing" is still reaped, and so
+/// is a paused one once the paused timeout runs out.
+#[tokio::test]
+async fn paused_sessions_get_the_longer_idle_timeout() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let src = make_source(tmp.path());
+    let mut cfg = SessionConfig::new(tmp.path());
+    cfg.idle_timeout = Duration::from_millis(300);
+    cfg.paused_idle_timeout = Duration::from_millis(1500);
+    let mgr = SessionManager::new(cfg, HwAccel::Software);
+    let paused = mgr
+        .create_session(request(&src, full_transcode(), 1, 0.0))
+        .await
+        .unwrap();
+    let playing = mgr
+        .create_session(request(&src, full_transcode(), 2, 0.0))
+        .await
+        .unwrap();
+    mgr.update_progress(&paused.id, 3.0, None, true).unwrap();
+    mgr.update_progress(&playing.id, 3.0, None, false).unwrap();
+    assert!(mgr.session(&paused.id).await.unwrap().client_paused);
+
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let reaped = mgr.reap_idle().await;
+    assert_eq!(
+        reaped,
+        vec![playing.id.clone()],
+        "only the playing-but-silent one"
+    );
+    let dir = mgr.session_dir(&paused.id).unwrap().unwrap();
+    assert!(dir.exists(), "the paused session keeps its segments");
+
+    // Resumed: a "playing" ping brings the short timeout back.
+    mgr.update_progress(&paused.id, 3.0, None, false).unwrap();
+    assert!(!mgr.session(&paused.id).await.unwrap().client_paused);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(mgr.reap_idle().await, vec![paused.id.clone()]);
+    assert!(!dir.exists());
+}
+
+/// A paused session whose client went away (tab closed while paused) is still freed once the
+/// paused timeout runs out.
+#[tokio::test]
+async fn an_abandoned_paused_session_is_reaped_after_the_paused_timeout() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let src = make_source(tmp.path());
+    let mut cfg = SessionConfig::new(tmp.path());
+    cfg.idle_timeout = Duration::from_millis(200);
+    cfg.paused_idle_timeout = Duration::from_millis(700);
+    let mgr = SessionManager::new(cfg, HwAccel::Software);
+    let info = mgr
+        .create_session(request(&src, full_transcode(), 1, 0.0))
+        .await
+        .unwrap();
+    mgr.update_progress(&info.id, 1.0, None, true).unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(mgr.reap_idle().await.is_empty());
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(mgr.reap_idle().await, vec![info.id.clone()]);
     assert!(mgr.list().await.is_empty());
 }
 

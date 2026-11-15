@@ -349,8 +349,9 @@ pub async fn decide_playback(
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ProgressRequest {
     pub position_s: f64,
+    /// The player is paused: the server keeps a converted session alive longer
+    /// (`paused_idle_timeout`, 30 min) instead of reaping it after 60 s without requests.
     #[serde(default)]
-    #[allow(dead_code)] // accepted for clients; pause state is not tracked yet
     pub paused: bool,
 }
 
@@ -373,7 +374,7 @@ pub async fn playback_progress(
         return Err(ApiError::NotFound);
     }
     let pos = req.position_s.max(0.0);
-    st.playback.update_progress(&sid, pos, None)?;
+    st.playback.update_progress(&sid, pos, None, req.paused)?;
     // VOD sessions keep their own watch state
     if let Some(vs) = st.vod.get(&sid) {
         crate::vod::record_progress(&st, &vs, pos).await?;

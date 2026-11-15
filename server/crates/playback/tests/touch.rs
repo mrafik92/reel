@@ -34,6 +34,21 @@ fn req() -> StartRequest {
     }
 }
 
+/// Direct play keeps its own timeout whatever the player says: a paused VOD direct-play response
+/// holds a provider connection (A25), so "paused" doesn't extend it.
+#[tokio::test]
+async fn a_paused_ping_does_not_extend_direct_play() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = SessionConfig::new(dir.path());
+    cfg.direct_idle_timeout = Duration::from_millis(300);
+    cfg.paused_idle_timeout = Duration::from_secs(3600);
+    let m = SessionManager::new(cfg, HwAccel::Software);
+    let id = m.create_session(req()).await.unwrap().id;
+    m.update_progress(&id, 2.0, None, true).unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(m.reap_idle().await, vec![id]);
+}
+
 /// A cast receiver fetching media (without progress pings from the sender) keeps the session alive.
 #[tokio::test]
 async fn media_requests_from_any_client_keep_a_session_alive() {
