@@ -83,7 +83,8 @@ Optional: add qBittorrent/Transmission under *Download clients* for speed/ETA/pe
    ACME_EMAIL=you@example.com
    REEL_PUBLIC_URL=https://reel.example.com
    REEL_BIND_HOST=127.0.0.1          # Reel itself is then reachable only through Caddy
-   REEL_TRUST_PROXY_HEADERS=true     # per-IP login rate limits see the real client IP
+   REEL_TRUSTED_PROXIES=172.16.0.0/12  # the Caddy container's network: per-IP login limits and the
+                                       # LAN-only setup check see the real client IP
    ```
 4. `docker compose --profile caddy up -d` — Caddy obtains and renews the certificate automatically.
 
@@ -96,9 +97,18 @@ stream immediately, WebSocket (`/events`) works out of the box, no read/write ti
 
 Security notes: passwords are Argon2id; session tokens are opaque and stored hashed; logins are
 rate-limited per user and per IP with exponential lock-out; stream/image/subtitle URLs are signed and
-expire; the audit log (Admin → Audit) records admin actions and login failures. Only set
-`REEL_TRUST_PROXY_HEADERS=true` when a proxy you control is in front — otherwise clients could spoof
-their IP.
+expire; the audit log (Admin → Audit) records admin actions and login failures.
+
+**Client IP behind a proxy.** Set `REEL_TRUSTED_PROXIES` to your proxy's address or network
+(comma-separated, e.g. `10.0.0.5` or `172.16.0.0/12,fd00::/8`). Reel believes `X-Forwarded-For` only from
+those peers and takes the right-most entry that isn't one of them. Make the proxy **overwrite** the header
+(Caddy: `header_up X-Forwarded-For {client_ip}`), never pass on what the client sent. The older
+`REEL_TRUST_PROXY_HEADERS=true` trusts every private-range peer, so any machine on your LAN could choose
+its IP; it still works but logs a warning.
+
+**Exposing Reel to the internet:** keep admin, first-run setup, webhooks and casting off the public
+address. `deploy/ct107/reel.caddy` is a worked example (public site with path blocks, CSP,
+Permissions-Policy, HSTS, no HTTP/3), and `deploy/ct107/verify_edge.sh` checks it from outside.
 
 ## 5. Hardware transcoding
 
@@ -218,4 +228,4 @@ LG `:1x99/`, ... and is remembered in `/data/cast_devices.json`).
 * Moved or renamed files keep their watch history (same size/duration/streams are matched), also when
   the rename arrives as two file-watcher events a few seconds apart.
 * Behind a proxy all users share one IP in the audit log / rate limiter → set
-  `REEL_TRUST_PROXY_HEADERS=true`.
+  `REEL_TRUSTED_PROXIES` to the proxy's address (see §4).
