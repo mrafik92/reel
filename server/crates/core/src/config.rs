@@ -39,8 +39,8 @@ pub struct Config {
     /// Lifetime of signed stream/direct/subtitle URLs in seconds (default 6 h; must outlast a movie).
     pub signed_url_ttl_secs: u64,
     /// Origins allowed to call the API cross-origin (e.g. a separately hosted web client).
-    /// Empty (default) = same-origin only.
-    #[serde(default)]
+    /// Empty (default) = same-origin only. From the environment: `REEL_CORS_ORIGINS=a,b`.
+    #[serde(default, deserialize_with = "list_or_csv")]
     pub cors_origins: Vec<String>,
     /// Public base URL used in invite links, e.g. `https://reel.example.com`.
     pub public_url: Option<String>,
@@ -54,8 +54,8 @@ pub struct Config {
     /// Reverse proxies (CIDRs, e.g. `["172.18.0.0/16"]`) whose `X-Forwarded-For` is believed: the
     /// client is the right-most entry that is not itself a trusted proxy. Empty (default) = the
     /// headers are ignored. `trust_proxy_headers` is a deprecated alias meaning "trust private-range
-    /// peers".
-    #[serde(default)]
+    /// peers". From the environment: `REEL_TRUSTED_PROXIES=10.10.10.73` (comma-separated for more).
+    #[serde(default, deserialize_with = "list_or_csv")]
     pub trusted_proxies: Vec<String>,
     /// Maximum request body size in bytes (default 4 MiB).
     pub max_body_bytes: usize,
@@ -149,6 +149,30 @@ impl Default for Config {
     }
 }
 
+/// A list from TOML (`["a", "b"]`) or from one environment variable (`a,b` or `a b`).
+///
+/// figment hands a plain `REEL_TRUSTED_PROXIES=10.10.10.73` over as a string, and a `Vec` field
+/// would refuse it, so the server would not start with the obvious spelling.
+fn list_or_csv<'de, D>(d: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ListOrCsv {
+        List(Vec<String>),
+        Csv(String),
+    }
+    Ok(match ListOrCsv::deserialize(d)? {
+        ListOrCsv::List(v) => v,
+        ListOrCsv::Csv(s) => s
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+            .collect(),
+    })
+}
+
 impl Config {
     /// Load defaults, then the optional TOML file, then `REEL_*` env vars.
     pub fn load(file: Option<&Path>) -> Result<Self> {
@@ -196,6 +220,48 @@ mod tests {
             assert_eq!(c.image_cache_max_mb, 512);
             assert!(!c.cast_discovery);
             assert_eq!(c.database_path(), PathBuf::from("/x/reel.db"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn proxy_and_cors_lists_from_env() {
+        let load = |k: &str, v: &str| {
+            let mut out = None;
+            figment::Jail::expect_with(|jail| {
+                jail.set_env(k, v);
+                out = Some(Config::load(None).unwrap());
+                Ok(())
+            });
+            out.unwrap()
+        };
+        // the plain spelling used to stop the server from starting
+        assert_eq!(
+            load("REEL_TRUSTED_PROXIES", "10.10.10.73").trusted_proxies,
+            vec!["10.10.10.73"]
+        );
+        assert_eq!(
+            load("REEL_TRUSTED_PROXIES", "10.10.10.73/32, 172.18.0.0/16").trusted_proxies,
+            vec!["10.10.10.73/32", "172.18.0.0/16"]
+        );
+        // the TOML-array spelling keeps working
+        assert_eq!(
+            load("REEL_TRUSTED_PROXIES", "[10.10.10.73, \"fd00::/8\"]").trusted_proxies,
+            vec!["10.10.10.73", "fd00::/8"]
+        );
+        assert!(load("REEL_TRUSTED_PROXIES", "").trusted_proxies.is_empty());
+        assert_eq!(
+            load("REEL_CORS_ORIGINS", "https://a.example,https://b.example").cors_origins,
+            vec!["https://a.example", "https://b.example"]
+        );
+    }
+
+    #[test]
+    fn proxy_list_from_toml() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("c.toml", "trusted_proxies = [\"10.10.10.73\"]")?;
+            let c = Config::load(Some(Path::new("c.toml"))).unwrap();
+            assert_eq!(c.trusted_proxies, vec!["10.10.10.73"]);
             Ok(())
         });
     }

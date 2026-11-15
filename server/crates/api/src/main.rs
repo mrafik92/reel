@@ -19,6 +19,7 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::load(cfg_path.exists().then_some(cfg_path.as_path()))?;
     // Owner-only data dir (0700): the database, signing key and caches live there (#14).
     reel_core::fsperm::ensure_private_dir(&config.data_dir)?;
+    log_proxy_trust(&config);
     let pool = db::connect(&config.database_path()).await?;
 
     let hw = reel_playback::detect().await;
@@ -117,4 +118,24 @@ async fn shutdown_signal() {
     }
     #[cfg(not(unix))]
     ctrl_c.await;
+}
+
+/// Say whose `X-Forwarded-For` is believed. The client IP drives the login lockout and the LAN-only
+/// first-run setup, so a typo or the blanket alias should be visible in the log.
+fn log_proxy_trust(c: &Config) {
+    for bad in c
+        .trusted_proxies
+        .iter()
+        .filter(|s| reel_api::netutil::Cidr::parse(s).is_none())
+    {
+        tracing::warn!(entry = %bad, "trusted_proxies: not an IP address or CIDR, ignored");
+    }
+    if c.trust_proxy_headers {
+        tracing::warn!(
+            "REEL_TRUST_PROXY_HEADERS=true believes X-Forwarded-For from ANY private-range peer; \
+             set REEL_TRUSTED_PROXIES to your reverse proxy's address instead"
+        );
+    } else if !c.trusted_proxies.is_empty() {
+        tracing::info!(proxies = ?c.trusted_proxies, "client IP taken from X-Forwarded-For of these proxies");
+    }
 }

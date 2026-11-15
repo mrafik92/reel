@@ -93,7 +93,8 @@ async fn call(
         None => Body::empty(),
     };
     let mut req = r.body(b).unwrap();
-    let addr: SocketAddr = format!("{peer}:50000").parse().unwrap();
+    let ip: std::net::IpAddr = peer.parse().unwrap();
+    let addr = SocketAddr::new(ip, 50000);
     req.extensions_mut().insert(ConnectInfo(addr));
     let res = app.clone().oneshot(req).await.unwrap();
     let s = res.status();
@@ -510,6 +511,156 @@ async fn setup_behind_a_trusted_proxy_judges_the_forwarded_client() {
         .await
         .0,
         StatusCode::CREATED
+    );
+}
+
+// ───────────── public edge: Caddy (10.10.10.73) is the only trusted proxy ─────────────
+//
+// Production shape for public exposure (#31): internet → Caddy :8443 on CT 107 → Reel :8420 with
+// `REEL_TRUSTED_PROXIES=10.10.10.73`. Caddy overwrites X-Forwarded-For with the address it saw.
+// Nothing an internet client puts in a header may make it look like the LAN.
+
+const CADDY: &str = "10.10.10.73";
+
+/// (socket peer, request headers, what the case shows)
+type Spoof<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
+
+fn edge(c: &mut reel_core::Config) {
+    c.trusted_proxies = vec![CADDY.into()];
+}
+
+#[tokio::test]
+async fn edge_spoofed_forwarding_headers_cannot_open_lan_only_setup() {
+    let e = env_with(edge, opts(100, 100), false).await;
+    let b = json!({"username": "boss", "password": PW});
+    let spoofs: &[Spoof] = &[
+        (
+            CADDY,
+            &[("x-forwarded-for", "203.0.113.7")],
+            "Caddy forwarded an internet client",
+        ),
+        (
+            CADDY,
+            &[("x-forwarded-for", "192.168.1.5, 203.0.113.7")],
+            "a proxy that appends: the client's own left-hand entry is not believed",
+        ),
+        (
+            CADDY,
+            &[("x-forwarded-for", "10.10.10.73, 203.0.113.7")],
+            "claiming to be the proxy itself",
+        ),
+        (
+            CADDY,
+            &[
+                ("x-forwarded-for", "203.0.113.7"),
+                ("x-real-ip", "192.168.1.5"),
+            ],
+            "X-Real-IP only fills in when X-Forwarded-For is missing",
+        ),
+        (
+            CADDY,
+            &[
+                ("x-forwarded-for", "203.0.113.7"),
+                ("forwarded", "for=192.168.1.5"),
+            ],
+            "RFC 7239 Forwarded is never read",
+        ),
+        (
+            "203.0.113.7",
+            &[("x-forwarded-for", "192.168.1.5")],
+            "straight to :8420 from the internet",
+        ),
+        (
+            "203.0.113.7",
+            &[("x-real-ip", "127.0.0.1")],
+            "straight to :8420 with X-Real-IP",
+        ),
+        ("2001:db8::7", &[("x-forwarded-for", "::1")], "IPv6 peer"),
+    ];
+    for (peer, headers, why) in spoofs {
+        let (s, v) = call(
+            &e.raw,
+            peer,
+            "POST",
+            "/api/v1/setup",
+            Some(b.clone()),
+            headers,
+        )
+        .await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{why}: {v}");
+    }
+    // the gate is not simply shut: a LAN client behind Caddy may still claim the server
+    let (s, v) = call(
+        &e.raw,
+        CADDY,
+        "POST",
+        "/api/v1/setup",
+        Some(b),
+        &[("x-forwarded-for", "192.168.1.30")],
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+}
+
+#[tokio::test]
+async fn edge_only_the_named_proxy_may_vouch_for_a_client() {
+    let e = env_with(edge, opts(100, 100), true).await;
+    // another LAN host (a TV, another container) talking to :8420 directly picks no address
+    assert_eq!(
+        recorded_ip(&e, "10.10.10.50", Some("198.51.100.4")).await,
+        "10.10.10.50"
+    );
+    assert_eq!(
+        recorded_ip(&e, CADDY, Some("6.6.6.6, 198.51.100.4")).await,
+        "198.51.100.4"
+    );
+    // the deprecated blanket alias believes any private-range peer
+    let e = env_with(|c| c.trust_proxy_headers = true, opts(100, 100), true).await;
+    assert_eq!(
+        recorded_ip(&e, "10.10.10.50", Some("198.51.100.4")).await,
+        "198.51.100.4"
+    );
+}
+
+#[tokio::test]
+async fn edge_login_lockout_follows_the_real_client_not_a_spoofed_prefix() {
+    let e = env_with(edge, opts(100, 3), true).await;
+    let login = |user: String, pw: &'static str, xff: String| {
+        let app = e.raw.clone();
+        async move {
+            call(
+                &app,
+                CADDY,
+                "POST",
+                "/api/v1/auth/login",
+                Some(json!({"username": user, "password": pw})),
+                &[("x-forwarded-for", xff.as_str())],
+            )
+            .await
+            .0
+        }
+    };
+    // password spraying from one internet address, a fresh spoofed prefix each time
+    for i in 0..3 {
+        assert_eq!(
+            login(
+                format!("user{i}"),
+                "wrong-wrong",
+                format!("192.168.1.{i}, 203.0.113.7")
+            )
+            .await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        login("admin".into(), PW, "10.0.0.99, 203.0.113.7".into()).await,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the address is locked whatever it prepends"
+    );
+    // other clients behind the same proxy are not caught by that lock
+    assert_eq!(
+        login("admin".into(), PW, "198.51.100.4".into()).await,
+        StatusCode::OK
     );
 }
 
