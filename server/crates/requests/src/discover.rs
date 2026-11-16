@@ -88,7 +88,20 @@ pub struct PersonCredit {
     pub role: &'static str,
     pub character: Option<String>,
     pub job: Option<String>,
+    /// TMDB vote count (pairs with `card.vote_average`; lets clients ignore thinly-voted ratings).
+    pub vote_count: Option<i64>,
+    /// TMDB popularity score.
+    pub popularity: Option<f64>,
 }
+
+/// A filmography entry while building [`PersonDetail`]: card source, role, character, job, vote count.
+type CreditEntry = (
+    SearchResult,
+    &'static str,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+);
 
 /// Discovery facade.
 pub struct Discovery {
@@ -444,7 +457,7 @@ impl Discovery {
     pub async fn person(&self, tmdb_id: i64) -> Result<PersonDetail> {
         let p = self.tmdb()?.person(tmdb_id).await?;
         let mut seen: HashMap<(MediaType, i64), usize> = HashMap::new();
-        let mut entries: Vec<(SearchResult, &'static str, Option<String>, Option<String>)> = vec![];
+        let mut entries: Vec<CreditEntry> = vec![];
         let all = p.combined_credits.iter().flat_map(|c| {
             c.cast
                 .iter()
@@ -491,14 +504,15 @@ impl Discovery {
                 poster_path: c.poster_path.clone(),
                 backdrop_path: c.backdrop_path.clone(),
                 vote_average: c.vote_average,
+                popularity: c.popularity,
                 media_type: Some(mt.as_str().to_string()),
                 ..Default::default()
             };
-            entries.push((sr, role, character, job));
+            entries.push((sr, role, character, job, c.vote_count));
         }
         // newest first; undated entries last
         entries.sort_by(|a, b| {
-            let d = |e: &(SearchResult, _, _, _)| {
+            let d = |e: &CreditEntry| {
                 e.0.release_date
                     .clone()
                     .or_else(|| e.0.first_air_date.clone())
@@ -512,12 +526,16 @@ impl Discovery {
         let credits = cards
             .into_iter()
             .zip(entries)
-            .map(|(card, (_, role, character, job))| PersonCredit {
-                card,
-                role,
-                character: if role == "cast" { character } else { None },
-                job: if role == "crew" { job } else { None },
-            })
+            .map(
+                |(card, (sr, role, character, job, vote_count))| PersonCredit {
+                    card,
+                    role,
+                    character: if role == "cast" { character } else { None },
+                    job: if role == "crew" { job } else { None },
+                    vote_count,
+                    popularity: sr.popularity,
+                },
+            )
             .collect();
         Ok(PersonDetail {
             tmdb_id: p.id,

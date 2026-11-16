@@ -287,6 +287,130 @@ async fn decide_audio_transcode_serves_playlist_and_limits() {
     assert_eq!(hw["selected"]["type"], "software");
 }
 
+/// GET `uri` with `Accept-Encoding` (and optionally `Range`).
+async fn get_enc(app: &Router, uri: &str, enc: &str, range: Option<&str>) -> Response<Body> {
+    let mut r = Request::get(uri).header(header::ACCEPT_ENCODING, enc);
+    if let Some(range) = range {
+        r = r.header(header::RANGE, range);
+    }
+    call(app, r.body(Body::empty()).unwrap()).await
+}
+
+fn gunzip(b: &[u8]) -> Vec<u8> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    flate2::read::GzDecoder::new(b)
+        .read_to_end(&mut out)
+        .unwrap();
+    out
+}
+
+fn unbrotli(b: &[u8]) -> Vec<u8> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    brotli::Decompressor::new(b, 4096)
+        .read_to_end(&mut out)
+        .unwrap();
+    out
+}
+
+/// #112: playlists go out gzip/br when asked; segments and direct play are never compressed and
+/// Range keeps working.
+#[tokio::test]
+async fn playlists_are_compressed_media_is_not() {
+    let Some(fx) = fixture().await else { return };
+    let (_, fid) = movie(&fx, "Needs Audio").await;
+    let (s, v) = send(
+        &fx.app,
+        "POST",
+        &decide_uri(fid),
+        Some(json!({"preset":"web_chrome"})),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let sid = v["session_id"].as_str().unwrap();
+    let master = v["url"].as_str().unwrap().to_string();
+    let q = master.split_once('?').unwrap().1.to_string();
+    let index = format!("/api/v1/stream/{sid}/main/index.m3u8?{q}");
+
+    // reference bodies, no Accept-Encoding
+    let plain_index = {
+        let res = call(&fx.app, Request::get(&index).body(Body::empty()).unwrap()).await;
+        assert_eq!(res.status(), 200);
+        assert!(res.headers().get(header::CONTENT_ENCODING).is_none());
+        body_bytes(res).await
+    };
+    assert!(String::from_utf8_lossy(&plain_index).contains("#EXTINF"));
+
+    for (uri, label) in [(&master, "master"), (&index, "index")] {
+        let plain =
+            body_bytes(call(&fx.app, Request::get(uri).body(Body::empty()).unwrap()).await).await;
+        let res = get_enc(&fx.app, uri, "gzip", None).await;
+        assert_eq!(res.status(), 200, "{label}");
+        assert_eq!(res.headers()[header::CONTENT_ENCODING], "gzip", "{label}");
+        assert_eq!(
+            res.headers()[header::CONTENT_TYPE],
+            "application/vnd.apple.mpegurl"
+        );
+        assert!(
+            res.headers()[header::VARY]
+                .to_str()
+                .unwrap()
+                .to_ascii_lowercase()
+                .contains("accept-encoding")
+        );
+        assert_eq!(gunzip(&body_bytes(res).await), plain, "{label}");
+
+        // hls.js in Chrome sends `gzip, deflate, br, zstd`: brotli wins
+        let res = get_enc(&fx.app, uri, "gzip, deflate, br, zstd", None).await;
+        assert_eq!(res.headers()[header::CONTENT_ENCODING], "br", "{label}");
+        assert_eq!(unbrotli(&body_bytes(res).await), plain, "{label}");
+
+        // only identity / unsupported codings: plain
+        let res = get_enc(&fx.app, uri, "identity", None).await;
+        assert!(res.headers().get(header::CONTENT_ENCODING).is_none());
+        assert_eq!(body_bytes(res).await, plain);
+    }
+
+    // segments: never compressed
+    let text = String::from_utf8(plain_index).unwrap();
+    let seg = text
+        .lines()
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .unwrap();
+    let seg = format!("/api/v1/stream/{sid}/main/{seg}");
+    let res = get_enc(&fx.app, &seg, "gzip, deflate, br, zstd", None).await;
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.headers()[header::CONTENT_TYPE], "video/mp4");
+    assert!(res.headers().get(header::CONTENT_ENCODING).is_none());
+    assert!(!body_bytes(res).await.is_empty());
+
+    // direct play: never compressed, Range still answered with 206 and the exact slice
+    let (s, v) = send(
+        &fx.app,
+        "POST",
+        &decide_uri(movie(&fx, "Chrome Ok").await.1),
+        Some(json!({"preset":"web_chrome"})),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["mode"], "direct_play");
+    let direct = v["url"].as_str().unwrap();
+    let full = get_enc(&fx.app, direct, "gzip, br", None).await;
+    assert_eq!(full.status(), 200);
+    assert!(full.headers().get(header::CONTENT_ENCODING).is_none());
+    assert!(full.headers().get(header::CONTENT_LENGTH).is_some());
+    let full = body_bytes(full).await;
+    let res = get_enc(&fx.app, direct, "gzip, br", Some("bytes=100-199")).await;
+    assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
+    assert!(res.headers().get(header::CONTENT_ENCODING).is_none());
+    assert_eq!(
+        res.headers()[header::CONTENT_RANGE],
+        format!("bytes 100-199/{}", full.len())
+    );
+    assert_eq!(body_bytes(res).await, full[100..200].to_vec());
+}
+
 #[tokio::test]
 async fn played_toggle_cascades() {
     let Some(fx) = fixture().await else { return };

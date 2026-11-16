@@ -48,6 +48,8 @@ bytes = "1"
 sha2 = "0.10"
 
 [dev-dependencies]
+flate2 = "1"
+brotli = "9"
 http-body-util.workspace = true
 tower.workspace = true
 tempfile = "3"

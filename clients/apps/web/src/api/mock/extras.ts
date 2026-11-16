@@ -54,6 +54,17 @@ export function mockPerson(db: Db, tmdb: TmdbEntry[], id: number, cardOf: (c: Tm
       credits.push({ ...cardOf(t), role: "cast", character: castOfTmdb(t)[0]?.character ?? null });
     }
   }
+  // TMDB vote counts / popularity for the sort control (#141), stable per title.
+  credits.forEach((c) => {
+    const v = rng(c.tmdb_id + 7);
+    c.vote_count = Math.floor(30 + v() * v() * 12_000);
+    c.popularity = Math.round((0.5 + v() * v() * 90) * 10) / 10;
+  });
+  // Edge cases: a thinly-voted 9.6 (must not top "Highest rated") and an unrated title.
+  const thin = credits[credits.length - 1];
+  if (thin) Object.assign(thin, { vote_average: 9.6, vote_count: 4, popularity: 0.8 });
+  const unrated = credits.length > 3 ? credits[credits.length - 2] : undefined;
+  if (unrated) Object.assign(unrated, { vote_average: null, vote_count: 0, popularity: 0.3 });
   credits.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
   const born = 1950 + Math.floor(r() * 45);
   const first = name.split(" ")[0];

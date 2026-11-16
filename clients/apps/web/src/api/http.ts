@@ -8,9 +8,33 @@ export class ApiError extends Error {
     public retryAfter?: number,
     /** Parsed JSON error body, when the server sent one (extra fields beyond `error`). */
     public body?: Record<string, unknown>,
+    /** Why a request never got an answer (status 0 only). */
+    public network?: NetworkFailure,
   ) {
     super(message);
   }
+}
+
+/**
+ * Why a request got no answer (#90):
+ * - `aborted`: the caller cancelled it or the page is unloading. Nothing went wrong; don't show it.
+ * - `offline`: the browser says it has no network.
+ * - `timeout`: no answer within the time limit.
+ * - `network`: the connection failed (server down, connection reset, a route blip).
+ */
+export type NetworkFailure = "aborted" | "offline" | "timeout" | "network";
+
+/** A request the caller or the page cancelled: not an error worth showing. */
+export function isAborted(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 0 && e.network === "aborted";
+}
+
+/** Classify a failed fetch. Pure, so it's unit-tested. */
+export function classifyFailure(f: { callerAborted: boolean; unloading: boolean; timedOut: boolean; online: boolean }): NetworkFailure {
+  if (f.callerAborted || f.unloading) return "aborted";
+  if (!f.online) return "offline";
+  if (f.timedOut) return "timeout";
+  return "network";
 }
 
 const TOKEN_KEY = "reel.token";
@@ -49,6 +73,8 @@ export interface RequestOptions {
   auth?: boolean;
   /** Survive page unload (playback stop). */
   keepalive?: boolean;
+  /** Cancel the request (page left, a newer request superseded it). Fails with an `aborted` ApiError. */
+  signal?: AbortSignal;
 }
 
 function qs(q?: Query): string {
@@ -63,7 +89,7 @@ function qs(q?: Query): string {
 }
 
 const FRIENDLY: Record<number, string> = {
-  0: "Can't reach your Reel server",
+  0: "Can't reach Reel",
   401: "Your session has ended — please sign in again",
   403: "You don't have access to that",
   404: "Not found",
@@ -107,17 +133,48 @@ function noteResult(method: string, path: string, reached: boolean): void {
 const READ_TIMEOUT_MS = 20_000;
 const WRITE_TIMEOUT_MS = 60_000;
 
-/** One fetch with a timeout. Network failures, aborts and timeouts all become status 0. */
-async function send(url: string, init: RequestInit): Promise<Response> {
+const NETWORK_MESSAGE: Record<NetworkFailure, string> = {
+  aborted: "Request cancelled",
+  offline: "You're offline",
+  timeout: "Reel took too long to answer",
+  network: FRIENDLY[0]!,
+};
+
+// Requests the browser cancels while the page unloads (reload, leaving the site) aren't failures.
+let unloading = false;
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("pagehide", () => (unloading = true));
+  window.addEventListener("pageshow", () => (unloading = false));
+}
+
+const isOnline = () => typeof navigator === "undefined" || navigator.onLine !== false;
+
+/** One fetch with a timeout. Throws the `NetworkFailure` when no response arrived. */
+async function send(url: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
+  if (signal?.aborted) throw "aborted" satisfies NetworkFailure;
   const ctl = typeof AbortController !== "undefined" ? new AbortController() : undefined;
   const ms = init.method === "GET" ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS;
-  const timer = ctl ? setTimeout(() => ctl.abort(), ms) : undefined;
+  let timedOut = false;
+  const timer = ctl
+    ? setTimeout(() => {
+        timedOut = true;
+        ctl.abort();
+      }, ms)
+    : undefined;
+  const onAbort = () => ctl?.abort();
+  signal?.addEventListener("abort", onAbort);
   try {
     return await fetch(url, { ...init, signal: ctl?.signal });
+  } catch {
+    throw classifyFailure({ callerAborted: !!signal?.aborted, unloading, timedOut, online: isOnline() });
   } finally {
     if (timer) clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
   }
 }
+
+/** Pause between the first try of a read and its automatic retry. */
+const RETRY_DELAY_MS = 600;
 
 export async function request<T>(method: string, path: string, o: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
@@ -132,19 +189,26 @@ export async function request<T>(method: string, path: string, o: RequestOptions
     keepalive: o.keepalive,
   };
   let res: Response | undefined;
+  let failure: NetworkFailure = "network";
   // Reads are retried once after a network blip (a reset connection, a request the browser dropped
-  // while the tab was in the background); writes aren't, they may already have happened.
+  // while the tab was in the background); writes aren't, they may already have happened. Cancelled
+  // requests aren't retried.
   const tries = method === "GET" ? 2 : 1;
-  for (let i = 0; i < tries && !res; i++) {
-    if (i) await new Promise((r) => setTimeout(r, 600));
+  for (let i = 0; i < tries && !res && failure !== "aborted"; i++) {
+    if (i) await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
     try {
-      res = await send(url, init);
-    } catch {
-      /* status 0 below */
+      res = await send(url, init, o.signal);
+    } catch (e) {
+      failure = typeof e === "string" ? (e as NetworkFailure) : "network";
+      if (o.signal?.aborted || unloading) failure = "aborted";
     }
   }
-  noteResult(method, path, !!res);
-  if (!res) throw new ApiError(0, FRIENDLY[0]!);
+  if (!res) {
+    // A cancelled request says nothing about the connection.
+    if (failure !== "aborted") noteResult(method, path, false);
+    throw new ApiError(0, NETWORK_MESSAGE[failure], undefined, undefined, failure);
+  }
+  noteResult(method, path, true);
   if (!res.ok) {
     let msg = "";
     let body: Record<string, unknown> | undefined;
