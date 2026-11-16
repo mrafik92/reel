@@ -19,6 +19,7 @@ import {
   totalChannels, noteWatched, nowNext, progressOf,
 } from "../components/live/store";
 import { currentUser } from "../lib/auth";
+import { createTapToggle } from "../lib/tap";
 
 const STATS_KEY = "reel.live.stats";
 const ZAP_DEBOUNCE = 320;
@@ -386,6 +387,20 @@ function Watch(): JSX.Element {
     });
   });
 
+  // Full screen: a click shows/hides the overlay (never pauses). In the page: a click tunes the
+  // idle hero channel or goes full screen. Single clicks wait out a possible double-click so it
+  // doesn't flicker the overlay (see lib/tap).
+  const activate = () => {
+    const h = heroCh();
+    if (idle() && h) tuneNow(h);
+    else enterFull();
+  };
+  const tap = createTapToggle({
+    shown: () => isFull() && osd(),
+    show: () => (isFull() ? showOsd() : activate()),
+    hide: () => (isFull() ? setOsd(false) : activate()),
+  });
+
   let lastMove = 0;
   const onPointer = () => {
     if (!isFull()) return;
@@ -405,13 +420,13 @@ function Watch(): JSX.Element {
           tabindex={isFull() ? -1 : 0}
           data-focusable={isFull() ? undefined : ""}
           aria-label={isFull() ? `Watching ${tuned()?.name ?? ""}` : "Watch full screen"}
-          onClick={() => {
-            if (isFull()) return osd() ? setOsd(false) : showOsd();
-            const h = heroCh();
-            if (idle() && h) tuneNow(h);
+          onPointerDown={tap.onPointerDown}
+          onClick={tap.onClick}
+          onDblClick={() => {
+            tap.cancel();
+            if (isFull()) exitFull();
             else enterFull();
           }}
-          onDblClick={() => (isFull() ? exitFull() : enterFull())}
           onMouseMove={onPointer}
         >
           <video ref={video} class="live__video" playsinline autoplay />
