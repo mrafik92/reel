@@ -134,7 +134,9 @@ html.tv .topsearch__label {
 .rail__link--search .rail__icon {
   color: var(--accent-hi);
 }
-.rail__link--search:focus .rail__icon {
+/* Gated like the rail's inverted focus pill (#180): a tapped Search keeps focus, not a dark icon. */
+html[data-input="key"] .rail__link--search:focus .rail__icon,
+html.tv .rail__link--search:focus .rail__icon {
   color: var(--bg);
 }
 

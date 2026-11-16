@@ -554,8 +554,10 @@ html[data-input="key"] .dl-row__inner:focus {
   transition: stroke-dashoffset 900ms linear;
 }
 .rail__ring--stalled .rail__ring-arc { stroke: var(--warn); }
-.rail__link:focus .rail__ring-track { stroke: rgba(var(--bg-rgb), 0.15); }
-.rail__link:focus .rail__ring-arc { stroke: var(--bg); }
+html[data-input="key"] .rail__link:focus .rail__ring-track,
+html.tv .rail__link:focus .rail__ring-track { stroke: rgba(var(--bg-rgb), 0.15); }
+html[data-input="key"] .rail__link:focus .rail__ring-arc,
+html.tv .rail__link:focus .rail__ring-arc { stroke: var(--bg); }
 .rail__label small,
 .rail__sub {
   display: block;
