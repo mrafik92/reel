@@ -23,8 +23,32 @@ export type RequestState = S["RequestState"];
 export type ProgressDto = S["ProgressDto"];
 export type CreateRequest = S["CreateRequestBody"];
 
-export type DecideRequest = S["DecideRequest"];
-export type DecideResponse = S["DecideResponse"];
+/**
+ * Playback quality (#87): `auto` | `original` | a ladder rung. In `server/openapi.json` since #48;
+ * added by hand here because a full `gen:api` regeneration pulls in unrelated schema drift.
+ */
+export type Quality = "auto" | "original" | "1080p" | "720p" | "480p";
+export interface QualityOption {
+  id: Quality;
+  label: string;
+  /** Expected total bitrate (kbit/s) of this choice. */
+  bitrate_kbps: number;
+  /** False when it would upscale, change nothing, or exceed the user's bitrate limit. */
+  available: boolean;
+}
+export type DecideRequest = S["DecideRequest"] & {
+  quality?: Quality | null;
+  /** Client bandwidth hint; the server caps it by the user's limit. */
+  max_bitrate_kbps?: number | null;
+  for_cast?: boolean | null;
+};
+/** Older servers (and some mocks) omit the quality fields: treat them as optional. */
+export type DecideResponse = S["DecideResponse"] & {
+  /** Resolved: `original` or a rung, never `auto`. */
+  quality?: Quality;
+  bitrate_kbps?: number;
+  quality_options?: QualityOption[];
+};
 export type DeviceProfileWire = S["DeviceProfile"];
 export type PlaybackMode = S["PlaybackMode"];
 export type PlaybackDecision = S["PlaybackDecision"];

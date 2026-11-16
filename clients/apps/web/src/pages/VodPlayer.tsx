@@ -67,6 +67,7 @@ function source(kind: "movie" | "episode", id: VodId, back: string, eyebrow?: st
         audio_index: o.audio,
         subtitle_index: o.subtitle >= 0 ? o.subtitle : null,
         start_s: o.start > 0 ? Math.floor(o.start) : null,
+        ...(o.quality ? { quality: o.quality } : {}),
         ...(t ? { takeover: true } : {}),
       });
     },

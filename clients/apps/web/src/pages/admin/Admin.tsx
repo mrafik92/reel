@@ -40,7 +40,7 @@ function PlaybackLink(props: { current: boolean }): JSX.Element {
       <Icon name="play" />
       <span>
         <strong>Playback</strong>
-        <small>Audio, subtitles, Live TV</small>
+        <small>Quality, audio, subtitles, Live TV</small>
       </span>
     </a>
   );
