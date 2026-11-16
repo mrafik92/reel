@@ -1,7 +1,7 @@
 # Design: multi-variant HLS with lazy rungs (#111)
 
-> **Status: proposed, waiting for the owner's approval (2026-11-17).** Nothing here is built yet. Until the
-> PR stack in §14 ships, every session is single-rendition. Once it ships, the stable parts move into
+> **Status: approved 2026-11-17 (PR #178). Being built: ① (segment plan + keyframe alignment) is in
+> review; ②–④ aren't built.** Until ② ships, every session the API creates is single-rendition. Once it ships, the stable parts move into
 > [ARCHITECTURE.md](../ARCHITECTURE.md) §3.1 and this note is trimmed to what's still useful.
 
 Epic #151, Wave 2. Replaces decision A6 ("one session = one rendition"). Builds on #87 (quality choice),
@@ -161,16 +161,22 @@ same window from GOPs 12.5–16.125 and 16.125–21, which is the same 8.5 s.
 **Fixed grid fix (also helps single-variant sessions):** today's
 `expr:if(isnan(prev_forced_t),gte(t,0),gte(t,prev_forced_t+4))` is relative, so at 23.976 fps every
 keyframe lands 4.004 s after the previous one: **+0.4 s after 100 segments** (measured: segment 100 at
-400.400 s). Two rungs restarted at different points would disagree. An absolute grid
-(`expr:gte(t,{start}+n_forced*4)`) measured 400.025 s, within one frame. Transcode-only rungs use the
-absolute grid; keyframe-plan rungs use the explicit list. For a very long file the list is capped near
-100 KB of argv (Linux `MAX_ARG_STRLEN` is 128 KB, about 10 h of 4 s segments). Past it, the next segment
-request restarts that rung at its current position.
+400.400 s). Two rungs restarted at different points would disagree. An expression can't fix it: in
+`-force_key_frames expr:…`, `t` counts from the run's first output frame, not the source timestamp
+(after `-ss 12`, `gte(t,12+n_forced*4)` put keyframes at 12, 24, 28). An explicit **time list is
+absolute** (source timestamps, also with `-ss` + `-copyts`), so **every encode on a plan, fixed or
+keyframe, uses the list** and cuts a file at every keyframe (`-g 100000`, `hls_time 0.001`). The
+muxer's own `hls_time 4` grid can't be kept for fixed plans: it counts from the run's first frame,
+which an accurate seek puts up to a frame after the boundary, so it skipped the absolute keyframe
+and merged two segments (caught by the existing `segments_valid` test). For a very long file the list
+is capped near 100 KB of argv (Linux `MAX_ARG_STRLEN` is 128 KB, about 10 h of 4 s segments). Past it,
+the segment check rejects the next segment and the variant restarts there.
 
 **Timeline normalisation** is unchanged and per variant: each variant keeps its own `epoch` and
 `run_delta`, and every segment is retimed so its first video sample sits exactly at `plan.start(n)`
-(`normalize_segment` for rungs, `assemble_segment` for the original). **New check:** a rung segment's
-duration must match `plan.seg_len(n)` within one frame. A stray keyframe (an encoder that ignores `-g`)
+(`normalize_segment` for rungs, `assemble_segment` for the original). **New check** (rungs on a
+keyframe plan only, so variable-frame-rate transcodes on the fixed grid can't be rejected): a rung
+segment's start and duration must match the plan within 60 ms (under one frame at ≥ 20 fps). A stray keyframe (an encoder that ignores `-g`)
 is caught as an invalid segment and makes that variant's ffmpeg restart, instead of quietly shifting
 every later boundary.
 

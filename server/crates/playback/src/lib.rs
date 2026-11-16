@@ -13,6 +13,7 @@
 //! // if d.mode != DirectPlay: mgr.create_session(StartRequest { .. }).await  -> url /stream/{id}/master.m3u8
 //! ```
 
+pub mod codecs;
 pub mod decision;
 pub mod error;
 pub mod ffmpeg;
@@ -40,4 +41,6 @@ pub use plan::SegmentPlan;
 pub use profile::DeviceProfile;
 pub use quality::{Quality, QualityDecision, QualityOption, QualityRequest, decide_quality};
 pub use select::{Pick, PlaybackPrefs, Selected, SubtitleMode};
-pub use session::{ExternalTranscodes, SessionConfig, SessionInfo, SessionManager, StartRequest};
+pub use session::{
+    ExternalTranscodes, SessionConfig, SessionInfo, SessionManager, StartRequest, VariantSpec,
+};

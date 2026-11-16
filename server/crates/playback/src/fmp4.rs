@@ -80,6 +80,8 @@ struct Traf {
     tfdt: u64,
     /// composition offset of the first sample (ticks)
     first_cts: i64,
+    /// Sum of the sample durations (ticks); `None` when they come from `trex` (not parsed).
+    duration: Option<u64>,
 }
 
 fn trafs(d: &[u8]) -> Vec<Traf> {
@@ -102,28 +104,54 @@ fn trafs(d: &[u8]) -> Vec<Traf> {
                     be32(d, tfdt.0 + 4)? as u64
                 };
                 let mut first_cts = 0i64;
+                // tfhd: flags, track id, [base data offset 8], [sample description 4],
+                // [default sample duration 4], …
+                let tfhd_flags = be32(d, tfhd.0)? & 0xFF_FFFF;
+                let mut q = tfhd.0 + 8;
+                if tfhd_flags & 1 != 0 {
+                    q += 8;
+                }
+                if tfhd_flags & 2 != 0 {
+                    q += 4;
+                }
+                let default_dur = if tfhd_flags & 8 != 0 {
+                    Some(be32(d, q)? as u64)
+                } else {
+                    None
+                };
+                let mut duration = None;
                 if let Some(trun) = child(d, (ts, te), b"trun") {
                     let flags = be32(d, trun.0)? & 0xFF_FFFF;
-                    if flags & 0x800 != 0 {
-                        let mut p = trun.0 + 8;
-                        if flags & 1 != 0 {
-                            p += 4;
-                        }
-                        if flags & 4 != 0 {
-                            p += 4;
-                        }
-                        for bit in [0x100, 0x200, 0x400] {
-                            if flags & bit != 0 {
-                                p += 4;
-                            }
-                        }
-                        let v = be32(d, p)?;
+                    let count = be32(d, trun.0 + 4)? as usize;
+                    let mut p = trun.0 + 8;
+                    if flags & 1 != 0 {
+                        p += 4;
+                    }
+                    if flags & 4 != 0 {
+                        p += 4;
+                    }
+                    let fields = [0x100, 0x200, 0x400, 0x800]
+                        .iter()
+                        .filter(|b| flags & **b != 0)
+                        .count();
+                    if flags & 0x800 != 0 && count > 0 {
+                        let at = p + 4 * (fields - 1);
+                        let v = be32(d, at)?;
                         first_cts = if d[trun.0] == 1 {
                             v as i32 as i64
                         } else {
                             v as i64
                         };
                     }
+                    duration = if flags & 0x100 != 0 {
+                        let mut sum = 0u64;
+                        for i in 0..count {
+                            sum += be32(d, p + i * 4 * fields)? as u64;
+                        }
+                        Some(sum)
+                    } else {
+                        default_dur.map(|dd| dd * count as u64)
+                    };
                 }
                 Some(Traf {
                     track: be32(d, tfhd.0 + 4)?,
@@ -131,6 +159,7 @@ fn trafs(d: &[u8]) -> Vec<Traf> {
                     wide,
                     tfdt: tfdt_val,
                     first_cts,
+                    duration,
                 })
             };
             if let Some(t) = parse() {
@@ -149,6 +178,21 @@ pub fn first_video_pts(data: &[u8], tracks: &HashMap<u32, Track>) -> Option<f64>
         .find(|t| tracks.get(&t.track).is_some_and(|k| k.video))?;
     let scale = tracks[&t.track].timescale as f64;
     Some((t.tfdt as f64 + t.first_cts as f64) / scale)
+}
+
+/// Total duration (seconds) of the video samples in `data` (all fragments); `None` if a fragment
+/// doesn't carry its sample durations.
+pub fn video_duration(data: &[u8], tracks: &HashMap<u32, Track>) -> Option<f64> {
+    let mut total = 0u64;
+    let mut scale = None;
+    for t in trafs(data) {
+        let Some(k) = tracks.get(&t.track).filter(|k| k.video) else {
+            continue;
+        };
+        scale = Some(k.timescale as f64);
+        total += t.duration?;
+    }
+    Some(total as f64 / scale?)
 }
 
 /// `tfdt` (seconds) of the first video fragment.
