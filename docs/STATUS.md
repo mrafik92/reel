@@ -151,7 +151,7 @@ proposal are in [#102](https://github.com/mrafik92/reel/issues/102#issuecomment-
 | Player | The 6 Mbit/s admin cap sends 95 of 311 files to a 720p transcode that the LAN doesn't need (#2, after #87) |
 | Player | HDR/DV files are always tone-mapped to SDR in the browser (the profile probe reports no HDR), and the tone-map is the slowest path (2.6× realtime, 9.9 s to first frame remotely) (#114) |
 | Player | Start-up costs on slow links: VOD playlists are 175–260 KB and served uncompressed (7.8 KB gzipped); MP4s with a trailing `moov` make the browser fetch the index from the end of the file first; transcode segments are 4 s from the start (#112) |
-| Transcode | VAAPI encodes don't use the N100's low-power encoders, and output is always H.264 even for HEVC-capable clients (#113) |
+| Transcode | VAAPI output is always H.264, even for HEVC-capable clients (#113 part 2, after #111). The low-power encoders (part 1) are built and tested, not yet checked live |
 | Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) wasn't delivered (the agent errored). For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
 | Player | A link slower than a file's peak bitrate still stalls (e.g. The Remarried Empress E1: 5.9 Mbit/s average, 11–13 Mbit/s at 2:44–3:16). The player now waits and recovers instead of stopping (#91), but only a lower rendition fixes it (#87) |
 | IPTV | Some provider feeds stall for 8 s at a time (France 5 on 2026-11-12); the hub reconnects and the player re-tunes, but the picture freezes meanwhile |
