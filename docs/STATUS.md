@@ -145,9 +145,12 @@ proposal are in [#102](https://github.com/mrafik92/reel/issues/102#issuecomment-
   "Couldn't load your channels / Check your connection and try again" with **Try again** and no `?mock=1` tip
   (the tip is compiled out of production bundles); a 503 shows the server's message; browser offline shows
   "You're offline"; a failed refresh of an already-loaded Live TV list keeps the list and shows a toast; in
-  1920×1080 TV mode an arrow key lands on **Try again**. Mock mode unchanged. Cancelled requests are covered by
-  unit tests (`clients/apps/web/test/http.test.ts`). Not checked: a signed-in session against the live server
-  (the stored admin login was rejected) and a real outage with the container stopped.
+  1920×1080 TV mode an arrow key lands on **Try again** and it stays focused through the background retries
+  (the card is no longer swapped for the skeleton on each attempt). Mock mode unchanged. Signed in against the
+  live server (`8b5fbbb`-era server, channel list only, nothing tuned): the list loads; with `iptv/*` requests
+  reset, a fresh load shows the card and Try again recovers, and a refresh of an already-loaded list keeps it with
+  a toast. Cancelled requests are covered by unit tests (`clients/apps/web/test/http.test.ts`). Not checked: a
+  real outage with the container stopped.
 
 ## Known gaps / bugs
 
