@@ -148,6 +148,10 @@ pub struct SessionInfo {
     pub position_s: f64,
     pub bitrate_kbps: Option<u32>,
     pub hwaccel: String,
+    /// ffmpeg video encoder of a video transcode, e.g. `h264_vaapi (low power)`; `None` when the
+    /// video is copied.
+    #[serde(default)]
+    pub encoder: Option<String>,
     /// ffmpeg currently running for this session.
     pub active: bool,
     /// ffmpeg is paused by the read-ahead throttle.
@@ -211,6 +215,23 @@ struct Session {
     burn_in: Mutex<Option<BurnIn>>,
     meta: Mutex<Meta>,
     proc: tokio::sync::Mutex<Proc>,
+}
+
+/// `hw` after runtime degradation: software when the backend failed, without the low-power
+/// encoders when they failed ([`crate::hwaccel::VAAPI_LOW_POWER`]).
+fn effective(hw: &HwAccel, degraded: &[String]) -> HwAccel {
+    if degraded.iter().any(|d| d == hw.name()) {
+        return HwAccel::Software;
+    }
+    if degraded
+        .iter()
+        .any(|d| d == crate::hwaccel::VAAPI_LOW_POWER)
+    {
+        if let Some(regular) = hw.without_low_power() {
+            return regular;
+        }
+    }
+    hw.clone()
 }
 
 fn now_unix() -> i64 {
@@ -316,19 +337,10 @@ impl SessionManager {
         &self.hw
     }
 
-    /// Backend new sessions will use: software once the configured one has been marked degraded.
+    /// Backend new sessions will use: software once the configured one has been marked degraded,
+    /// the regular VAAPI encoders once the low-power ones have.
     pub fn effective_hwaccel(&self) -> HwAccel {
-        if self
-            .degraded
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|d| d == self.hw.name())
-        {
-            HwAccel::Software
-        } else {
-            self.hw.clone()
-        }
+        effective(&self.hw, &self.degraded.lock().unwrap())
     }
 
     /// Names of backends that failed at runtime and are no longer used.
@@ -340,9 +352,7 @@ impl SessionManager {
     pub fn hwaccel_status(&self, detected: &HwAccelStatus) -> HwAccelStatus {
         let mut st = detected.clone();
         st.degraded = self.degraded_backends();
-        if st.degraded.iter().any(|d| d == st.selected.name()) {
-            st.selected = HwAccel::Software;
-        }
+        st.selected = effective(&st.selected, &st.degraded);
         st
     }
 
@@ -775,6 +785,8 @@ impl SessionManager {
             ),
             Err(_) => (true, false),
         };
+        // clone: a guard taken inside the struct literal would live until its end (and deadlock)
+        let hw = s.hw.lock().unwrap().clone();
         let m = s.meta.lock().unwrap();
         SessionInfo {
             id: s.id.clone(),
@@ -790,7 +802,11 @@ impl SessionManager {
                 VideoAction::Encode { bitrate_kbps, .. } => Some(*bitrate_kbps),
                 _ => s.file.bitrate.map(|b| (b / 1000) as u32),
             }),
-            hwaccel: s.hw.lock().unwrap().name().into(),
+            hwaccel: hw.name().into(),
+            encoder: match &s.decision.video {
+                VideoAction::Encode { codec, .. } => Some(hw.encoder_label(codec)),
+                _ => None,
+            },
             active,
             paused,
             client_paused: m.client_paused,
@@ -1098,25 +1114,38 @@ impl SessionManager {
                 let mut fallback = false;
                 if failed {
                     let cur = s.hw.lock().unwrap().clone();
-                    let encoding = matches!(s.decision.video, VideoAction::Encode { .. });
-                    if encoding
-                        && cur != HwAccel::Software
-                        && p.started.elapsed() < self.cfg.hw_startup_grace
-                        && !s.have_started(&dir, p.start_segment)
-                    {
+                    let codec = match &s.decision.video {
+                        VideoAction::Encode { codec, .. } => Some(codec.as_str()),
+                        _ => None,
+                    };
+                    if let Some(codec) = codec.filter(|_| {
+                        cur != HwAccel::Software
+                            && p.started.elapsed() < self.cfg.hw_startup_grace
+                            && !s.have_started(&dir, p.start_segment)
+                    }) {
+                        // first step down from the low-power encoder to the regular one, then to
+                        // software (#113)
+                        let (degrade, next) = match cur.without_low_power() {
+                            Some(regular) if cur.low_power().for_codec(codec) => {
+                                (crate::hwaccel::VAAPI_LOW_POWER, regular)
+                            }
+                            _ => (cur.name(), HwAccel::Software),
+                        };
                         tracing::warn!(
                             session = %id,
                             backend = cur.name(),
-                            "hardware ffmpeg failed before producing output; retrying with software encoding: {}",
+                            failed = degrade,
+                            next = %next.encoder_label(codec),
+                            "hardware ffmpeg failed before producing output; retrying: {}",
                             s.log.tail(5)
                         );
                         {
                             let mut d = self.degraded.lock().unwrap();
-                            if !d.iter().any(|x| x == cur.name()) {
-                                d.push(cur.name().to_string());
+                            if !d.iter().any(|x| x == degrade) {
+                                d.push(degrade.to_string());
                             }
                         }
-                        *s.hw.lock().unwrap() = HwAccel::Software;
+                        *s.hw.lock().unwrap() = next;
                         fallback = true;
                     }
                 }

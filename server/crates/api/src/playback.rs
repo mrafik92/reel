@@ -573,6 +573,9 @@ pub struct AdminSession {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bitrate_kbps: Option<u32>,
     pub hwaccel: String,
+    /// Video encoder of a transcode, e.g. `h264_vaapi (low power)`; absent when the video is copied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encoder: Option<String>,
     /// ffmpeg is currently running.
     pub active: bool,
     pub started_at: i64,
@@ -615,6 +618,7 @@ pub async fn admin_sessions(
             position_s: s.position_s,
             bitrate_kbps: s.bitrate_kbps,
             hwaccel: s.hwaccel,
+            encoder: s.encoder,
             active: s.active,
             started_at: s.started_at,
             last_ping: s.last_ping,

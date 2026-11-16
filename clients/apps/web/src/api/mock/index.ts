@@ -212,7 +212,7 @@ export function createMockApi(): MockApi {
   };
   playback.set("s-demo", {
     id: "s-demo", user_id: 2, username: "maya", item_id: 104, item_title: "Small Hours", file_id: 1041, active: true,
-    mode: "transcode", hwaccel: "vaapi", position_s: 1880, progress: 0.32, bitrate_kbps: 8000, started_at: nowS() - 1900,
+    mode: "transcode", hwaccel: "vaapi", encoder: "hevc_vaapi (low power)", position_s: 1880, progress: 0.32, bitrate_kbps: 8000, started_at: nowS() - 1900,
     last_ping: nowS() - 4, device_id: "lg-oled",
     reasons: ["Audio codec truehd not supported by webos", "Bitrate 62 Mbps above user cap 20 Mbps"],
     decision: { mode: "transcode", reasons: [], video: { type: "encode", codec: "hevc", width: 1920, height: 1080, bitrate_kbps: 8000, tonemap: false }, audio: { type: "encode", codec: "eac3", channels: 6, bitrate_kbps: 640 }, subtitle: { type: "none" } },
@@ -375,7 +375,7 @@ export function createMockApi(): MockApi {
         // Multi-episode files: credit the episode the client says it's watching.
         id: sid, user_id: 1, username: "rafik", item_id: body.item_id ?? f.item_ids?.[0] ?? itemId,
         item_title: body.item_id ? detail(db, body.item_id)?.title ?? d.title : d.title, file_id: f.id, active: true, mode,
-        hwaccel: mode === "transcode" ? "vaapi" : "none", position_s: body.start_s ?? 0, progress: null,
+        hwaccel: mode === "transcode" ? "vaapi" : "none", encoder: mode === "transcode" ? "h264_vaapi (low power)" : undefined, position_s: body.start_s ?? 0, progress: null,
         bitrate_kbps: null, started_at: nowS(), last_ping: nowS(), device_id: body.device_id, reasons, decision: res.decision,
       });
       return Object.assign(res, { selected });
@@ -601,8 +601,8 @@ export function createMockApi(): MockApi {
     async hwaccel() {
       await latency();
       return {
-        selected: { type: "vaapi", device: "/dev/dri/renderD128" },
-        available: [{ type: "vaapi", device: "/dev/dri/renderD128" }, { type: "qsv", device: "/dev/dri/renderD128" }, { type: "software" }],
+        selected: { type: "vaapi", device: "/dev/dri/renderD128", low_power: { h264: true, hevc: true } },
+        available: [{ type: "vaapi", device: "/dev/dri/renderD128", low_power: { h264: true, hevc: true } }, { type: "qsv", device: "/dev/dri/renderD128" }, { type: "software" }],
         degraded: ["AV1 encode not supported by this GPU"],
         ffmpeg_hwaccels: ["vaapi", "qsv", "drm", "opencl", "vulkan"],
         notes: ["Intel UHD Graphics 770 (iHD driver 24.1)", "HDR → SDR tone mapping via tonemap_vaapi"],

@@ -152,7 +152,7 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
 
     if encode.is_some() {
         match p.hwaccel {
-            HwAccel::Vaapi { device } => {
+            HwAccel::Vaapi { device, .. } => {
                 push(&[
                     "-init_hw_device",
                     &format!("vaapi=va:{device}"),
@@ -297,16 +297,18 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
             if let Some(vf) = &simple_vf {
                 push(&["-vf", vf]);
             }
-            let enc = match (codec, p.hwaccel) {
-                // software HEVC encoding is never offered (CPU-exhaustion vector): H.264 instead
-                ("hevc", HwAccel::Software) => "libx264",
-                ("hevc", HwAccel::Vaapi { .. }) => "hevc_vaapi",
-                ("hevc", HwAccel::Qsv { .. }) => "hevc_qsv",
-                ("hevc", HwAccel::Nvenc) => "hevc_nvenc",
-                ("hevc", HwAccel::VideoToolbox) => "hevc_videotoolbox",
-                (_, hw) => hw.h264_encoder(),
-            };
+            let enc = p.hwaccel.video_encoder(codec);
             push(&["-c:v", enc]);
+            // fixed-function encoder when it passed the startup probe (#113)
+            if p.hwaccel.low_power().for_codec(codec) {
+                push(&["-low_power", "1"]);
+            }
+            // H.264 profile only; the HEVC encoders pick Main/Main10 from the input
+            let profile: &[&str] = if enc.starts_with("hevc") {
+                &[]
+            } else {
+                &["-profile:v", "high"]
+            };
             match p.hwaccel {
                 HwAccel::Software => push(&[
                     "-preset",
@@ -316,10 +318,22 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
                     "-sc_threshold",
                     "0",
                 ]),
-                HwAccel::Nvenc => push(&["-preset", "p4", "-profile:v", "high"]),
-                HwAccel::VideoToolbox => push(&["-profile:v", "high", "-realtime", "0"]),
-                HwAccel::Vaapi { .. } => push(&["-profile:v", "high", "-rc_mode", "VBR"]),
-                HwAccel::Qsv { .. } => push(&["-profile:v", "high", "-preset", "veryfast"]),
+                HwAccel::Nvenc => {
+                    push(&["-preset", "p4"]);
+                    push(profile);
+                }
+                HwAccel::VideoToolbox => {
+                    push(profile);
+                    push(&["-realtime", "0"]);
+                }
+                HwAccel::Vaapi { .. } => {
+                    push(profile);
+                    push(&["-rc_mode", "VBR"]);
+                }
+                HwAccel::Qsv { .. } => {
+                    push(profile);
+                    push(&["-preset", "veryfast"]);
+                }
             }
             push(&[
                 "-b:v",
@@ -558,9 +572,7 @@ mod tests {
 
     #[test]
     fn vaapi_hw_decode_and_tonemap() {
-        let hw = HwAccel::Vaapi {
-            device: "/dev/dri/renderD128".into(),
-        };
+        let hw = HwAccel::vaapi("/dev/dri/renderD128");
         let d = dec(enc(true), aac());
         let got = s(build_args(&params(&d, &hw, 0)));
         assert!(got.starts_with(&format!(
@@ -571,9 +583,7 @@ mod tests {
 
     #[test]
     fn vaapi_burn_in_text_uses_hwupload() {
-        let hw = HwAccel::Vaapi {
-            device: "/dev/dri/renderD128".into(),
-        };
+        let hw = HwAccel::vaapi("/dev/dri/renderD128");
         let d = dec(enc(false), aac());
         let mut p = params(&d, &hw, 0);
         p.burn_in = Some(BurnIn {
@@ -586,6 +596,78 @@ mod tests {
         assert!(got.contains(
             "-vf subtitles=filename=/m/a b.mkv:si=1,format=nv12,hwupload,scale_vaapi=w=1280:h=720:format=nv12 -c:v h264_vaapi"
         ));
+    }
+
+    fn vaapi_lp(h264: bool, hevc: bool) -> HwAccel {
+        HwAccel::Vaapi {
+            device: "/dev/dri/renderD128".into(),
+            low_power: crate::hwaccel::LowPower { h264, hevc },
+        }
+    }
+
+    fn enc_codec(codec: &str) -> VideoAction {
+        VideoAction::Encode {
+            codec: codec.into(),
+            width: 1280,
+            height: 720,
+            bitrate_kbps: 4000,
+            tonemap: false,
+        }
+    }
+
+    #[test]
+    fn vaapi_low_power_h264() {
+        let d = dec(enc(false), aac());
+        let got = s(build_args(&params(&d, &vaapi_lp(true, false), 0)));
+        assert!(got.contains(
+            "-vf scale_vaapi=w=1280:h=720:format=nv12 -c:v h264_vaapi -low_power 1 -profile:v high -rc_mode VBR -b:v 4000k -maxrate 4800k -bufsize 8000k"
+        ), "{got}");
+        // only one low_power flag, and the hardware pipeline is unchanged
+        assert_eq!(got.matches("-low_power").count(), 1);
+        assert!(got.contains("-hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi"));
+    }
+
+    #[test]
+    fn vaapi_without_low_power_support_uses_the_regular_encoder() {
+        // HEVC-only LP must not switch the H.264 encoder to low power
+        let d = dec(enc(false), aac());
+        for hw in [vaapi_lp(false, false), vaapi_lp(false, true)] {
+            let got = s(build_args(&params(&d, &hw, 0)));
+            assert!(!got.contains("-low_power"), "{got}");
+            assert!(got.contains("-c:v h264_vaapi -profile:v high -rc_mode VBR -b:v 4000k"));
+        }
+    }
+
+    #[test]
+    fn vaapi_hevc_output_low_power_and_fallback() {
+        let d = dec(enc_codec("hevc"), aac());
+        let got = s(build_args(&params(&d, &vaapi_lp(true, true), 0)));
+        assert!(
+            got.contains("-c:v hevc_vaapi -low_power 1 -rc_mode VBR -b:v 4000k"),
+            "{got}"
+        );
+        assert!(!got.contains("-profile:v high"), "{got}");
+        let got = s(build_args(&params(&d, &vaapi_lp(true, false), 0)));
+        assert!(
+            got.contains("-c:v hevc_vaapi -rc_mode VBR -b:v 4000k"),
+            "{got}"
+        );
+        // no HEVC in software: H.264 with its profile
+        let got = s(build_args(&params(&d, &HwAccel::Software, 0)));
+        assert!(
+            got.contains("-c:v libx264 -preset veryfast -profile:v high"),
+            "{got}"
+        );
+    }
+
+    #[test]
+    fn low_power_never_applies_to_copy() {
+        let d = dec(VideoAction::Copy, aac());
+        let got = s(build_args(&params(&d, &vaapi_lp(true, true), 0)));
+        assert!(
+            !got.contains("-low_power") && !got.contains("-init_hw_device"),
+            "{got}"
+        );
     }
 
     #[test]
