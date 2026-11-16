@@ -231,9 +231,7 @@ async fn video_transcode_falls_back_to_software_when_the_hardware_encoder_fails(
     res.add(1, "SD", vec![cand(1, 10, prov.url("sd"), None)]);
     let (live, _d) = manager(res, Duration::from_secs(30));
     // a VAAPI device that does not exist: ffmpeg cannot open it
-    live.set_hwaccel(reel_playback::HwAccel::Vaapi {
-        device: "/dev/dri/renderD999".into(),
-    });
+    live.set_hwaccel(reel_playback::HwAccel::vaapi("/dev/dri/renderD999"));
     assert_eq!(live.hw_status(), ("vaapi", false));
     let s = live
         .tune(1, 1, LiveMode::Hls, &HlsOptions::default())

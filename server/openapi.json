@@ -6039,6 +6039,13 @@
               "null"
             ]
           },
+          "encoder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Video encoder of a transcode, e.g. `h264_vaapi (low power)`; absent when the video is copied."
+          },
           "file_id": {
             "type": "integer",
             "format": "int64"
@@ -7965,6 +7972,10 @@
               "device": {
                 "type": "string"
               },
+              "low_power": {
+                "$ref": "#/components/schemas/LowPower",
+                "description": "Low-power encoders to use (`-low_power 1`); the regular encoders otherwise."
+              },
               "type": {
                 "type": "string",
                 "enum": [
@@ -8767,6 +8778,22 @@
           },
           "user": {
             "$ref": "#/components/schemas/Me"
+          }
+        }
+      },
+      "LowPower": {
+        "type": "object",
+        "description": "VAAPI low-power (fixed-function, `VAEntrypointEncSliceLP`) encoders that passed a test encode at\nstartup. Used with `-low_power 1`; Intel's VDEnc roughly doubles HEVC/ladder throughput on the\nN100 (#102, #113).",
+        "required": [
+          "h264",
+          "hevc"
+        ],
+        "properties": {
+          "h264": {
+            "type": "boolean"
+          },
+          "hevc": {
+            "type": "boolean"
           }
         }
       },

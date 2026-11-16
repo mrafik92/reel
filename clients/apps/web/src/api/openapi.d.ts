@@ -1505,6 +1505,8 @@ export interface components {
             bitrate_kbps?: number | null;
             decision: components["schemas"]["PlaybackDecision"];
             device_id?: string | null;
+            /** @description Video encoder of a transcode, e.g. `h264_vaapi (low power)`; absent when the video is copied. */
+            encoder?: string | null;
             /** Format: int64 */
             file_id: number;
             hwaccel: string;
@@ -1965,6 +1967,8 @@ export interface components {
         };
         HwAccel: {
             device: string;
+            /** @description Low-power encoders to use (`-low_power 1`); the regular encoders otherwise. */
+            low_power?: components["schemas"]["LowPower"];
             /** @enum {string} */
             type: "vaapi";
         } | {
@@ -2218,6 +2222,15 @@ export interface components {
              */
             token: string;
             user: components["schemas"]["Me"];
+        };
+        /**
+         * @description VAAPI low-power (fixed-function, `VAEntrypointEncSliceLP`) encoders that passed a test encode at
+         *     startup. Used with `-low_power 1`; Intel's VDEnc roughly doubles HEVC/ladder throughput on the
+         *     N100 (#102, #113).
+         */
+        LowPower: {
+            h264: boolean;
+            hevc: boolean;
         };
         /** @description The signed-in user. */
         Me: {

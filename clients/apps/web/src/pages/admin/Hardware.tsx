@@ -9,6 +9,12 @@ const NAMES: Record<string, string> = {
 };
 const label = (h: HwAccel) => NAMES[h.type] ?? h.type;
 const device = (h: HwAccel) => ("device" in h ? (h as { device: string }).device : "");
+/** Low-power (fixed-function) VAAPI encoders that passed the startup test encode. */
+const lowPower = (h: HwAccel) => {
+  const lp = "low_power" in h ? h.low_power : undefined;
+  const codecs = [lp?.h264 && "H.264", lp?.hevc && "HEVC"].filter(Boolean);
+  return codecs.length ? codecs.join(", ") : "";
+};
 
 export default function Hardware(): JSX.Element {
   const [hw, { refetch }] = createResource(() => api.hwaccel());
@@ -34,6 +40,10 @@ export default function Hardware(): JSX.Element {
               <dl class="kv">
                 <dt>Available</dt>
                 <dd>{h().available.map((a) => label(a) + (device(a) ? ` (${device(a)})` : "")).join(" · ") || "None"}</dd>
+                <Show when={h().selected.type === "vaapi"}>
+                  <dt>Low-power encoders</dt>
+                  <dd>{lowPower(h().selected) || "Not used"}</dd>
+                </Show>
                 <dt>ffmpeg hwaccels</dt>
                 <dd><For each={h().ffmpeg_hwaccels}>{(x) => <code>{x}</code>}</For></dd>
                 <Show when={h().degraded?.length}>

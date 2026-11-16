@@ -49,7 +49,7 @@ export default function Sessions(): JSX.Element {
                   <span>
                     {formatClock(s.position_s)}
                     {s.bitrate_kbps ? ` · ${(s.bitrate_kbps / 1000).toFixed(1)} Mbps` : ""}
-                    {s.hwaccel && s.hwaccel !== "none" ? ` · ${s.hwaccel.toUpperCase()}` : ""}
+                    {s.encoder ? ` · ${s.encoder}` : s.hwaccel && s.hwaccel !== "none" ? ` · ${s.hwaccel.toUpperCase()}` : ""}
                   </span>
                   <Show when={s.reasons.length}>
                     <ul class="session__reasons">

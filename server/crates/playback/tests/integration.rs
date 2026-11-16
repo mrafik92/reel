@@ -458,10 +458,7 @@ fn hwaccel_output_parsers() {
     let set = hwaccel::parse_encoders(enc);
     assert!(set.contains("libx264") && set.contains("h264_vaapi") && set.contains("aac"));
     assert!(!set.contains("="));
-    let args = hwaccel::test_encode_args(&HwAccel::Vaapi {
-        device: "/dev/dri/renderD128".into(),
-    })
-    .join(" ");
+    let args = hwaccel::test_encode_args(&HwAccel::vaapi("/dev/dri/renderD128")).join(" ");
     assert!(
         args.contains("-init_hw_device vaapi=va:/dev/dri/renderD128")
             && args.contains("-c:v h264_vaapi")
@@ -678,9 +675,7 @@ async fn failing_hw_backend_falls_back_to_software_and_is_marked_degraded() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let src = make_source(tmp.path());
-    let bogus = HwAccel::Vaapi {
-        device: "/dev/dri/renderD999".into(),
-    };
+    let bogus = HwAccel::vaapi("/dev/dri/renderD999");
     let mgr = SessionManager::new(SessionConfig::new(tmp.path()), bogus);
     let info = mgr
         .create_session(request(&src, full_transcode(), 1, 0.0))
@@ -700,12 +695,48 @@ async fn failing_hw_backend_falls_back_to_software_and_is_marked_degraded() {
     assert_eq!(again.hwaccel, "software");
     // status overlay
     let mut detected = reel_playback::HwAccelStatus::software();
-    detected.selected = HwAccel::Vaapi {
-        device: "/dev/dri/renderD999".into(),
-    };
+    detected.selected = HwAccel::vaapi("/dev/dri/renderD999");
     let st = mgr.hwaccel_status(&detected);
     assert_eq!(st.degraded, vec!["vaapi".to_string()]);
     assert_eq!(st.selected, HwAccel::Software);
+    mgr.shutdown().await;
+}
+
+#[tokio::test]
+async fn failing_low_power_encoder_steps_down_to_regular_vaapi_then_software() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let src = make_source(tmp.path());
+    let lp = HwAccel::Vaapi {
+        device: "/dev/dri/renderD999".into(),
+        low_power: hwaccel::LowPower {
+            h264: true,
+            hevc: true,
+        },
+    };
+    let mgr = SessionManager::new(SessionConfig::new(tmp.path()), lp.clone());
+    let info = mgr
+        .create_session(request(&src, full_transcode(), 1, 0.0))
+        .await
+        .unwrap();
+    assert_eq!(info.hwaccel, "vaapi");
+    assert_eq!(info.encoder.as_deref(), Some("h264_vaapi (low power)"));
+    // the bogus device fails both VAAPI attempts; software produces the segment
+    let seg = mgr.segment_path(&info.id, "seg_00000.m4s").await.unwrap();
+    assert!(std::fs::metadata(seg).unwrap().len() > 0);
+    let now = mgr.session(&info.id).await.unwrap();
+    assert_eq!(now.hwaccel, "software");
+    assert_eq!(now.encoder.as_deref(), Some("libx264"));
+    assert_eq!(
+        mgr.degraded_backends(),
+        vec!["vaapi-lp".to_string(), "vaapi".to_string()]
+    );
+    assert_eq!(mgr.effective_hwaccel(), HwAccel::Software);
+    let mut detected = reel_playback::HwAccelStatus::software();
+    detected.selected = lp;
+    assert_eq!(mgr.hwaccel_status(&detected).selected, HwAccel::Software);
     mgr.shutdown().await;
 }
 

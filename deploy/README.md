@@ -132,6 +132,11 @@ ls -l /dev/dri                        # renderD128 should exist on the host
   "available": [{"type":"vaapi", …}], "notes": [] }
 ```
 
+On Intel, `selected.low_power` lists the low-power (fixed-function) encoders that passed their own test
+encode (`{"h264": true, "hevc": true}` on an N100); VOD transcodes use them with `-low_power 1`. If one
+fails at runtime the session retries with the regular encoder and `degraded` shows `vaapi-lp`. Set
+`REEL_VAAPI_LOW_POWER=0` to keep the regular encoders.
+
 `selected.type == "software"` means no hardware path passed the test; `notes` says why (missing device,
 permission denied → check the group ids, driver init failed …). From inside the container you can also
 run `docker compose exec reel vainfo`. IPTV transcode status is under `GET /api/v1/admin/iptv/hub`
