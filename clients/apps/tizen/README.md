@@ -16,7 +16,7 @@ TIZEN_CERT_PROFILE=<profile-name> bun run package
 ```
 This builds the web app into `.staging/`, then runs `tizen build-web` and
 `tizen package -t wgt -s $TIZEN_CERT_PROFILE` → `out/Reel.wgt`. Without the CLI it only stages and prints the commands.
-Placeholder `assets/icon.png` (512×512) is generated (`bun run icons`). Samsung TVs show no splash image from the
+`assets/icon.png` (512×512) is generated from `packages/ui/assets/logo.svg` (`bun run icons` in `clients/`). Samsung TVs show no splash image from the
 widget, so none is bundled.
 Set `VITE_REEL_URL=http://<server>:8420` to bake in a default server; otherwise the app asks on first run.
 

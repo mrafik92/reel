@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Reel app icon: the single source for every favicon, PWA and TV icon.
+       Regenerate the sizes with `bun run icons` (clients/) after editing (#142).
+       Keep the tile colour equal to BG in scripts/gen-icons.ts: full-bleed and maskable
+       variants paint BG behind a scaled copy of this file. -->
+  <rect width="512" height="512" rx="112" fill="#0a0b0f"/>
+  <!-- "R" whose counter is a play triangle -->
+  <path fill="#c6f432" fill-rule="evenodd" d="M136 112H296C352 112 392 152 392 208C392 250 368 284 332 298L404 400H312L252 304H216V400H136ZM216 164V252L292 208Z"/>
+</svg>
