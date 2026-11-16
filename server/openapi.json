@@ -9084,9 +9084,25 @@
                   "null"
                 ]
               },
+              "popularity": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double",
+                "description": "TMDB popularity score (\"best known\" order)."
+              },
               "role": {
                 "type": "string",
                 "description": "`cast` | `crew`"
+              },
+              "vote_count": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "TMDB vote count behind `vote_average`; clients sort thinly-voted titles last."
               }
             }
           }

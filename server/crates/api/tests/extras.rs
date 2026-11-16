@@ -158,7 +158,7 @@ async fn person_page_dedupes_sorts_and_filters_credits() {
             "profile_path": "/pacino.jpg", "imdb_id": "nm0000199",
             "combined_credits": {
               "cast": [
-                {"id": 10, "media_type": "movie", "title": "Heat", "release_date": "1995-12-15", "poster_path": "/heat.jpg", "character": "Vincent Hanna"},
+                {"id": 10, "media_type": "movie", "title": "Heat", "release_date": "1995-12-15", "poster_path": "/heat.jpg", "character": "Vincent Hanna", "vote_average": 7.9, "vote_count": 7312, "popularity": 41.5},
                 {"id": 20, "media_type": "movie", "title": "Newer", "release_date": "2019-01-01", "poster_path": "/n.jpg", "character": "Self"},
                 {"id": 30, "media_type": "tv", "name": "Hunters", "first_air_date": "2020-02-21", "poster_path": "/h.jpg", "character": "Meyer"},
                 {"id": 40, "media_type": "movie", "title": "No Poster But Dated", "release_date": "1980-01-01", "poster_path": null, "character": "X"},
@@ -230,6 +230,15 @@ async fn person_page_dedupes_sorts_and_filters_credits() {
         "cast preferred"
     );
     assert!(heat.get("job").is_none());
+    // rating fields for client-side sorting (#141)
+    assert_eq!(heat["vote_average"], 7.9);
+    assert_eq!(heat["vote_count"], 7312);
+    assert_eq!(heat["popularity"], 41.5);
+    let newer = &v["credits"][1];
+    assert!(
+        newer.get("vote_count").is_none() && newer.get("popularity").is_none(),
+        "absent upstream, absent here: {newer}"
+    );
     assert_eq!(heat["status"], "available");
     assert_eq!(heat["library_item_id"], 5);
     assert_eq!(heat["media_type"], "movie");
