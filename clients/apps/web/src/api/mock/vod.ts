@@ -3,6 +3,7 @@
  * Xtream-style catalogue — 100+ provider buckets, thousands of titles, patchy metadata.
  */
 import type { CastMember } from "@reel/ui";
+import { mockQuality } from "./select";
 import { ApiError } from "../http";
 import type { DecideResponse } from "../types";
 import type {
@@ -444,7 +445,9 @@ export function mockVod(): VodApi {
           subtitle: body.subtitle_index === 3 ? { type: "sidecar", format: "vtt" } : { type: "none" },
         },
       };
-      return res;
+      // Provider files are typically 1080p H.264 at ~4.5 Mbps.
+      const qd = mockQuality({ width: 1920, height: 1080, hdr: "none", kbps: 4500 }, body, res.decision);
+      return Object.assign(res, { mode: qd.mode, decision: qd.decision, quality: qd.quality, bitrate_kbps: qd.bitrate_kbps, quality_options: qd.quality_options });
     },
     async stopHolder(h) {
       await sleep(300);

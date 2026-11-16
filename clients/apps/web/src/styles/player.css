@@ -737,3 +737,53 @@ html[data-input="key"] .pvol__bar:focus {
   outline: none;
   box-shadow: none;
 }
+
+/* ---------- Quality (#87) ---------------------------------------------------------- */
+/* Stream info: one plain sentence on what happened and why */
+.stream-info__why {
+  margin: 0.4rem 0 0.7rem;
+  color: var(--ink-2);
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+/* The quality button makes the right cluster wider: on narrow desktops drop the small print first,
+   so it never pushes into the centred transport (from PR #69). */
+@media (max-width: 1360px) {
+  html:not(.tv) .pc__quality .ctl__val {
+    display: none;
+  }
+  html:not(.tv) .pc__quality.has-value {
+    width: 2.75rem;
+    padding: 0;
+  }
+}
+@media (max-width: 1560px) {
+  html:not(.tv) .pc__side--end .ctl__tag {
+    display: none;
+  }
+  html:not(.tv) .pc__audio .ctl__val {
+    display: none;
+  }
+  html:not(.tv) .pc__audio.has-value {
+    width: 2.75rem;
+    padding: 0;
+  }
+}
+@media (max-width: 1140px) {
+  html:not(.tv) .pc__subs .ctl__val {
+    display: none;
+  }
+  html:not(.tv) .pc__subs.has-value {
+    width: 2.75rem;
+    padding: 0;
+  }
+  /* the mode badge at the top opens stream info too */
+  html:not(.tv) .pc__info {
+    display: none;
+  }
+}
+@media (max-width: 1000px) {
+  html:not(.tv) .pc__pip {
+    display: none;
+  }
+}

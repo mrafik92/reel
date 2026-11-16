@@ -3,12 +3,16 @@ import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
   Icon, Sheet, audioLabel, codecShort, createPlayerAdapter, episodeCode, focusElement, iso1, isSdh,
   AvPlayAdapter, mediaUrl, onBack, onRemoteKey, subtitleLabel,
-  type ItemDetail, type MediaFile, type PlayerAdapter, type PlayerTracks,
+  type IconName, type ItemDetail, type MediaFile, type PlayerAdapter, type PlayerTracks,
 } from "@reel/ui";
-import { api, ApiError, invalidate, type DecideResponse, type SubtitleOption } from "../api";
+import { api, ApiError, invalidate, type DecideResponse, type Quality, type SubtitleOption } from "../api";
 import { casting, type CastPlayBody } from "../api/casting";
 import { selectedOf, type Selected } from "../api/prefs";
 import { creditItem, decide, MODE_LABEL } from "../lib/playback";
+import {
+  QUALITIES, QUALITY_NAME, deviceQuality, explainStream, fmtMbps, optionDetail, qualityOptions, userLimitKbps, videoTranscoded,
+  whyTranscode,
+} from "../lib/quality";
 import { audioQuickSave, previewSelection, subtitleQuickSave, type QuickSave } from "../lib/tracks";
 import { loadPrefs, playbackPrefs, prefsSupported, updatePrefs } from "../lib/prefs";
 import {
@@ -58,7 +62,7 @@ export interface PlayError {
   body: string;
   retry: boolean;
   /** Extra fix-it action (e.g. "Stop the other stream"); playback restarts after it resolves. */
-  action?: { label: string; run: () => Promise<void> };
+  action?: { label: string; run: () => Promise<void>; icon?: IconName; busy?: string };
 }
 
 /**
@@ -82,6 +86,8 @@ export interface PlaySource {
     start: number;
     subtitleIndex?: number | null;
     forCast?: "chromecast" | "airplay";
+    /** Playback quality (#87): send as `quality`. Omitted for cast receivers. */
+    quality?: Quality;
   }) => Promise<DecideResponse>;
   /** DLNA "Play on TV": what the server should push (omit → DLNA TVs aren't offered). */
   dlna?: (o: { audio: number | null; subtitle: number | null; start: number }) => CastPlayBody;
@@ -129,6 +135,15 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   const [series, setSeries] = createSignal<string>();
   const [session, setSession] = createSignal<DecideResponse>();
   const [info, setInfo] = createSignal(false);
+  /**
+   * Quality this play asks for (#87): the device default (Settings → Playback), until the viewer
+   * picks another in the player. Switching re-decides from the playhead with the same device id,
+   * so the server replaces the old session.
+   */
+  const [quality, setQuality] = createSignal<Quality>(deviceQuality());
+  const [qualitySheet, setQualitySheet] = createSignal(false);
+  /** The server offers quality choices (sticky, so the button keeps focus while a switch reopens the session). */
+  const [qualityOk, setQualityOk] = createSignal(false);
   /** Sanitised HTML of the active subtitle cue(s); we render all subtitles ourselves. */
   const [cueHtml, setCueHtml] = createSignal("");
   /** Px from the bottom that clears the control bar while it's visible. */
@@ -170,7 +185,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     setVisible(true);
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
-      if (playing() && !picker() && scrub() == null && !info() && !quick() && !castSheet() && !speedSheet()) setVisible(false);
+      if (playing() && !picker() && scrub() == null && !info() && !quick() && !castSheet() && !speedSheet() && !qualitySheet()) setVisible(false);
     }, HIDE_AFTER);
   };
 
@@ -227,10 +242,13 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   };
 
   /** Open a session (library decide or the page's source). */
-  const openSession = (o: CastOpen, forCast?: "chromecast" | "airplay"): Promise<DecideResponse> =>
-    props.source
-      ? props.source.decide({ audio: o.audio, subtitle: o.subtitle ?? -1, subtitleIndex: o.subtitle, start: o.start, forCast })
-      : decide(file!.id, { itemId: creditItem(file!, props.item.id), audio: o.audio, subtitle: o.subtitle, start: o.start, forCast });
+  const openSession = (o: CastOpen, forCast?: "chromecast" | "airplay"): Promise<DecideResponse> => {
+    // Cast receivers get the server's Auto for their own profile.
+    const q = forCast ? undefined : quality();
+    return props.source
+      ? props.source.decide({ audio: o.audio, subtitle: o.subtitle ?? -1, subtitleIndex: o.subtitle, start: o.start, forCast, quality: q })
+      : decide(file!.id, { itemId: creditItem(file!, props.item.id), audio: o.audio, subtitle: o.subtitle, start: o.start, forCast, quality: q });
+  };
 
   /** (Re)start playback: decide → load. Used on open and when audio/burn-in subs change. */
   const start = async (at: number, forCast?: "airplay") => {
@@ -259,7 +277,23 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       api.stopPlayback(d.session_id).catch(() => undefined);
       return;
     }
+    // "Original" means no video re-encode (#87). When the server can't avoid one (codec, HDR,
+    // picture subtitles, the user's bitrate limit), say why and offer the transcode instead.
+    if (!forCast && quality() === "original" && videoTranscoded(d)) {
+      api.stopPlayback(d.session_id).catch(() => undefined);
+      adapter?.pause();
+      setBuffering(false);
+      setRecovering(undefined);
+      setError({
+        title: "Can't play the original here",
+        body: `${whyTranscode(d)} Reel can convert it for you instead.`,
+        retry: false,
+        action: { label: "Play transcoded", icon: "play", busy: "Starting…", run: async () => void setQuality("auto") },
+      });
+      return;
+    }
     setSession(d);
+    if (qualityOptions(d).length) setQualityOk(true);
     const sel = selectedOf(d);
     if (sel) {
       setSelection(sel);
@@ -550,6 +584,25 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       return;
     }
     void start(pos());
+  };
+
+  // ---- quality (#87) -----------------------------------------------------------
+  /** Per-play pick: re-decide from the playhead (same device id → the server replaces the session). */
+  const chooseQuality = (q: Quality) => {
+    if (q === quality() && !error()) return;
+    setQuality(q);
+    if (cast()) return;
+    void start(pos() || resumeAt());
+  };
+  /** Compact value next to the icon: what is playing now. */
+  const qualityValue = () => {
+    const q = session()?.quality;
+    return q ? (q === "original" ? "Orig" : QUALITY_NAME[q]) : QUALITY_NAME[quality()];
+  };
+  const qualityDesc = () => {
+    const limit = userLimitKbps();
+    const dflt = `Default on this device: ${QUALITY_NAME[deviceQuality()]}.`;
+    return limit ? `${dflt} Your account is limited to ${fmtMbps(limit)}.` : dflt;
   };
 
   // ---- casting ---------------------------------------------------------------
@@ -901,7 +954,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     }, TICK_MS);
 
     const onKey = (e: KeyboardEvent) => {
-      if (picker() || castSheet() || speedSheet()) return;
+      if (picker() || castSheet() || speedSheet() || qualitySheet()) return;
       const k = e.key;
       const c = cast();
       if (c) {
@@ -1007,7 +1060,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       return true;
     });
     const offBack = onBack(() => {
-      if (picker() || castSheet() || speedSheet()) return false;
+      if (picker() || castSheet() || speedSheet() || qualitySheet()) return false;
       // Back peels one layer at a time: seek preview → info → controls → leave.
       if (scrubApi?.cancel()) {
         poke();
@@ -1106,7 +1159,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       }}
       onMouseMove={poke}
       onMouseLeave={() => {
-        if (!playing() || picker() || castSheet() || speedSheet()) return;
+        if (!playing() || picker() || castSheet() || speedSheet() || qualitySheet()) return;
         if (hideTimer) clearTimeout(hideTimer);
         hideTimer = setTimeout(() => playing() && scrub() == null && setVisible(false), 700);
       }}
@@ -1153,7 +1206,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
             <p>{e().body}</p>
             <div class="actions actions--center">
               <Show when={e().action}>
-                {(a) => <ActionButton label={a().label} run={a().run} onDone={() => {
+                {(a) => <ActionButton label={a().label} run={a().run} icon={a().icon} busy={a().busy} onDone={() => {
                   held = false;
                   void start(pos() || resumeAt());
                 }} />}
@@ -1175,7 +1228,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       </Show>
 
       <Show when={info() && session()}>
-        {(s) => <StreamInfo session={s()} file={file} selection={selection()} onClose={() => setInfo(false)} />}
+        {(s) => <StreamInfo session={s()} file={file} selection={selection()} asked={quality()} onClose={() => setInfo(false)} />}
       </Show>
 
       <Show when={castBusy()}>
@@ -1270,6 +1323,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
             <div class="pc__side pc__side--end">
               <CtlButton class="pc__audio" icon="audio" label={`Audio · ${audioText()}`} value={audioShort()} disabled={audioList().length < 2} onClick={() => setPicker("audio")} />
               <CtlButton
+                class="pc__subs"
                 icon="cc"
                 label={subAuto() ? `Subtitles · ${subText()} (automatic)` : `Subtitles · ${subText()}`}
                 value={subShort()}
@@ -1278,6 +1332,16 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
                 disabled={!subList().length}
                 onClick={() => setPicker("sub")}
               />
+              <Show when={qualityOk()}>
+                <CtlButton
+                  class="pc__quality"
+                  icon="quality"
+                  label={`Quality · ${QUALITY_NAME[quality()]}${session()?.quality ? `, playing ${QUALITY_NAME[session()!.quality!]}` : ""}`}
+                  value={qualityValue()}
+                  tag={quality() === "auto" ? "Auto" : undefined}
+                  onClick={() => session() && setQualitySheet(true)}
+                />
+              </Show>
               <Show when={htmlVideo()}>
                 <CtlButton class="pc__speed" icon="speed" label="Playback speed" value={speed() !== 1 ? `${speed()}×` : undefined} active={speed() !== 1} onClick={() => setSpeedSheet(true)} />
               </Show>
@@ -1290,9 +1354,9 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
                   onClick={() => setCastSheet(true)}
                 />
               </Show>
-              <CtlButton icon="info" label="Stream info" pressed={info()} onClick={() => setInfo((v) => !v)} />
+              <CtlButton class="pc__info" icon="info" label="Stream info" pressed={info()} onClick={() => setInfo((v) => !v)} />
               <Show when={pipOk() && htmlVideo()}>
-                <CtlButton icon="pip" label="Picture in picture" onClick={togglePip} />
+                <CtlButton class="pc__pip" icon="pip" label="Picture in picture" onClick={togglePip} />
               </Show>
               <Show when={!TV}>
                 <CtlButton icon="fullscreen" label="Full screen (F)" onClick={fullscreen} />
@@ -1301,6 +1365,34 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
           </div>
         </div>
       </div>
+
+      <Show when={qualitySheet()}>
+        <Sheet
+          title="Quality"
+          selected={quality()}
+          description={qualityDesc()}
+          options={QUALITIES.map((q) => {
+            const o = qualityOptions(session()).find((x) => x.id === q);
+            return {
+              value: q,
+              title: q === "original" ? "Original — no re-encoding" : QUALITY_NAME[q],
+              detail: optionDetail(o, q, session()),
+              disabled: q !== "auto" && (!o || !o.available) && q !== quality(),
+              tag: q !== "auto" && session()?.quality === q ? "Now" : undefined,
+            };
+          })}
+          onSelect={chooseQuality}
+          onClose={() => {
+            setQualitySheet(false);
+            poke();
+          }}
+          footer={
+            <a class="sheet__link" href={href("/settings/playback")}>
+              <Icon name="gear" /> Default quality for this device
+            </a>
+          }
+        />
+      </Show>
 
       <Show when={speedSheet()}>
         <Sheet
@@ -1392,7 +1484,7 @@ function readVolume(): number {
 }
 
 /** Fix-it button on the error card: busy while it runs, then playback restarts. */
-function ActionButton(props: { label: string; run: () => Promise<void>; onDone: () => void }): JSX.Element {
+function ActionButton(props: { label: string; run: () => Promise<void>; icon?: IconName; busy?: string; onDone: () => void }): JSX.Element {
   const [busy, setBusy] = createSignal(false);
   const [failed, setFailed] = createSignal("");
   return (
@@ -1416,7 +1508,7 @@ function ActionButton(props: { label: string; run: () => Promise<void>; onDone: 
           }
         }}
       >
-        <Icon name={busy() ? "clock" : "x"} /> <span>{busy() ? "Stopping…" : props.label}</span>
+        <Icon name={busy() ? "clock" : props.icon ?? "x"} /> <span>{busy() ? props.busy ?? "Stopping…" : props.label}</span>
       </button>
       <Show when={failed()}>
         <p class="player__error-note" role="status">{failed()}</p>
@@ -1469,15 +1561,29 @@ function actionText(a: { type: string; codec?: string; channels?: number; width?
 }
 
 /** Debug overlay: how the server decided to deliver this stream, and why. */
-function StreamInfo(props: { session: DecideResponse; file?: MediaFile; selection?: Selected; onClose: () => void }): JSX.Element {
+function StreamInfo(props: { session: DecideResponse; file?: MediaFile; selection?: Selected; asked: Quality; onClose: () => void }): JSX.Element {
   const d = () => props.session.decision;
+  const q = () => props.session.quality;
   return (
     <aside class="stream-info" aria-label="Stream info">
       <header>
         <p class="eyebrow eyebrow--accent">Stream info</p>
         <strong>{MODE_LABEL[props.session.mode] ?? props.session.mode}</strong>
+        <p class="stream-info__why">{explainStream(props.session, props.asked)}</p>
       </header>
       <dl>
+        <Show when={q()}>
+          <dt>Quality</dt>
+          <dd>
+            {QUALITY_NAME[q()!]}
+            {props.session.bitrate_kbps ? ` · ${fmtMbps(props.session.bitrate_kbps)}` : ""}
+            {props.asked !== q() ? ` (asked for ${QUALITY_NAME[props.asked]})` : ""}
+          </dd>
+        </Show>
+        <Show when={userLimitKbps()}>
+          <dt>Limit</dt>
+          <dd>{fmtMbps(userLimitKbps())} (your account)</dd>
+        </Show>
         <dt>Video</dt>
         <dd>{actionText(d().video as never)}</dd>
         <dt>Audio</dt>
@@ -1498,7 +1604,7 @@ function StreamInfo(props: { session: DecideResponse; file?: MediaFile; selectio
         </ul>
       </Show>
       <Show when={d().reasons.length}>
-        <p class="stream-info__label">Why</p>
+        <p class="stream-info__label">Server's reasons</p>
         <ul>
           <For each={d().reasons}>{(r) => <li>{r}</li>}</For>
         </ul>
