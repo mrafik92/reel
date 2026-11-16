@@ -11,7 +11,7 @@ export { ProgressRing, RING_LABEL, type RingState, type ProgressRingProps } from
 export { PosterCard, type PosterCardProps } from "./components/PosterCard";
 export { Row, type RowProps } from "./components/Row";
 export { VirtualGrid, type VirtualGridProps } from "./components/VirtualGrid";
-export { Sheet, type SheetProps, type SheetOption } from "./components/Sheet";
+export { Sheet, SheetClose, type SheetProps, type SheetOption } from "./components/Sheet";
 export { Backdrop } from "./components/Backdrop";
 export * from "./platform";
 export { DiscoverCard, type DiscoverCardProps, type DiscoverCardData, type Availability } from "./components/DiscoverCard";

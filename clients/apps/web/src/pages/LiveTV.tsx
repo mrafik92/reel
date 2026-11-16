@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, type JSX } from "solid-js";
 import { useNavigate, useSearchParams } from "@solidjs/router";
-import { focusElement, Icon, onBack, onRemoteKey } from "@reel/ui";
+import { focusElement, Icon, onBack, onRemoteKey, SheetClose } from "@reel/ui";
 import "../styles/live.css";
 import { iptv, type IptvChannel } from "../api/iptv";
 import { href } from "../lib/mode";
@@ -200,7 +200,12 @@ function Watch(): JSX.Element {
     const id = tuner.channelId();
     requestAnimationFrame(() => id != null && listApi?.reveal(id, true));
   };
+  // Where focus goes back to when the mini guide closes: the "Channel list" button when it
+  // was opened from there, else the screen (it was opened with ←/OK on the picture).
+  let miniOpener: HTMLElement | null = null;
   const openMini = () => {
+    const a = document.activeElement;
+    miniOpener = a instanceof HTMLButtonElement && a.closest(".live__top") ? a : null;
     setMini(true);
     setOsd(false);
     requestAnimationFrame(() => {
@@ -210,7 +215,10 @@ function Watch(): JSX.Element {
   };
   const closeMini = () => {
     setMini(false);
-    requestAnimationFrame(() => screen?.focus({ preventScroll: true }));
+    const back = miniOpener?.isConnected ? miniOpener : null;
+    miniOpener = null;
+    if (back) showOsd();
+    requestAnimationFrame(() => (back ? focusElement(back, { smooth: false }) : screen?.focus({ preventScroll: true })));
   };
   const toggleStats = () => {
     const v = !stats();
@@ -576,6 +584,7 @@ function Watch(): JSX.Element {
           <header class="miniguide__head">
             <strong>{filter().kind === "all" ? "All channels" : filter().kind === "favorites" ? "Favourites" : (filter() as { name: string }).name}</strong>
             <span>OK to watch · Back to close</span>
+            <SheetClose class="miniguide__close" onClose={closeMini} />
           </header>
           <ChannelList
             class="miniguide__list"

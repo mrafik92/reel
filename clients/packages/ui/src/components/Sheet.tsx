@@ -30,6 +30,18 @@ export interface SheetProps<V> {
 }
 
 /**
+ * The ✕ in a sheet's header. A plain focusable button, so the D-pad reaches it (Up from the
+ * first option) and OK closes; the sheet's cleanup then returns focus to its opener.
+ */
+export function SheetClose(props: { onClose: () => void; label?: string; class?: string }): JSX.Element {
+  return (
+    <button type="button" class={`iconbtn sheet__close ${props.class ?? ""}`} aria-label={props.label ?? "Close"} onClick={() => props.onClose()}>
+      <Icon name="x" />
+    </button>
+  );
+}
+
+/**
  * Side sheet picker (audio, subtitles, versions). Traps D-pad focus and closes
  * on Back. Solid, opaque surface — no backdrop blur on TV hardware.
  */
@@ -89,6 +101,7 @@ export function Sheet<V>(props: SheetProps<V>): JSX.Element {
         <div class="sheet__panel" ref={panel} role="dialog" aria-modal="true" aria-label={props.title}>
           <header class="sheet__head">
             <h2>{props.title}</h2>
+            <SheetClose onClose={props.onClose} />
             <Show when={props.description}>
               <p class="sheet__desc">{props.description}</p>
             </Show>
