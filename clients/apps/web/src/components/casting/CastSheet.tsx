@@ -1,6 +1,6 @@
 import { createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
-import { focusElement, focusFirst, Icon, keepFocusOnOverlayMove, onBack, overlayMount, type IconName } from "@reel/ui";
+import { focusElement, focusFirst, Icon, keepFocusOnOverlayMove, onBack, overlayMount, SheetClose, type IconName } from "@reel/ui";
 import { ApiError } from "../../api/http";
 import { casting, type CastDevice } from "../../api/casting";
 import { castSdkStatus, castState, castUnavailableWhy, loadCastSdk } from "../../lib/casting/chromecast";
@@ -98,6 +98,7 @@ export function CastSheet(props: {
         <div class="sheet__panel" ref={panel} role="dialog" aria-modal="true" aria-label="Play on">
           <header class="sheet__head">
             <h2>Play on…</h2>
+            <SheetClose onClose={props.onClose} />
             <p class="sheet__desc">Send this to a TV. You can keep using this screen as the remote.</p>
           </header>
           <div class="sheet__list" role="radiogroup" data-nav-scroll="y">
