@@ -6,8 +6,10 @@ import { Resvg } from "@resvg/resvg-js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-/** Tile colour of logo.svg and the app background (`--bg` in ui.css). */
-const BG = "#0a0b0f";
+/** Tile colour of logo.svg (`--accent` in ui.css): painted behind the full-bleed and maskable icons. */
+const TILE = "#c2352d";
+/** App background (`--bg` in ui.css): the webOS splash screen. */
+const BG = "#0b0909";
 
 const clients = resolve(import.meta.dir, "../../..");
 const logo = readFileSync(resolve(import.meta.dir, "../assets/logo.svg"), "utf8").trim();
@@ -27,7 +29,7 @@ function png(svg: string, w: number): Buffer {
 /** Rounded tile on transparency: favicons, launcher icons. */
 const tile = (s: number) => png(compose(512, 512, 512), s);
 /** Full-bleed square (no transparent corners); `scale` < 1 keeps the mark in the maskable safe zone. */
-const bleed = (s: number, scale = 1) => png(compose(512, 512, 512 * scale, BG), s);
+const bleed = (s: number, scale = 1) => png(compose(512, 512, 512 * scale, TILE), s);
 
 /** ICO with PNG-encoded entries (supported by every current browser). */
 function ico(sizes: number[]): Buffer {

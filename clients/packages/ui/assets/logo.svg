@@ -1,15 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <!-- Reel app icon: the single source for every favicon, PWA and TV icon.
        Regenerate the sizes with `bun run icons` (clients/) after editing (#142).
-       Keep the tile colour equal to BG in scripts/gen-icons.ts: full-bleed and maskable
-       variants paint BG behind a scaled copy of this file. -->
-  <rect width="512" height="512" rx="112" fill="#0a0b0f"/>
+       Palette (#177): crimson tile (accent token), cream reel (ink token); the cut-outs show the tile.
+       Keep the tile colour equal to TILE in scripts/gen-icons.ts: full-bleed and maskable
+       variants paint TILE behind a scaled copy of this file. -->
+  <rect width="512" height="512" rx="112" fill="#c2352d"/>
   <!-- A film reel with a strip of film running off it -->
-  <g fill="#c6f432">
+  <g fill="#f2e6d3">
     <circle cx="228" cy="228" r="152"/>
     <path d="M228 324h188a20 20 0 0 1 20 20v16a20 20 0 0 1-20 20H228z"/>
   </g>
-  <g fill="#0a0b0f">
+  <g fill="#c2352d">
     <circle cx="228" cy="152" r="38"/>
     <circle cx="293.8" cy="266" r="38"/>
     <circle cx="162.2" cy="266" r="38"/>

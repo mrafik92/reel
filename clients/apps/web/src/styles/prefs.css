@@ -35,7 +35,7 @@
   margin-right: 0.4rem;
 }
 .prefs__status.is-saved {
-  color: var(--accent);
+  color: var(--ok);
 }
 .prefs__status.is-error {
   color: var(--danger);
@@ -169,8 +169,8 @@
   background: var(--ink-5);
 }
 .prefs__mode[aria-checked="true"] {
-  border-color: rgba(198, 244, 50, 0.55);
-  background: rgba(198, 244, 50, 0.06);
+  border-color: rgba(var(--accent-hi-rgb), 0.55);
+  background: rgba(var(--accent-rgb), 0.06);
 }
 .prefs__mode:focus {
   outline: none;
@@ -232,7 +232,7 @@ html[data-input="key"] .prefs__mode:focus {
 .prefs__examples {
   padding: 1.4rem 1.4rem 1.1rem;
   border-radius: var(--radius-l);
-  background: linear-gradient(160deg, rgba(198, 244, 50, 0.08), rgba(198, 244, 50, 0) 55%), var(--bg-1);
+  background: linear-gradient(160deg, rgba(var(--accent-rgb), 0.08), rgba(var(--accent-rgb), 0) 55%), var(--bg-1);
   box-shadow: 0 0 0 1px var(--line);
 }
 .prefs__examples .eyebrow {
@@ -280,5 +280,5 @@ html[data-input="key"] .prefs__mode:focus {
   color: var(--ink-3);
 }
 @keyframes prefs-flash {
-  from { color: var(--accent); }
+  from { color: var(--ok); }
 }

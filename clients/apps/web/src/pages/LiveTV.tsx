@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, type JSX } from "solid-js";
 import { useNavigate, useSearchParams } from "@solidjs/router";
-import { focusElement, Icon, onBack, onRemoteKey } from "@reel/ui";
+import { focusElement, Icon, onBack, onRemoteKey, SheetClose } from "@reel/ui";
 import "../styles/live.css";
 import { iptv, type IptvChannel } from "../api/iptv";
 import { href } from "../lib/mode";
@@ -19,6 +19,7 @@ import {
   totalChannels, noteWatched, nowNext, progressOf,
 } from "../components/live/store";
 import { currentUser } from "../lib/auth";
+import { createTapToggle } from "../lib/tap";
 
 const STATS_KEY = "reel.live.stats";
 const ZAP_DEBOUNCE = 320;
@@ -199,7 +200,12 @@ function Watch(): JSX.Element {
     const id = tuner.channelId();
     requestAnimationFrame(() => id != null && listApi?.reveal(id, true));
   };
+  // Where focus goes back to when the mini guide closes: the "Channel list" button when it
+  // was opened from there, else the screen (it was opened with ←/OK on the picture).
+  let miniOpener: HTMLElement | null = null;
   const openMini = () => {
+    const a = document.activeElement;
+    miniOpener = a instanceof HTMLButtonElement && a.closest(".live__top") ? a : null;
     setMini(true);
     setOsd(false);
     requestAnimationFrame(() => {
@@ -209,7 +215,10 @@ function Watch(): JSX.Element {
   };
   const closeMini = () => {
     setMini(false);
-    requestAnimationFrame(() => screen?.focus({ preventScroll: true }));
+    const back = miniOpener?.isConnected ? miniOpener : null;
+    miniOpener = null;
+    if (back) showOsd();
+    requestAnimationFrame(() => (back ? focusElement(back, { smooth: false }) : screen?.focus({ preventScroll: true })));
   };
   const toggleStats = () => {
     const v = !stats();
@@ -386,6 +395,20 @@ function Watch(): JSX.Element {
     });
   });
 
+  // Full screen: a click shows/hides the overlay (never pauses). In the page: a click tunes the
+  // idle hero channel or goes full screen. Single clicks wait out a possible double-click so it
+  // doesn't flicker the overlay (see lib/tap).
+  const activate = () => {
+    const h = heroCh();
+    if (idle() && h) tuneNow(h);
+    else enterFull();
+  };
+  const tap = createTapToggle({
+    shown: () => isFull() && osd(),
+    show: () => (isFull() ? showOsd() : activate()),
+    hide: () => (isFull() ? setOsd(false) : activate()),
+  });
+
   let lastMove = 0;
   const onPointer = () => {
     if (!isFull()) return;
@@ -405,13 +428,13 @@ function Watch(): JSX.Element {
           tabindex={isFull() ? -1 : 0}
           data-focusable={isFull() ? undefined : ""}
           aria-label={isFull() ? `Watching ${tuned()?.name ?? ""}` : "Watch full screen"}
-          onClick={() => {
-            if (isFull()) return osd() ? setOsd(false) : showOsd();
-            const h = heroCh();
-            if (idle() && h) tuneNow(h);
+          onPointerDown={tap.onPointerDown}
+          onClick={tap.onClick}
+          onDblClick={() => {
+            tap.cancel();
+            if (isFull()) exitFull();
             else enterFull();
           }}
-          onDblClick={() => (isFull() ? exitFull() : enterFull())}
           onMouseMove={onPointer}
         >
           <video ref={video} class="live__video" playsinline autoplay />
@@ -561,6 +584,7 @@ function Watch(): JSX.Element {
           <header class="miniguide__head">
             <strong>{filter().kind === "all" ? "All channels" : filter().kind === "favorites" ? "Favourites" : (filter() as { name: string }).name}</strong>
             <span>OK to watch · Back to close</span>
+            <SheetClose class="miniguide__close" onClose={closeMini} />
           </header>
           <ChannelList
             class="miniguide__list"

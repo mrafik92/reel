@@ -29,7 +29,7 @@
 }
 .card__rating .icon {
   margin: -0.12em 0.22rem 0 0;
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 html[data-input="key"] .card:focus .card__meta {
   opacity: 1;
@@ -62,7 +62,7 @@ html[data-input="key"] .card:focus .card__meta {
   height: 2.7rem;
   padding: 0 0.55rem 0 1rem;
   border-radius: 999px;
-  background: rgba(16, 18, 25, 0.78);
+  background: rgba(var(--bg-1-rgb), 0.78);
   box-shadow: inset 0 0 0 1px var(--ink-4), 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
   color: var(--ink-2);
   font: 700 0.95rem/1 var(--font-body);
@@ -73,7 +73,7 @@ html[data-input="key"] .card:focus .card__meta {
 .topsearch__icon {
   margin-right: 0.6rem;
   font-size: 1.2rem;
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 .topsearch__label {
   flex: 1;
@@ -86,9 +86,9 @@ html[data-input="key"] .card:focus .card__meta {
   margin-left: 0.2rem;
 }
 .topsearch:hover {
-  background: rgba(23, 26, 35, 0.95);
+  background: rgba(var(--bg-2-rgb), 0.95);
   color: var(--ink);
-  box-shadow: inset 0 0 0 1px rgba(198, 244, 50, 0.5), 0 0.6rem 1.6rem rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-hi-rgb), 0.5), 0 0.6rem 1.6rem rgba(0, 0, 0, 0.4);
 }
 .topsearch:focus {
   background: var(--ink);
@@ -102,12 +102,12 @@ html[data-input="key"] .topsearch:focus {
   box-shadow: var(--focus-ring);
 }
 html[data-input="pointer"] .topsearch:focus:not(:hover) {
-  background: rgba(16, 18, 25, 0.78);
+  background: rgba(var(--bg-1-rgb), 0.78);
   color: var(--ink-2);
   transform: none;
 }
 html[data-input="pointer"] .topsearch:focus:not(:hover) .topsearch__icon {
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 .topsearch.is-tucked {
   opacity: 0;
@@ -129,10 +129,10 @@ html.tv .topsearch__label {
 }
 .rail__link--search {
   color: var(--ink);
-  box-shadow: inset 0 0 0 1.5px rgba(198, 244, 50, 0.55);
+  box-shadow: inset 0 0 0 1.5px rgba(var(--accent-hi-rgb), 0.55);
 }
 .rail__link--search .rail__icon {
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 .rail__link--search:focus .rail__icon {
   color: var(--bg);
@@ -165,7 +165,7 @@ html.tv .topsearch__label {
   align-items: flex-end;
 }
 .picker__surprise {
-  box-shadow: 0 0.7rem 2.2rem rgba(198, 244, 50, 0.22);
+  box-shadow: 0 0.7rem 2.2rem rgba(var(--accent-hi-rgb), 0.22);
 }
 .picker__surprise .icon {
   font-size: 1.45em;
@@ -209,7 +209,7 @@ html[data-input="pointer"] .picker__surprise:focus:not(:hover) .icon {
   font-size: 1.05em;
 }
 .segmented__star {
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 .segmented__btn:focus .segmented__star {
   color: inherit;
@@ -241,13 +241,13 @@ html[data-input="pointer"] .picker__surprise:focus:not(:hover) .icon {
 }
 .chip[aria-pressed="true"],
 .chip[aria-checked="true"] {
-  border-color: rgba(198, 244, 50, 0.6);
+  border-color: rgba(var(--accent-hi-rgb), 0.6);
   background: var(--accent-dim);
   color: var(--ink);
 }
 .chip__check {
   margin: 0 0.35rem 0 -0.2rem;
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 .chip:focus .chip__check {
   color: inherit;
@@ -378,7 +378,7 @@ html[data-input="pointer"] .gchip[aria-pressed="true"]:focus:not(:hover) {
   align-items: center;
   height: 2.1rem;
   padding: 0 0.65rem 0 0.9rem;
-  border: 1.5px solid rgba(198, 244, 50, 0.45);
+  border: 1.5px solid rgba(var(--accent-hi-rgb), 0.45);
   border-radius: 999px;
   background: var(--accent-dim);
   color: var(--ink);
@@ -425,7 +425,7 @@ html.tv .library__lanes .row {
   padding: 1.5rem 1.8rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-l);
-  background: linear-gradient(100deg, var(--bg-1), rgba(16, 18, 25, 0.4));
+  background: linear-gradient(100deg, var(--bg-1), rgba(var(--bg-1-rgb), 0.4));
 }
 .lane-cta p {
   margin: 0.3rem 1.5rem 0.3rem 0;
@@ -481,7 +481,7 @@ html.tv .library__lanes .row {
   margin-left: 0.5rem;
   text-transform: none;
   letter-spacing: 0;
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 .fpanel__foot {
   display: flex;
@@ -802,7 +802,7 @@ html.tv .row--results {
   --nav-anchor-top: 24vh;
 }
 .person__role--lib {
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 .search__fine {
   color: var(--ink-3);

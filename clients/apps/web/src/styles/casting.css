@@ -11,7 +11,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #07080a;
+  background: var(--bg);
   color: var(--ink);
 }
 .castview__bg {
@@ -38,9 +38,9 @@
   right: 0;
   bottom: 0;
   background:
-    radial-gradient(ellipse 55% 60% at 24% 52%, rgba(198, 244, 50, 0.09) 0%, rgba(198, 244, 50, 0) 70%),
-    linear-gradient(90deg, rgba(7, 8, 10, 0.9) 0%, rgba(7, 8, 10, 0.62) 46%, rgba(7, 8, 10, 0.9) 100%),
-    linear-gradient(0deg, #07080a 0%, rgba(7, 8, 10, 0) 45%);
+    radial-gradient(ellipse 55% 60% at 24% 52%, rgba(var(--accent-rgb), 0.09) 0%, rgba(var(--accent-rgb), 0) 70%),
+    linear-gradient(90deg, rgba(var(--bg-rgb), 0.9) 0%, rgba(var(--bg-rgb), 0.62) 46%, rgba(var(--bg-rgb), 0.9) 100%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(var(--bg-rgb), 0) 45%);
 }
 
 .castview__top {
@@ -54,10 +54,10 @@
   display: inline-flex;
   align-items: center;
   padding: 0.6rem 0.9rem 0.6rem 0.85rem;
-  border: 1.5px solid rgba(198, 244, 50, 0.42);
+  border: 1.5px solid rgba(var(--accent-hi-rgb), 0.42);
   border-radius: 999px;
-  background: rgba(198, 244, 50, 0.07);
-  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.07);
+  color: var(--accent-hi);
   font: 700 0.95rem/1 var(--font-body);
   cursor: pointer;
   transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
@@ -110,7 +110,7 @@
   height: 100%;
   border-radius: var(--radius-l);
   object-fit: cover;
-  box-shadow: 0 0 0 1px rgba(243, 238, 228, 0.1), 0 2.5rem 5rem -1rem rgba(0, 0, 0, 0.75);
+  box-shadow: 0 0 0 1px rgba(var(--ink-rgb), 0.1), 0 2.5rem 5rem -1rem rgba(0, 0, 0, 0.75);
 }
 .castview__art-empty {
   display: flex;
@@ -127,7 +127,7 @@
   bottom: -2.2rem;
   height: 2.2rem;
   border-radius: 50%;
-  background: radial-gradient(ellipse at 50% 0%, rgba(198, 244, 50, 0.4) 0%, rgba(198, 244, 50, 0) 70%);
+  background: radial-gradient(ellipse at 50% 0%, rgba(var(--accent-rgb), 0.4) 0%, rgba(var(--accent-rgb), 0) 70%);
   opacity: 0.35;
   transition: opacity 900ms var(--ease);
 }
@@ -161,7 +161,7 @@
 }
 .castview__on strong {
   margin-left: 0.4em;
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 .castview__dot {
   position: relative;
@@ -233,8 +233,8 @@
   margin-right: 0.8rem;
   padding: 0.35rem 0.6rem;
   border-radius: var(--radius-s);
-  background: var(--danger);
-  color: #fff;
+  background: var(--live);
+  color: #22050e;
   font: 800 0.72rem/1 var(--font-body);
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -258,16 +258,16 @@
   margin-left: 0.4rem;
 }
 .castview__opts .ctl.has-value {
-  background: rgba(243, 238, 228, 0.07);
+  background: rgba(var(--ink-rgb), 0.07);
 }
 .castview__stop {
   margin-top: 0.2rem;
-  background: rgba(243, 238, 228, 0.07);
+  background: rgba(var(--ink-rgb), 0.07);
 }
 .castview__stop:hover,
 .castview__stop:focus {
   background: var(--danger);
-  color: #fff;
+  color: #1a0503;
 }
 
 .castview__error {
@@ -343,7 +343,7 @@
 
 /* Player: cast button lights up while casting; quick-save prompt above the controls */
 .iconbtn.is-casting {
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 .quicksave {
   position: absolute;
@@ -355,7 +355,7 @@
   max-width: 34rem;
   padding: 0.85rem 0.9rem 0.85rem 1.2rem;
   border-radius: var(--radius-l);
-  background: rgba(16, 18, 25, 0.94);
+  background: rgba(var(--bg-1-rgb), 0.94);
   box-shadow: 0 0 0 1px var(--line), 0 1.2rem 3rem rgba(0, 0, 0, 0.55);
   animation: castview-rise 420ms var(--ease-out) both;
 }
