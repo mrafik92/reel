@@ -24,6 +24,7 @@ import { toast } from "../lib/toast";
 import { ErrorState } from "../components/States";
 import { CtlButton, Osd, Scrubber, Transport, Volume, useOsd, type ScrubberApi } from "../components/player/Controls";
 import { playHref, toPath } from "../lib/links";
+import { createTapToggle } from "../lib/tap";
 import { CastSheet } from "../components/casting/CastSheet";
 import { CastRemote } from "../components/casting/CastRemote";
 import { getServerUrl } from "@reel/ui";
@@ -188,6 +189,17 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       if (playing() && !picker() && scrub() == null && !info() && !quick() && !castSheet() && !speedSheet() && !qualitySheet()) setVisible(false);
     }, HIDE_AFTER);
   };
+
+  // A click on the picture shows the controls, or hides them if they're up; it never
+  // plays/pauses (Space/K and the transport button do that). Double-click is full screen.
+  const tap = createTapToggle({
+    shown: visible,
+    show: poke,
+    hide: () => {
+      if (hideTimer) clearTimeout(hideTimer);
+      if (scrub() == null) setVisible(false);
+    },
+  });
 
   // Episode → show title for the top bar (two hops: episode → season → show).
   if (props.item.kind === "episode" && props.item.parent_id != null) {
@@ -1170,12 +1182,12 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
         playsinline
         preload="auto"
         crossorigin={getServerUrl() ? "anonymous" : undefined}
-        onClick={() => {
-          const was = playing();
-          toggle();
-          flash({ icon: was ? "pause" : "play" });
+        onPointerDown={tap.onPointerDown}
+        onClick={tap.onClick}
+        onDblClick={() => {
+          tap.cancel();
+          fullscreen();
         }}
-        onDblClick={fullscreen}
       />
 
       <Osd osd={osd()} />
