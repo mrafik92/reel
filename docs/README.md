@@ -11,6 +11,7 @@ with a SolidJS web app and needs no cloud account.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit together, data flows, and the design choices with their reasons |
 | [STATUS.md](STATUS.md) | Current state as of 2026-11-04: what works, what's verified, known gaps, security posture, backlog |
 | [OPERATIONS.md](OPERATIONS.md) | The live deployment (Proxmox CT 113), build/deploy pipeline, config, runbooks |
+| [design/](design/) | Design notes for large changes while they're being built (e.g. [111-multivariant-hls.md](design/111-multivariant-hls.md)); folded into the docs above once shipped |
 | [../SPEC.md](../SPEC.md) | The original design spec (v0.1). Historical; these docs supersede it where they differ |
 | [../deploy/README.md](../deploy/README.md) | Generic install guide (Docker Compose, Caddy, GPU, IPTV, DLNA) |
 
