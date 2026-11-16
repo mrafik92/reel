@@ -76,6 +76,9 @@ code {
   position: relative;
   min-height: 100vh;
   padding-left: var(--rail-w);
+  /* iOS landscape with viewport-fit=cover: keep the rail and content clear of the notch (#180).
+     Chromium 68 drops env() and keeps the line above. */
+  padding-left: calc(var(--rail-w) + env(safe-area-inset-left));
 }
 .app.is-immersive .main {
   padding-left: 0;
@@ -91,6 +94,7 @@ code {
   display: flex;
   flex-direction: column;
   padding: 2rem 0 1.5rem;
+  margin-left: env(safe-area-inset-left);
 }
 /* Always-on shade so icons read over bright backdrops */
 .rail::before {
@@ -205,10 +209,10 @@ html[data-input="pointer"] .rail:hover .rail__link {
 html[data-input="pointer"] .rail:hover .rail__label {
   opacity: 1;
 }
-.rail__link[aria-current="page"] {
+.rail__link[aria-current] {
   color: var(--ink);
 }
-.rail__link[aria-current="page"]::before {
+.rail__link[aria-current]::before {
   content: "";
   position: absolute;
   left: 0.2rem;
@@ -219,17 +223,34 @@ html[data-input="pointer"] .rail:hover .rail__label {
   border-radius: 50%;
   background: var(--accent);
 }
-.rail__link:hover {
+/* Hover only where a pointer can hover: a tap on a phone leaves a sticky :hover behind (#180).
+   TV keeps it unconditionally (Magic Remote), whatever its media query reports. */
+@media (hover: hover) {
+  .rail__link:hover {
+    color: var(--ink);
+    background: var(--ink-5);
+  }
+}
+html.tv .rail__link:hover {
   color: var(--ink);
   background: var(--ink-5);
 }
-.rail__link:focus {
+/* The inverted pill is the D-pad / keyboard focus. A tapped or clicked link keeps focus after the
+   client-side navigation, so for pointer and touch input it must not invert, or the icon stays
+   dark (#180). TV always shows it (the Magic Remote's pointer *is* focus there). */
+html[data-input="key"] .rail__link:focus,
+html.tv .rail__link:focus {
   background: var(--ink);
   color: var(--bg);
   box-shadow: none !important;
 }
-.rail__link:focus::before {
+html[data-input="key"] .rail__link:focus::before,
+html.tv .rail__link:focus::before {
   background: var(--bg);
+}
+/* The More tab only exists in the phone bottom bar (below). */
+.rail__item--morebtn {
+  display: none;
 }
 .rail__foot {
   margin-top: auto;
@@ -1158,7 +1179,10 @@ html.tv .player__fs {
     top: auto;
     width: 100%;
     height: 4.4rem;
+    height: calc(4.4rem + env(safe-area-inset-bottom));
+    margin-left: 0;
     padding: 0;
+    padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     flex-direction: row;
     background: var(--bg-1);
     border-top: 1px solid var(--line);
@@ -1169,37 +1193,57 @@ html.tv .player__fs {
   html:not(.tv) .rail__foot {
     display: none;
   }
+  /* Five destinations + More, equal width: ≥ 60px each at 360px (#180). */
   html:not(.tv) .rail__list {
     display: flex;
     width: 100%;
-    justify-content: space-around;
+  }
+  html:not(.tv) .rail__list li {
+    -webkit-box-flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
   }
   html:not(.tv) .rail__list li + li {
     margin-top: 0;
   }
+  html:not(.tv) .rail__list .rail__item--more {
+    display: none;
+  }
+  html:not(.tv) .rail__list .rail__item--morebtn {
+    display: block;
+  }
   html:not(.tv) .rail__link,
   html:not(.tv) .rail:hover .rail__link,
   html:not(.tv) .rail.is-open .rail__link {
-    width: auto;
+    width: 100%;
     height: 4.4rem;
     margin: 0;
+    padding: 0 0.15rem;
     flex-direction: column;
     justify-content: center;
     border-radius: 0;
     background: transparent;
   }
   html:not(.tv) .rail__label {
+    max-width: 100%;
     margin: 0.3rem 0 0;
     font-size: 0.72rem;
     opacity: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  html:not(.tv) .rail__link[aria-current="page"]::before {
+  html:not(.tv) .rail__count {
+    left: 50%;
+    margin-left: 0.4rem;
+  }
+  html:not(.tv) .rail__link[aria-current]::before {
     top: 0.35rem;
     left: 50%;
     margin: 0 0 0 -0.16rem;
   }
   html:not(.tv) .main {
     padding-bottom: 4.4rem;
+    padding-bottom: calc(4.4rem + env(safe-area-inset-bottom));
   }
   .hero__title,
   .detail__title {

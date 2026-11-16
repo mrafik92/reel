@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createSignal, onCleanup, onMount, type JSX, type ParentProps } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
-import { Icon, initTvNavigation, isFileOrigin, onBack, type IconName } from "@reel/ui";
+import { Icon, Sheet, initTvNavigation, isFileOrigin, onBack, type IconName, type SheetOption } from "@reel/ui";
 import { MOCK, TV, href } from "../lib/mode";
 import { authStatus, bootError, bootstrap, currentUser, isAdmin, logout, onAuthChange } from "../lib/auth";
 import { connectEvents, disconnectEvents, downloads, queueSummary } from "../lib/downloads";
@@ -19,6 +19,8 @@ interface NavItem {
   admin?: boolean;
   /** Reserved slot: not shown until its section ships. */
   hidden?: boolean;
+  /** Phone bottom bar (≤760px): lives behind the More tab instead of in the bar (#180). */
+  more?: boolean;
 }
 
 const NAV: NavItem[] = [
@@ -27,12 +29,16 @@ const NAV: NavItem[] = [
   { path: "/", label: "Home", icon: "home", match: (p) => p === "/" },
   { path: "/movies", label: "Movies", icon: "film", match: (p) => p.indexOf("/movies") === 0 },
   { path: "/shows", label: "Shows", icon: "tv", match: (p) => p.indexOf("/shows") === 0 },
-  { path: "/discover", label: "Discover", icon: "compass", match: (p) => p.indexOf("/discover") === 0 },
-  { path: "/requests", label: "Requests", icon: "inbox", match: (p) => p.indexOf("/requests") === 0 },
-  { path: "/downloads", label: "Downloads", icon: "download", match: (p) => p.indexOf("/downloads") === 0 },
+  { path: "/discover", label: "Discover", icon: "compass", match: (p) => p.indexOf("/discover") === 0, more: true },
+  { path: "/requests", label: "Requests", icon: "inbox", match: (p) => p.indexOf("/requests") === 0, more: true },
+  { path: "/downloads", label: "Downloads", icon: "download", match: (p) => p.indexOf("/downloads") === 0, more: true },
   // Next: Live TV (IPTV guide + zapping). Flip `hidden` when the route lands.
   { path: "/live", label: "Live TV", icon: "live", match: (p) => p.indexOf("/live") === 0 },
 ];
+
+/** Pages behind the phone bar's More tab that aren't NAV items (they live in the rail's foot). */
+const MORE_EXTRA = /^\/(settings|admin|dev)(\/|$)/;
+const LOGOUT = "logout";
 
 /** Routes reachable without a session. */
 const PUBLIC = /^\/(login|setup|invite\/|connect)/;
@@ -43,6 +49,8 @@ export function Shell(props: ParentProps): JSX.Element {
   const immersive = () => loc.pathname.indexOf("/play/") === 0;
   const isPublic = () => PUBLIC.test(loc.pathname);
   const [railOpen, setRailOpen] = createSignal(false);
+  // Phone bottom bar: the destinations that don't fit sit in a sheet behind "More" (#180).
+  const [moreOpen, setMoreOpen] = createSignal(false);
 
   initTvNavigation({ tv: TV });
 
@@ -141,6 +149,40 @@ export function Shell(props: ParentProps): JSX.Element {
     return n;
   };
 
+  const settingsPath = () => (isAdmin() ? "/admin" : "/settings/playback");
+  const inMore = () => MORE_EXTRA.test(loc.pathname) || NAV.some((n) => n.more && !n.hidden && n.match(loc.pathname));
+  const moreOptions = (): SheetOption<string>[] => {
+    const q = queueSummary();
+    const reqs = activeCount();
+    const opts: SheetOption<string>[] = NAV.filter((n) => n.more && !n.hidden).map((n) => ({
+      value: n.path,
+      title: n.label,
+      icon: n.icon,
+      detail:
+        n.path === "/downloads" && q.active
+          ? `${Math.floor(q.active.progress * 100)}% · ${q.count} active`
+          : n.path === "/downloads" && q.failed
+            ? `${q.failed} failed`
+            : n.path === "/requests" && reqs
+              ? `${reqs} active`
+              : undefined,
+    }));
+    opts.push({ value: settingsPath(), title: "Settings", icon: "gear" });
+    if (MOCK || import.meta.env.DEV) opts.push({ value: "/dev/rings", title: "Design lab", icon: "layers" });
+    opts.push({ value: LOGOUT, title: "Sign out", icon: "logout" });
+    return opts;
+  };
+  const moreSelected = () => {
+    const p = loc.pathname;
+    const n = NAV.find((x) => x.more && x.match(p));
+    if (n) return n.path;
+    if (/^\/(settings|admin)(\/|$)/.test(p)) return settingsPath();
+    if (p.indexOf("/dev") === 0) return "/dev/rings";
+    return "";
+  };
+  // Same signal as the Downloads tab it stands in for: active downloads, or "!" when only failures.
+  const moreBadge = () => queueSummary().count || (queueSummary().failed > 0 ? "!" : "");
+
   return (
     <div class="app" classList={{ "is-immersive": immersive() || isPublic() }}>
       <Switch
@@ -207,7 +249,7 @@ export function Shell(props: ParentProps): JSX.Element {
             <ul class="rail__list">
               <For each={NAV.filter((n) => !n.hidden)}>
                 {(n) => (
-                  <li>
+                  <li classList={{ "rail__item--more": !!n.more }}>
                     <a
                       class="rail__link"
                       classList={{ "rail__link--search": n.path === "/search" }}
@@ -237,12 +279,31 @@ export function Shell(props: ParentProps): JSX.Element {
                   </li>
                 )}
               </For>
+              {/* Phone only (hidden on desktop and TV by CSS): opens the rest of the destinations. */}
+              <li class="rail__item--morebtn">
+                <button
+                  type="button"
+                  class="rail__link"
+                  aria-haspopup="dialog"
+                  aria-expanded={moreOpen() ? "true" : "false"}
+                  aria-current={inMore() ? "true" : undefined}
+                  onClick={() => setMoreOpen(true)}
+                >
+                  <Icon name="more" class="rail__icon" />
+                  <span class="rail__label">More</span>
+                  <Show when={moreBadge()}>
+                    <span class="rail__count" classList={{ "rail__count--bad": moreBadge() === "!" }} aria-hidden="true">
+                      {moreBadge()}
+                    </span>
+                  </Show>
+                </button>
+              </li>
             </ul>
             <div class="rail__foot">
               {/* Everyone has their own settings (Playback); admins land on the server sections (#88). */}
               <a
                 class="rail__link"
-                href={href(isAdmin() ? "/admin" : "/settings/playback")}
+                href={href(settingsPath())}
                 aria-current={loc.pathname.indexOf("/admin") === 0 || loc.pathname.indexOf("/settings") === 0 ? "page" : undefined}
               >
                 <Icon name="gear" class="rail__icon" />
@@ -268,6 +329,19 @@ export function Shell(props: ParentProps): JSX.Element {
               </Show>
             </div>
           </nav>
+          <Show when={moreOpen()}>
+            <Sheet
+              title="More"
+              options={moreOptions()}
+              selected={moreSelected()}
+              onClose={() => setMoreOpen(false)}
+              onSelect={(v) => {
+                if (v === LOGOUT) void logout().then(() => navigate("/login"));
+                else navigate(v);
+              }}
+              footer={<>Signed in as {currentUser()?.username ?? "…"}</>}
+            />
+          </Show>
           <Show when={loc.pathname.indexOf("/search") !== 0}>
             <a
               class="topsearch"
