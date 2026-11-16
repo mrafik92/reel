@@ -660,7 +660,13 @@ html[data-input="key"] .ring__retry:focus {
   animation: sheet-in 300ms var(--ease-out) both;
 }
 .sheet__head {
-  padding: 2.5rem 2.25rem 1rem;
+  position: relative;
+  padding: 2.5rem 4.75rem 1rem 2.25rem;
+}
+.sheet__close {
+  position: absolute;
+  top: 1.85rem;
+  right: 1.1rem;
 }
 .sheet__head h2 {
   margin: 0;

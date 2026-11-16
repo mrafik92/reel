@@ -1020,9 +1020,14 @@ html[data-input="pointer"] .live__hints {
   to { transform: none; opacity: 1; }
 }
 .miniguide__head {
+  position: relative;
   display: flex;
   flex-direction: column;
-  padding: 0 1.5rem 1rem 1.6rem;
+  padding: 0 4.5rem 1rem 1.6rem;
+}
+.miniguide__head .miniguide__close {
+  top: -0.6rem;
+  right: 0.9rem;
 }
 .miniguide__head strong {
   font: 780 1.8rem/1.1 var(--font-display);
