@@ -23,7 +23,7 @@ gaps are listed in [STATUS.md](STATUS.md).
 | Home (continue watching, recently added, picker lanes) | ✅ | |
 | Movie picker | ✅ | Lanes ("Because you watched…", top unwatched, under 100 min, new, rediscover, per genre), genre chips, filters (genre, decade, rating, runtime, unwatched), sort by rating/random, **Surprise me** |
 | Global search | ✅ | `/` or ⌘K. Covers library titles and cast names, episodes, people, TMDB titles not in the library, and IPTV movies/series |
-| Actor / person pages | ✅ | Bio and full filmography with availability badges; **Add** with a live progress ring; **Play** for titles you own |
+| Actor / person pages | ✅ | Bio and full filmography with availability badges; **Add** with a live progress ring; **Play** for titles you own. Filmography sort (🧪 #141, pending deploy): **Newest** (default), **Oldest**, **Top rated** (TMDB rating; titles under 50 votes go after the rest, unrated last; cards show ★ rating) and **Popular** (most TMDB votes), combined with the type and library filters, remembered per browser |
 | Ratings & reviews | ⏳ | TMDB rating and reviews ✅. IMDb/RT/Metacritic scores need an OMDb key (not configured yet). Optional Trakt comments. Links out to IMDb, Rotten Tomatoes and Letterboxd (Letterboxd has no API) |
 
 ## Requests & downloads (built-in "Seerr")

@@ -9,10 +9,56 @@ import { DiscoverTile, useDiscoverSheet } from "../components/Discover";
 import { EmptyState, ErrorState } from "../components/States";
 
 type Tab = "all" | "movie" | "tv";
+type Sort = "newest" | "oldest" | "rated" | "popular";
 
 interface Merged {
   credit: PersonCredit;
   roles: string[];
+  /** Position in the server's newest-first order (tie-breaker, and the "newest" order itself). */
+  i: number;
+}
+
+const SORTS: [Sort, string][] = [["newest", "Newest"], ["oldest", "Oldest"], ["rated", "Top rated"], ["popular", "Popular"]];
+const SORT_KEY = "reel.person.sort";
+/**
+ * "Top rated" only trusts a TMDB average backed by this many votes; thinner ones go after,
+ * so a 10.0 from 3 votes can't top the list. 50 votes keeps the average within a few tenths
+ * of where it settles, and an actor's notable films clear it easily.
+ */
+const MIN_VOTES = 50;
+
+function loadSort(): Sort {
+  try {
+    const v = localStorage.getItem(SORT_KEY);
+    return SORTS.some(([s]) => s === v) ? (v as Sort) : "newest";
+  } catch {
+    return "newest";
+  }
+}
+
+const trusted = (c: PersonCredit) => !!c.vote_average && (c.vote_count ?? 0) >= MIN_VOTES;
+/** 0 = trusted rating, 1 = thin rating, 2 = unrated. */
+const ratingTier = (c: PersonCredit) => (trusted(c) ? 0 : c.vote_average ? 1 : 2);
+
+function sortCredits(list: Merged[], by: Sort): Merged[] {
+  const out = list.slice();
+  const cmp: Record<Sort, (a: Merged, b: Merged) => number> = {
+    newest: (a, b) => a.i - b.i,
+    // Undated titles stay last; same year → earlier release first (server order reversed).
+    oldest: (a, b) => (a.credit.year ?? Infinity) - (b.credit.year ?? Infinity) || b.i - a.i,
+    rated: (a, b) =>
+      ratingTier(a.credit) - ratingTier(b.credit) ||
+      (b.credit.vote_average ?? 0) - (a.credit.vote_average ?? 0) ||
+      (b.credit.vote_count ?? 0) - (a.credit.vote_count ?? 0) ||
+      a.i - b.i,
+    // Vote count, not TMDB `popularity`: popularity scores the whole title, so a long-running talk show
+    // with one guest spot outranks the films someone is known for. Popularity only breaks ties.
+    popular: (a, b) =>
+      (b.credit.vote_count ?? -1) - (a.credit.vote_count ?? -1) ||
+      (b.credit.popularity ?? -1) - (a.credit.popularity ?? -1) ||
+      a.i - b.i,
+  };
+  return out.sort(cmp[by]);
 }
 
 function fmtDate(iso: string): string {
@@ -32,6 +78,15 @@ export default function Person(): JSX.Element {
   const [p, { refetch }] = createResource(() => Number(params.id), (id) => api.person(id));
   const [tab, setTab] = createSignal<Tab>("all");
   const [libOnly, setLibOnly] = createSignal(false);
+  const [sort, setSortSig] = createSignal<Sort>(loadSort());
+  const setSort = (v: Sort) => {
+    setSortSig(v);
+    try {
+      localStorage.setItem(SORT_KEY, v);
+    } catch {
+      /* private mode etc.: the choice just isn't remembered */
+    }
+  };
   const [bioOpen, setBioOpen] = createSignal(false);
   const sheet = useDiscoverSheet();
 
@@ -47,14 +102,23 @@ export default function Person(): JSX.Element {
       const hit = m.get(k);
       if (hit) {
         if (hit.roles.indexOf(role) < 0) hit.roles.push(role);
-      } else m.set(k, { credit: c, roles: [role] });
+      } else m.set(k, { credit: c, roles: [role], i: m.size });
     }
     return Array.from(m.values());
   });
-  const filtered = () =>
-    merged().filter((x) =>
-      (tab() === "all" || x.credit.media_type === tab()) &&
-      (!libOnly() || x.credit.status === "available" || x.credit.status === "partially"));
+  const filtered = createMemo(() =>
+    sortCredits(
+      merged().filter((x) =>
+        (tab() === "all" || x.credit.media_type === tab()) &&
+        (!libOnly() || x.credit.status === "available" || x.credit.status === "partially")),
+      sort(),
+    ));
+  /** Card subtitle: year and part, led by the TMDB rating while sorting by rating. */
+  const subtitle = (x: Merged) => {
+    const c = x.credit;
+    const rating = sort() === "rated" && c.vote_average ? `★ ${c.vote_average.toFixed(1)}${trusted(c) ? "" : " (few votes)"}` : "";
+    return [rating, c.year ? String(c.year) : "", x.roles.join(", ")].filter(Boolean).join(" · ");
+  };
   const count = (t: Tab) => merged().filter((x) => t === "all" || x.credit.media_type === t).length;
   const inLibrary = () => merged().filter((x) => x.credit.status === "available" || x.credit.status === "partially").length;
 
@@ -125,6 +189,21 @@ export default function Person(): JSX.Element {
                       <button type="button" class="chip chip--toggle" aria-pressed={libOnly()} onClick={() => setLibOnly((v) => !v)}>
                         <Show when={libOnly()}><Icon name="check" /></Show> In your library
                       </button>
+                      <div class="segmented person-credits__sort" role="group" aria-label="Sort by">
+                        <For each={SORTS}>
+                          {([v, label]) => (
+                            <button
+                              type="button"
+                              class="segmented__btn"
+                              aria-pressed={sort() === v}
+                              title={v === "rated" ? `TMDB rating; titles with fewer than ${MIN_VOTES} votes come after` : v === "popular" ? "Most TMDB votes first" : undefined}
+                              onClick={() => setSort(v)}
+                            >
+                              {label}
+                            </button>
+                          )}
+                        </For>
+                      </div>
                     </div>
                   </div>
                   <Show
@@ -138,7 +217,7 @@ export default function Person(): JSX.Element {
                             card={x.credit}
                             onOpen={sheet.open}
                             autofocus={i() === 0}
-                            subtitle={[x.credit.year ? String(x.credit.year) : "", x.roles.join(", ")].filter(Boolean).join(" · ")}
+                            subtitle={subtitle(x)}
                           />
                         )}
                       </For>
