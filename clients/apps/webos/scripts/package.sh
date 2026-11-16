@@ -6,8 +6,6 @@ web="$here/../web"
 stage="$here/.staging"
 out="$here/out"
 
-[ -f "$here/assets/icon.png" ] || bun "$here/scripts/gen-icons.ts"
-
 echo "==> Building apps/web (VITE_CLIENT=webos, VITE_TARGET=tv)"
 rm -rf "$stage" && mkdir -p "$stage"
 (cd "$web" && VITE_CLIENT=webos VITE_TARGET=tv bun run build --outDir "$stage" --emptyOutDir)
