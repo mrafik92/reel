@@ -1,4 +1,4 @@
-# Status: 2026-11-15
+# Status: 2026-11-16
 
 Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
@@ -139,6 +139,15 @@ proposal are in [#102](https://github.com/mrafik92/reel/issues/102#issuecomment-
   4.5× each. H.264/HEVC (Main10)/VP9 encode in hardware; **no AV1 encode**. Plex shares the GPU on CT 113.
 - **Effect of the cap (estimate from probe data, Chrome on this Mac):** 124 of 311 files (40 %) get a video
   transcode, 95 of them only because of the cap; without it, 29 (9 %: HDR/4K/10-bit H.264).
+
+- **Honest connection errors** (#90, not yet deployed). Checked 2026-11-16 with Playwright on a production
+  build (`vite preview`), with failures simulated by route interception: a dropped connection on Live TV shows
+  "Couldn't load your channels / Check your connection and try again" with **Try again** and no `?mock=1` tip
+  (the tip is compiled out of production bundles); a 503 shows the server's message; browser offline shows
+  "You're offline"; a failed refresh of an already-loaded Live TV list keeps the list and shows a toast; in
+  1920×1080 TV mode an arrow key lands on **Try again**. Mock mode unchanged. Cancelled requests are covered by
+  unit tests (`clients/apps/web/test/http.test.ts`). Not checked: a signed-in session against the live server
+  (the stored admin login was rejected) and a real outage with the container stopped.
 
 ## Known gaps / bugs
 
