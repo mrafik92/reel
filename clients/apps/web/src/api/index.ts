@@ -10,7 +10,7 @@ import type {
   DiscoverDetailWithCast, PersonDetail, Reviews, DownloadItem, GenreCount, LibraryFilters, BrowseLane, SearchAll,
 } from "./types";
 
-export { ApiError, getToken, setToken, onUnauthorized } from "./http";
+export { ApiError, isAborted, getToken, setToken, onUnauthorized } from "./http";
 export type * from "./types";
 export type { Home, ItemDetail, ItemSummary, Library, LibraryKind, LibrarySort, Page, Id };
 

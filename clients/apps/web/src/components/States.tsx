@@ -1,6 +1,6 @@
 import { Show, createEffect, onCleanup, type JSX } from "solid-js";
 import { Icon } from "@reel/ui";
-import { ApiError } from "../api";
+import { ApiError, isAborted } from "../api";
 import { MOCK, href } from "../lib/mode";
 import { isAdmin } from "../lib/auth";
 import { autoRetry } from "../lib/connection";
@@ -9,8 +9,20 @@ const RETRY_DELAYS = [3000, 6000, 12000, 20000, 30000];
 let offlineStreak = 0;
 let lastOfflineAt = 0;
 
+/** Developer tip, compiled out of production builds: viewers never see it (#90). */
+const MockHint: () => JSX.Element = import.meta.env.DEV
+  ? () => (
+      <Show when={!MOCK}>
+        {" "}To preview the interface with sample data, add <code>?mock=1</code> to the address.
+      </Show>
+    )
+  : () => null;
+
 export function ErrorState(props: { error: unknown; onRetry?: () => void; title?: string }): JSX.Element {
-  const offline = () => props.error instanceof ApiError && props.error.status === 0;
+  // A cancelled request (page left, superseded) isn't an error: show nothing (#90).
+  const aborted = () => isAborted(props.error);
+  const offline = () => props.error instanceof ApiError && props.error.status === 0 && !aborted();
+  const noNetwork = () => offline() && (props.error as ApiError).network === "offline";
   const notFound = () => props.error instanceof ApiError && props.error.status === 404;
   const message = () =>
     props.error instanceof Error ? props.error.message : "Something went wrong";
@@ -27,28 +39,29 @@ export function ErrorState(props: { error: unknown; onRetry?: () => void; title?
     onCleanup(stop);
   });
   return (
-    <div class="state state--error" role="alert">
-      <div class="state__icon">
-        <Icon name="alert" />
-      </div>
-      <h2 class="state__title">
-        {props.title ?? (offline() ? "Can't reach your Reel server" : notFound() ? "This title isn't here anymore" : "Something went wrong")}
-      </h2>
-      <p class="state__body">
-        <Show when={offline()} fallback={message()}>
-          Check that the server is running and on the same network.
-          <Show when={props.onRetry}> Reel keeps trying in the background.</Show>
-          <Show when={!MOCK}>
-            {" "}To preview the interface with sample data, add <code>?mock=1</code> to the address.
+    <Show when={!aborted()}>
+      <div class="state state--error" role="alert">
+        <div class="state__icon">
+          <Icon name="alert" />
+        </div>
+        <h2 class="state__title">
+          {props.title ??
+            (noNetwork() ? "You're offline" : offline() ? "Can't reach Reel" : notFound() ? "This title isn't here anymore" : "Something went wrong")}
+        </h2>
+        <p class="state__body">
+          <Show when={offline()} fallback={message()}>
+            Check your connection and try again.
+            <Show when={props.onRetry}> Reel keeps trying in the background.</Show>
+            <MockHint />
           </Show>
+        </p>
+        <Show when={props.onRetry}>
+          <button class="btn btn--primary" type="button" data-autofocus onClick={() => props.onRetry?.()}>
+            <Icon name="retry" /> <span>Try again</span>
+          </button>
         </Show>
-      </p>
-      <Show when={props.onRetry}>
-        <button class="btn btn--primary" type="button" data-autofocus onClick={() => props.onRetry?.()}>
-          <Icon name="retry" /> <span>Try again</span>
-        </button>
-      </Show>
-    </div>
+      </div>
+    </Show>
   );
 }
 

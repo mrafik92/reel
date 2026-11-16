@@ -200,8 +200,10 @@ element events outside a recovery step), and only then calls `play()` after a re
 pings progress every 10 s while playing and while paused (`paused: true`, for up to 30 min of pause). A ping
 that gets a 404 means the server ended the session, so the player opens a new one at the playhead (#95). In the web app, `lib/connection.ts`
 signals "the app is back" (tab visible, online, back/forward cache); the events socket, the start-up check and
-"Can't reach your Reel server" screens retry on it, and the shell re-mounts a page whose reads failed once the
-server answers again. Web builds use absolute asset paths so deep links work, while TV packages use relative paths
+"Can't reach Reel" screens retry on it, and the shell re-mounts a page whose reads failed once the
+server answers again. `api/http.ts` tags every status-0 `ApiError` with why no answer came (`aborted`, `offline`,
+`timeout`, `network`); reads are retried once on a network failure, never when cancelled, and `ErrorState` renders
+nothing for a cancelled request (#90). Web builds use absolute asset paths so deep links work, while TV packages use relative paths
 because they load from `file://`.
 
 ## 5. Architecture choices (and why)
