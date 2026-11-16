@@ -117,7 +117,7 @@ const BLURBS = [
   "The team takes on its toughest challenge yet — and nobody is safe.",
 ];
 
-const PALETTE = ["#c6f432", "#ff8a3d", "#5ad1ff", "#ff5a7a", "#b48cff", "#ffd23f", "#3dffb4", "#f3eee4"];
+const PALETTE = ["#f26352", "#ff8a3d", "#5ad1ff", "#ff5a7a", "#b48cff", "#ffd23f", "#3dffb4", "#f2e6d3"];
 
 function logo(name: string, i: number): string {
   const words = name.replace(/[^A-Za-z0-9 ]/g, "").split(/\s+/).filter(Boolean);
@@ -125,7 +125,7 @@ function logo(name: string, i: number): string {
   const c = PALETTE[i % PALETTE.length]!;
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 64">` +
-    `<rect width="96" height="64" rx="10" fill="#171a23"/>` +
+    `<rect width="96" height="64" rx="10" fill="#1b1716"/>` +
     `<rect x="8" y="52" width="24" height="4" rx="2" fill="${c}"/>` +
     `<text x="48" y="40" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="26" text-anchor="middle" fill="${c}" letter-spacing="-1">${initials}</text>` +
     `</svg>`;

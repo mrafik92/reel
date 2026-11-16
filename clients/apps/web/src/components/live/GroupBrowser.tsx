@@ -18,10 +18,10 @@ interface Section {
 }
 
 const HUE: Record<string, string> = {
-  sports: "#c6f432", movies: "#ff8a3d", series: "#ff5a7a", news: "#5ad1ff", kids: "#ffd23f", religious: "#3dffb4", music: "#b48cff",
-  documentary: "#7fd18b", entertainment: "#f3eee4", events: "#ff5a4e",
+  sports: "#6fd36b", movies: "#ff8a3d", series: "#ff5a7a", news: "#5ad1ff", kids: "#ffd23f", religious: "#3dffb4", music: "#b48cff",
+  documentary: "#7fd18b", entertainment: "#f2e6d3", events: "#ff5a4e",
 };
-const tint = (g: GroupInfo) => HUE[g.topic?.id ?? ""] ?? "#8e94a8";
+const tint = (g: GroupInfo) => HUE[g.topic?.id ?? ""] ?? "#a08e86";
 
 /**
  * Full-screen group browser for providers with 100+ groups: search, Pinned, Recently watched, then

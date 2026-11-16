@@ -92,7 +92,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   font-size: 1.15rem;
 }
 .toast--success .icon {
-  color: var(--accent);
+  color: var(--ok);
 }
 .toast--error {
   box-shadow: inset 3px 0 0 var(--danger), 0 1rem 2.5rem rgba(0, 0, 0, 0.55);
@@ -136,7 +136,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   padding: 0 1rem;
   border: 2px solid var(--ink-4);
   border-radius: var(--radius);
-  background: rgba(16, 18, 25, 0.9);
+  background: rgba(var(--bg-1-rgb), 0.9);
   color: var(--ink);
   font: 400 1.05rem/1 var(--font-body);
   transition: border-color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
@@ -155,7 +155,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
 }
 .field__select {
   padding-right: 2.5rem;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f3eee4' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f2e6d3' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 0.9rem center;
   background-size: 1.1rem;
@@ -201,7 +201,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   padding: 1.4rem 1.5rem 0.6rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-l);
-  background: rgba(10, 11, 15, 0.55);
+  background: rgba(var(--bg-rgb), 0.55);
 }
 .subform > .segmented {
   margin-bottom: 1.2rem;
@@ -293,7 +293,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   color: var(--ink);
 }
 .chip--toggle[aria-pressed="true"] .icon {
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 .chip--toggle:focus .icon {
   color: inherit;
@@ -315,7 +315,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   width: 80%;
   height: 120%;
   background:
-    radial-gradient(ellipse 45% 40% at 30% 40%, rgba(198, 244, 50, 0.12), rgba(198, 244, 50, 0) 70%),
+    radial-gradient(ellipse 45% 40% at 30% 40%, rgba(var(--accent-rgb), 0.12), rgba(var(--accent-rgb), 0) 70%),
     radial-gradient(ellipse 60% 50% at 60% 70%, rgba(80, 90, 160, 0.18), rgba(80, 90, 160, 0) 70%);
   pointer-events: none;
 }
@@ -356,7 +356,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   padding: 2.25rem 2.25rem 1.5rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-l);
-  background: rgba(16, 18, 25, 0.92);
+  background: rgba(var(--bg-1-rgb), 0.92);
   box-shadow: 0 2rem 4rem rgba(0, 0, 0, 0.45);
 }
 .auth__form .btn--block {
@@ -429,7 +429,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
 }
 .auth__libs li .icon {
   margin-right: 0.6rem;
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 
 /* ---------- Shell extras ------------------------------------------------- */
@@ -522,7 +522,7 @@ html.tv .discover__rows .row {
   right: 0;
   bottom: 0;
   height: 70%;
-  background: linear-gradient(0deg, var(--bg-1), rgba(16, 18, 25, 0));
+  background: linear-gradient(0deg, var(--bg-1), rgba(var(--bg-1-rgb), 0));
 }
 .dsheet__close {
   position: absolute;
@@ -618,7 +618,7 @@ html.tv .discover__rows .row {
   margin-bottom: 0.6rem;
   padding: 0.8rem 1rem 0.8rem 0.8rem;
   border-radius: var(--radius-l);
-  background: rgba(16, 18, 25, 0.75);
+  background: rgba(var(--bg-1-rgb), 0.75);
   border: 1px solid var(--line);
 }
 .req__main {
@@ -784,7 +784,7 @@ html.reel-avplay-active .subs__text {
   width: 26rem;
   padding: 1.4rem 1.5rem;
   border-radius: var(--radius-l);
-  background: rgba(16, 18, 25, 0.94);
+  background: rgba(var(--bg-1-rgb), 0.94);
   border: 1px solid var(--line);
   font-size: 0.92rem;
   animation: toast-in 240ms var(--ease-out) both;
@@ -870,7 +870,7 @@ html.reel-avplay-active .subs__text {
   color: var(--bg);
 }
 .admin__link:focus small {
-  color: rgba(10, 11, 15, 0.6);
+  color: rgba(var(--bg-rgb), 0.6);
 }
 html[data-input="key"] .admin__link:focus {
   box-shadow: none;
@@ -896,7 +896,7 @@ html[data-input="key"] .admin__link:focus {
   padding: 1.6rem 1.75rem 1rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-l);
-  background: rgba(16, 18, 25, 0.8);
+  background: rgba(var(--bg-1-rgb), 0.8);
 }
 .panel__head {
   display: flex;
@@ -912,7 +912,7 @@ html[data-input="key"] .admin__link:focus {
 }
 .panel__title .icon {
   margin-right: 0.7rem;
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 .panel__lede {
   max-width: 44rem;
@@ -991,7 +991,7 @@ html[data-input="key"] .admin__link:focus {
 }
 .list__you {
   margin-left: 0.4rem;
-  color: var(--accent);
+  color: var(--accent-hi);
   font-size: 0.8rem;
 }
 .list__actions {
@@ -1006,10 +1006,10 @@ html[data-input="key"] .admin__link:focus {
 .list__row .subform {
   margin-top: 1rem;
 }
-.pill--admin { color: var(--accent); }
+.pill--admin { color: var(--accent-hi); }
 .pill--disabled { color: var(--danger); }
 .pill--used, .pill--expired, .pill--revoked { color: var(--ink-3); }
-.pill--pending, .pill--active { color: var(--accent); }
+.pill--pending, .pill--active { color: var(--accent-hi); }
 .pill--mode-transcode, .pill--mode-audio_transcode { color: var(--warn); }
 .avatar {
   display: inline-flex;
@@ -1090,7 +1090,7 @@ html[data-input="key"] .admin__link:focus {
   padding: 1.25rem 1.5rem;
   border-radius: var(--radius-l);
   background: var(--accent-dim);
-  box-shadow: inset 0 0 0 1px rgba(198, 244, 50, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-hi-rgb), 0.4);
 }
 .invite-link p {
   margin-bottom: 0.7rem;
@@ -1227,7 +1227,7 @@ html.reel-avplay-active .grain {
 .player__error {
   padding: 2rem 2.25rem;
   border-radius: var(--radius-l);
-  background: rgba(16, 18, 25, 0.94);
+  background: rgba(var(--bg-1-rgb), 0.94);
 }
 
 /* ---------- Settings → About (versions) ---------------------------------- */
