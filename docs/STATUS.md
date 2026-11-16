@@ -1,4 +1,4 @@
-# Status: 2026-11-15
+# Status: 2026-11-16
 
 Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
@@ -9,7 +9,7 @@ Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LA
   - **Direct play:** MP4/H.264/AAC (5.1 included).
   - **Remux + audio transcode:** MKV with EAC3 audio. Keyframe-indexed and seek-safe; segment timelines were verified with tfdt checks.
   - **VAAPI transcode:** 1080p→720p at **8.3× realtime** on the N100.
-- **Adaptive quality, server side:** a 6 Mbps user cap → 720p at ~4 Mbps. Per-user caps currently stand in for the missing client side.
+- **Adaptive quality, server side:** a 6 Mbps user cap → 720p at ~4 Mbps. The admin's cap has since been removed (#2).
 - **Requests → Radarr/Sonarr → qBittorrent:** queue progress, qBittorrent client state, webhooks → available.
 - **Picker, search, person pages, reviews (TMDB), Downloads page, player controls, subtitles overlay, automatic subtitle selection.**
 - **IPTV:**
@@ -71,6 +71,15 @@ Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LA
   opens Playback; nav shows Playback + About; `/admin/…` says admin-only), the player sheet's "Subtitle & audio
   preferences" link, and 1920×1080 TV mode (Right from the Playback link enters the pane, Left returns to it, up/down
   stay on their side). Not checked live yet.
+- **Playback quality choice** (#87, not yet deployed). Checked 2026-11-16 with Playwright, mock mode and the dev build
+  against the live server (nobody else watching, progress pings stubbed): Settings → Playback → Quality saves per
+  device and every decide sends it; the player's Quality sheet re-decides from the playhead and the server replaces
+  the session. Live: Original on Spider-Man (H.264 + EAC3 MKV) → video copy, audio-only transcode; 720p on the same
+  file → VAAPI transcode with "quality 720p requested"; Original on Frankenstein (4K DV) → the "Can't play the
+  original here" card, then Play transcoded → tone-mapped 1080p. User-limit wording checked in mock only (no user
+  has a limit live). 1920×1080 TV mode with arrow keys (mock and live): the button, the sheet and the card's
+  Play transcoded are all reachable, and focus stays on Quality after a switch. Over this Mac's remote link
+  (~2 Mbit/s that day) Original at 25 Mbit/s can't keep up and stalls; 720p plays.
 - **Pause and session loss** (#95, #100, #96; deployed in `bc6c69b`, owner verification pending). A paused player keeps its
   converted session: it pings `paused: true` every 10 s (up to 30 min of pause), and the server gives such a session
   30 min instead of 60 s (`paused_session_*`/`an_abandoned_paused_session_*` tests). A session the server ended
@@ -146,14 +155,11 @@ proposal are in [#102](https://github.com/mrafik92/reel/issues/102#issuecomment-
 |---|---|
 | Network | Chrome over HTTP/3 on Tailscale (MTU 1280) saw `QUIC_TOO_MANY_RTOS`, status-0 responses and wedged QUIC connections (#91, #93, #96, #108). **Applied 2026-11-15 on CT 107:** Reel's LAN handler sends `Alt-Svc: clear` and h3 is off on the public `:8443` listener, so Chrome uses HTTP/2 for reel.rafikii.co (checked: a reload over Tailscale was all h2). Other LAN sites keep h3. Not yet re-checked: a long playback over Tailscale without wedges (#108) |
 | Ops | Caddy's packaged unit ran `caddy run --environ`, which wrote CT 107's Cloudflare token (`CF_API_TOKEN`) to the journal at every start. `--environ` is removed (drop-in, 2026-11-15) and later starts are clean, but the token is **not rotated yet** (owner deferred it) and the old journal entries are still there; purge them after the rotation (OPERATIONS → Public edge) |
-| Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) isn't delivered. PR #69 (re-decide per switch) was closed unmerged; multi-variant HLS with hls.js ABR (#111) replaces it, and its quality menu can be reused for #87. For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
+| Player | **No automatic quality** (bandwidth estimate, step-down/up): Auto only follows the user's bitrate limit and the device, not the link. On a slow link, pick 720p/480p in the player or in Settings → Playback (#87, 🧪). Each pick opens a new session from the playhead (ffmpeg restarts). Multi-variant HLS with hls.js ABR (#111) and the estimator (#1) will do it per segment |
 | Player | **One rendition per session** (A6): no multi-variant playlist, so the player can't step down on a link dip or start low and climb (#111). A link slower than a file's peak bitrate still stalls (e.g. The Remarried Empress E1: 5.9 Mbit/s average, 11–13 Mbit/s at 2:44–3:16). The player now waits and recovers instead of stopping (#91), but only a lower rendition fixes it (#87, #111) |
-| Player | The 6 Mbit/s admin cap sends 95 of 311 files to a 720p transcode that the LAN doesn't need (#2, after #87) |
 | Player | HDR/DV files are always tone-mapped to SDR in the browser (the profile probe reports no HDR), and the tone-map is the slowest path (2.6× realtime, 9.9 s to first frame remotely) (#114) |
 | Player | Start-up costs on slow links: VOD playlists are 175–260 KB and served uncompressed (7.8 KB gzipped); MP4s with a trailing `moov` make the browser fetch the index from the end of the file first; transcode segments are 4 s from the start (#112) |
 | Transcode | VAAPI encodes don't use the N100's low-power encoders, and output is always H.264 even for HEVC-capable clients (#113) |
-| Player | **Adaptive quality client** (bandwidth estimate, auto step-down/up, quality menu) wasn't delivered (the agent errored). For now, set per-user `max_bitrate_kbps` (the admin is at 6000) |
-| Player | A link slower than a file's peak bitrate still stalls (e.g. The Remarried Empress E1: 5.9 Mbit/s average, 11–13 Mbit/s at 2:44–3:16). The player now waits and recovers instead of stopping (#91), but only a lower rendition fixes it (#87) |
 | IPTV | Some provider feeds stall for 8 s at a time (France 5 on 2026-11-12); the hub reconnects and the player re-tunes, but the picture freezes meanwhile |
 | Reviews | IMDb/RT/Metacritic scores need `REEL_OMDB_API_KEY` |
 | EPG | Al Jazeera guide fully covered by AE1 (fine). The EG1 guide is stale upstream (removed) |
