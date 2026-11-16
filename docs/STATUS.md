@@ -172,7 +172,7 @@ proposal are in [#102](https://github.com/mrafik92/reel/issues/102#issuecomment-
 | Player | **One rendition per session** (A6): no multi-variant playlist, so the player can't step down on a link dip or start low and climb (#111). A link slower than a file's peak bitrate still stalls (e.g. The Remarried Empress E1: 5.9 Mbit/s average, 11–13 Mbit/s at 2:44–3:16). The player now waits and recovers instead of stopping (#91), but only a lower rendition fixes it (#87, #111) |
 | Player | HDR/DV files are always tone-mapped to SDR in the browser (the profile probe reports no HDR), and the tone-map is the slowest path (2.6× realtime, 9.9 s to first frame remotely) (#114) |
 | Player | Start-up costs on slow links: MP4s with a trailing `moov` make the browser fetch the index from the end of the file first; transcode segments are 4 s from the start (#112) |
-| Transcode | VAAPI encodes don't use the N100's low-power encoders, and output is always H.264 even for HEVC-capable clients (#113) |
+| Transcode | VAAPI output is always H.264, even for HEVC-capable clients (#113 part 2, after #111). The low-power encoders (part 1) are built and tested, not yet checked live |
 | IPTV | Some provider feeds stall for 8 s at a time (France 5 on 2026-11-12); the hub reconnects and the player re-tunes, but the picture freezes meanwhile |
 | Reviews | IMDb/RT/Metacritic scores need `REEL_OMDB_API_KEY` |
 | EPG | Al Jazeera guide fully covered by AE1 (fine). The EG1 guide is stale upstream (removed) |

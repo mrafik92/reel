@@ -145,8 +145,10 @@ pub fn video_encode_args(hw: &HwAccel) -> (Vec<String>, Vec<String>) {
         ),
         // Full VAAPI pipeline: hardware decode → (de)interlace + scale + 8-bit NV12 on the GPU →
         // hardware H.264 encode. `auto=1` only deinterlaces frames flagged interlaced (typical of
-        // IPTV SD/1080i), progressive frames pass through untouched.
-        HwAccel::Vaapi { device } => (
+        // IPTV SD/1080i), progressive frames pass through untouched. Live TV keeps the regular
+        // encoder even when the low-power one is available (VOD only, #113): its hardware failure
+        // path falls back to software, not to the regular encoder.
+        HwAccel::Vaapi { device, .. } => (
             [
                 "-init_hw_device",
                 &format!("vaapi=va:{device}"),
@@ -1065,9 +1067,7 @@ mod tests {
             "ffmpeg".into(),
             Duration::from_secs(1),
         );
-        m.set_hwaccel(HwAccel::Vaapi {
-            device: "/dev/dri/renderD128".into(),
-        });
+        m.set_hwaccel(HwAccel::vaapi("/dev/dri/renderD128"));
         assert_eq!(m.hw_status(), ("vaapi", false));
         assert!(!m.hw_failure());
         assert!(!m.hw_failure());
@@ -1105,9 +1105,7 @@ mod tests {
         };
         let sw = line(HwAccel::Software);
         assert!(sw.contains("-c:v libx264") && !sw.contains("hw_device"));
-        let va = line(HwAccel::Vaapi {
-            device: "/dev/dri/renderD128".into(),
-        });
+        let va = line(HwAccel::vaapi("/dev/dri/renderD128"));
         assert!(va.contains("-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va"));
         // full pipeline: hw decode, GPU deinterlace + scale, hw encode
         assert!(va.contains("-hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi"));

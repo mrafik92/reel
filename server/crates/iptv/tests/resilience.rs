@@ -307,9 +307,7 @@ async fn mpeg2_live(
     );
     hub.spawn_reaper();
     let live = LiveManager::new(hub, dir.path().join("hls"), Duration::from_secs(30));
-    live.set_hwaccel(reel_playback::HwAccel::Vaapi {
-        device: "/dev/dri/renderD128".into(),
-    });
+    live.set_hwaccel(reel_playback::HwAccel::vaapi("/dev/dri/renderD128"));
     (live, prov, dir, src)
 }
 

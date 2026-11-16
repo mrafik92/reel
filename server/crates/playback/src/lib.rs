@@ -34,7 +34,7 @@ pub mod upstream;
 
 pub use decision::{DecisionInput, PlaybackDecision, PlaybackMode, decide};
 pub use error::PlaybackError;
-pub use hwaccel::{HwAccel, HwAccelStatus, detect};
+pub use hwaccel::{HwAccel, HwAccelStatus, LowPower, detect};
 pub use model::{FileInfo, Hdr, StreamInfo, StreamKind};
 pub use plan::SegmentPlan;
 pub use profile::DeviceProfile;
