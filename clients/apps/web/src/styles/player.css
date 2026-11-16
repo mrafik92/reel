@@ -1,5 +1,5 @@
 /* Player controls — "cinematic console". Dark scrims (gradients only: no backdrop-filter on
-   webOS / Tizen), cream glyphs, lime for progress and focus. Chromium 68 safe: no gap /
+   webOS / Tizen), cream glyphs, crimson for progress and focus. Chromium 68 safe: no gap /
    inset / clamp / aspect-ratio; flex spacing via margins. */
 
 /* ---------- Chrome shell + show / hide ---------------------------------------------- */
@@ -31,7 +31,7 @@
   bottom: 0;
   height: 22rem;
   background:
-    radial-gradient(ellipse 34% 55% at 50% 100%, rgba(198, 244, 50, 0.07) 0%, rgba(198, 244, 50, 0) 70%),
+    radial-gradient(ellipse 34% 55% at 50% 100%, rgba(var(--accent-rgb), 0.07) 0%, rgba(var(--accent-rgb), 0) 70%),
     linear-gradient(0deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.74) 26%, rgba(0, 0, 0, 0.42) 56%, rgba(0, 0, 0, 0.14) 82%, rgba(0, 0, 0, 0) 100%);
 }
 .pc__top,
@@ -114,7 +114,7 @@
   align-items: center;
   height: 2rem;
   padding: 0 0.8rem 0 0.7rem;
-  border: 1px solid rgba(243, 238, 228, 0.16);
+  border: 1px solid rgba(var(--ink-rgb), 0.16);
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.28);
   color: var(--ink-3);
@@ -131,16 +131,16 @@
   margin-right: 0.5rem;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 8px rgba(198, 244, 50, 0.6);
+  box-shadow: 0 0 8px rgba(var(--accent-hi-rgb), 0.6);
 }
 .pc__badge.is-transcode i {
   background: var(--warn);
-  box-shadow: 0 0 8px rgba(255, 176, 32, 0.55);
+  box-shadow: 0 0 8px rgba(var(--warn-rgb), 0.55);
 }
 .pc__badge:hover,
 .pc__badge[aria-pressed="true"] {
   color: var(--ink);
-  border-color: rgba(243, 238, 228, 0.4);
+  border-color: rgba(var(--ink-rgb), 0.4);
 }
 .pc__badge:focus {
   outline: none;
@@ -174,7 +174,7 @@
   width: 1px;
   height: 1.6rem;
   margin: 0 0.45rem !important;
-  background: rgba(243, 238, 228, 0.16);
+  background: rgba(var(--ink-rgb), 0.16);
 }
 
 /* ---------- Scrubber ----------------------------------------------------------------- */
@@ -217,7 +217,7 @@
   width: 100%;
   height: 0.3rem;
   border-radius: 1rem;
-  background: rgba(243, 238, 228, 0.2);
+  background: rgba(var(--ink-rgb), 0.2);
   overflow: hidden;
   transition: height 180ms var(--ease);
 }
@@ -231,10 +231,10 @@
   border-radius: 1rem;
 }
 .pscrub__buf {
-  background: rgba(243, 238, 228, 0.3);
+  background: rgba(var(--ink-rgb), 0.3);
 }
 .pscrub__ghost {
-  background: rgba(243, 238, 228, 0.42);
+  background: rgba(var(--ink-rgb), 0.42);
 }
 .pscrub__fill {
   background: var(--accent);
@@ -265,11 +265,11 @@
 html[data-input="key"] .pscrub__bar:focus .pscrub__thumb,
 .pscrub.is-seeking .pscrub__thumb {
   background: var(--accent);
-  box-shadow: 0 0 0 0.22rem rgba(0, 0, 0, 0.45), 0 0 0 0.42rem var(--accent), 0 0 18px rgba(198, 244, 50, 0.5);
+  box-shadow: 0 0 0 0.22rem rgba(0, 0, 0, 0.45), 0 0 0 0.42rem var(--accent), 0 0 18px rgba(var(--accent-hi-rgb), 0.5);
   transform: scale(1.2);
 }
 html[data-input="key"] .pscrub__bar:focus .pscrub__track {
-  box-shadow: 0 0 0 1px rgba(198, 244, 50, 0.35);
+  box-shadow: 0 0 0 1px rgba(var(--accent-hi-rgb), 0.35);
 }
 /* Time tooltip (+ trickplay frame when the server has one) */
 .pscrub__tip {
@@ -281,8 +281,8 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
   align-items: center;
   padding: 0.4rem;
   border-radius: 0.7rem;
-  background: rgba(12, 13, 18, 0.94);
-  box-shadow: 0 0 0 1px rgba(243, 238, 228, 0.12), 0 0.8rem 2rem rgba(0, 0, 0, 0.55);
+  background: rgba(var(--bg-1-rgb), 0.94);
+  box-shadow: 0 0 0 1px rgba(var(--ink-rgb), 0.12), 0 0.8rem 2rem rgba(0, 0, 0, 0.55);
   transform: translateX(-50%);
   pointer-events: none;
   white-space: nowrap;
@@ -295,7 +295,7 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
   left: 50%;
   margin-left: -0.35rem;
   border: 0.35rem solid transparent;
-  border-top-color: rgba(12, 13, 18, 0.94);
+  border-top-color: rgba(var(--bg-1-rgb), 0.94);
 }
 .pscrub__frame {
   position: relative;
@@ -325,7 +325,7 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
 }
 .pscrub__tipline small {
   margin-left: 0.5rem;
-  color: var(--accent);
+  color: var(--accent-hi);
   font: 800 0.8rem/1 var(--font-body);
   font-variant-numeric: tabular-nums;
 }
@@ -361,7 +361,7 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
   width: 3.4rem;
   height: 3.4rem;
   border-radius: 50%;
-  background: rgba(243, 238, 228, 0.06);
+  background: rgba(var(--ink-rgb), 0.06);
   font-size: 1.85rem;
 }
 .ptx__secs {
@@ -390,7 +390,7 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
 }
 .ptx__skip:hover,
 .ctl:hover {
-  background: rgba(243, 238, 228, 0.14);
+  background: rgba(var(--ink-rgb), 0.14);
 }
 .ptx__skip:active,
 .ptx__play:active,
@@ -432,8 +432,8 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
   margin-left: 0.4rem;
   padding: 0.14rem 0.32rem;
   border-radius: 0.3rem;
-  background: rgba(198, 244, 50, 0.16);
-  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--accent-hi);
   font: 800 0.56rem/1 var(--font-body);
   font-style: normal;
   letter-spacing: 0.08em;
@@ -441,7 +441,7 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
 }
 .ctl.is-active,
 .ctl[aria-pressed="true"] {
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 /* Labels: slide up on hover / focus */
 .ctl__tip {
@@ -503,7 +503,7 @@ html[data-input="pointer"] .ptx__skip:focus:not(:hover) .ctl__tip {
   transform: none;
 }
 
-/* Keyboard / remote focus: cream fill, lime halo — unmistakable over any picture */
+/* Keyboard / remote focus: cream fill, crimson halo — unmistakable over any picture */
 html[data-input="key"] .ctl:focus,
 html[data-input="key"] .ptx__skip:focus {
   background: var(--ink);
@@ -517,7 +517,7 @@ html[data-input="key"] .ctl:focus .ctl__tag {
 html[data-input="key"] .ptx__play:focus {
   background: var(--accent);
   color: var(--accent-ink);
-  box-shadow: 0 0 0 0.25rem rgba(0, 0, 0, 0.5), 0 0 0 0.5rem var(--accent), 0 0 2.4rem rgba(198, 244, 50, 0.45);
+  box-shadow: 0 0 0 0.25rem rgba(0, 0, 0, 0.5), 0 0 0 0.5rem var(--accent), 0 0 2.4rem rgba(var(--accent-hi-rgb), 0.45);
   transform: scale(1.06);
 }
 html.tv .ctl:focus,
@@ -529,7 +529,7 @@ html[data-input="pointer"] .ptx__skip:focus:not(:hover) {
   background: transparent;
 }
 html[data-input="pointer"] .ptx__skip:focus:not(:hover) {
-  background: rgba(243, 238, 228, 0.06);
+  background: rgba(var(--ink-rgb), 0.06);
 }
 
 /* ---------- Volume ------------------------------------------------------------------- */
@@ -563,7 +563,7 @@ html[data-input="pointer"] .ptx__skip:focus:not(:hover) {
   height: 0.26rem;
   margin: 0 0.4rem;
   border-radius: 1rem;
-  background: rgba(243, 238, 228, 0.22);
+  background: rgba(var(--ink-rgb), 0.22);
 }
 .pvol__track i {
   position: absolute;
@@ -587,11 +587,11 @@ html[data-input="key"] .pvol__bar:focus .pvol__knob {
   background: var(--accent);
 }
 html[data-input="key"] .pvol__bar:focus .pvol__knob {
-  box-shadow: 0 0 0 0.25rem rgba(198, 244, 50, 0.35);
+  box-shadow: 0 0 0 0.25rem rgba(var(--accent-hi-rgb), 0.35);
 }
 .pvol.is-unknown .pvol__track i {
   width: 100% !important;
-  background: repeating-linear-gradient(90deg, rgba(243, 238, 228, 0.25) 0, rgba(243, 238, 228, 0.25) 0.3rem, transparent 0.3rem, transparent 0.6rem);
+  background: repeating-linear-gradient(90deg, rgba(var(--ink-rgb), 0.25) 0, rgba(var(--ink-rgb), 0.25) 0.3rem, transparent 0.3rem, transparent 0.6rem);
 }
 .pvol.is-unknown .pvol__knob {
   display: none;
@@ -611,7 +611,7 @@ html[data-input="key"] .pvol__bar:focus .pvol__knob {
   margin: -2.6rem 0 0;
   padding: 0 1.2rem;
   border-radius: 999px;
-  background: rgba(10, 11, 15, 0.72);
+  background: rgba(var(--bg-rgb), 0.72);
   color: var(--ink);
   font-size: 2.1rem;
   pointer-events: none;
@@ -652,7 +652,7 @@ html[data-input="key"] .pvol__bar:focus .pvol__knob {
   opacity: 1;
 }
 .player__stage.is-seekmode .pscrub__time:first-child {
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 
 /* ---------- Sizes ------------------------------------------------------------------- */

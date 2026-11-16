@@ -77,7 +77,8 @@ gaps are listed in [STATUS.md](STATUS.md).
 | Feature | Status | Notes |
 |---|---|---|
 | Web app (desktop + 10-foot TV mode) | ✅ | SolidJS. D-pad spatial navigation. Targets Chromium 68 for old TVs |
-| App icon: favicon, PWA manifest, TV launcher icons | 🧪 | One source SVG (`clients/packages/ui/assets/logo.svg`, a lime film reel with a strip of film running off it) → favicon SVG/ICO, apple-touch-icon, manifest 192/512 + maskable, webOS icon/largeIcon/splash, Tizen icon via `bun run icons`. `theme-color` + `manifest.webmanifest` in `index.html` (#142) |
+| Crimson + cream cinema palette | 🧪 | Crimson accent on warm near-black surfaces with cream text, replacing the lime accent. Every colour is a token in `packages/ui/src/styles/ui.css`; errors are orange, warnings yellow, "live" rose and success sage, so none of them reads as the brand red (#177) |
+| App icon: favicon, PWA manifest, TV launcher icons | 🧪 | One source SVG (`clients/packages/ui/assets/logo.svg`, a cream film reel with a strip of film running off it, on a crimson tile) → favicon SVG/ICO, apple-touch-icon, manifest 192/512 + maskable, webOS icon/largeIcon/splash, Tizen icon via `bun run icons`. `theme-color` + `manifest.webmanifest` in `index.html` (#142). Recoloured for the crimson theme (#177) |
 | LG webOS / Samsung Tizen apps | 🧪 | Packaging, remote keys, native players (`<video>` / AVPlay). **Never installed on a real TV** |
 | Casting: AirPlay, Chromecast | 🧪 | Sender UI with a "Playing on…" remote view. Cast URLs point at the LAN address. Needs real devices to verify |
 | Casting: DLNA "Play on TV" | 🧪 | Server-side SOAP control; devices found by SSDP or added by IP. Waiting on TV IPs + a CT 113 firewall rule. Discovery can be turned off (`REEL_CAST_DISCOVERY=false`); a TV's description and control URLs must stay on the TV's own address, with capped bodies and no redirects (🧪 #12, pending deploy) |

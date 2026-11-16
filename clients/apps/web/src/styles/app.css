@@ -248,7 +248,7 @@ html[data-input="pointer"] .rail:hover .rail__label {
   font: 700 0.62rem/1 var(--font-body);
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 
 /* Static film grain: one composited layer, no animation */
@@ -272,7 +272,7 @@ html[data-input="pointer"] .rail:hover .rail__label {
   color: var(--ink-3);
 }
 .eyebrow--accent {
-  color: var(--accent);
+  color: var(--accent-hi);
 }
 .meta {
   display: flex;
@@ -294,7 +294,7 @@ html[data-input="pointer"] .rail:hover .rail__label {
 }
 .meta__rating .icon,
 .meta__watched .icon {
-  color: var(--accent);
+  color: var(--accent-hi);
   margin: -0.15em 0.2rem 0 0;
 }
 .section-title {
@@ -452,7 +452,7 @@ html.tv .home.is-scrolled .page-backdrop {
 .library,
 .search,
 .lab {
-  background: radial-gradient(ellipse 60% 40% at 85% 0%, rgba(198, 244, 50, 0.06), rgba(198, 244, 50, 0) 70%);
+  background: radial-gradient(ellipse 60% 40% at 85% 0%, rgba(var(--accent-rgb), 0.06), rgba(var(--accent-rgb), 0) 70%);
   min-height: 100vh;
 }
 .page-head {
@@ -614,8 +614,8 @@ html[data-input="pointer"] .segmented__btn[aria-pressed="true"]:focus:not(:hover
   color: var(--ink-2);
 }
 .tag--hdr {
-  border-color: rgba(198, 244, 50, 0.45);
-  color: var(--accent);
+  border-color: rgba(var(--accent-hi-rgb), 0.45);
+  color: var(--accent-hi);
 }
 .detail__overview {
   margin-top: 0.9rem;
@@ -715,7 +715,7 @@ html[data-input="key"] .person:focus .person__photo {
   padding: 1.5rem 1.75rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-l);
-  background: rgba(16, 18, 25, 0.86);
+  background: rgba(var(--bg-1-rgb), 0.86);
   transition: box-shadow var(--t-fast) var(--ease);
 }
 .tech__summary {
@@ -1005,7 +1005,7 @@ html.tv .results-grid {
   width: 100%;
   height: 0.36rem;
   border-radius: 1rem;
-  background: rgba(243, 238, 228, 0.18);
+  background: rgba(var(--ink-rgb), 0.18);
   overflow: hidden;
   transition: height var(--t-fast) var(--ease);
 }
@@ -1018,7 +1018,7 @@ html.tv .results-grid {
   border-radius: 1rem;
 }
 .scrub__buf {
-  background: rgba(243, 238, 228, 0.3);
+  background: rgba(var(--ink-rgb), 0.3);
 }
 .scrub__fill {
   background: var(--accent);
