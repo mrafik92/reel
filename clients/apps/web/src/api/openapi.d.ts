@@ -2302,8 +2302,18 @@ export interface components {
         PersonCreditDto: components["schemas"]["DiscoverCardDto"] & {
             character?: string | null;
             job?: string | null;
+            /**
+             * Format: double
+             * @description TMDB popularity score ("best known" order).
+             */
+            popularity?: number | null;
             /** @description `cast` | `crew` */
             role: string;
+            /**
+             * Format: int64
+             * @description TMDB vote count behind `vote_average`; clients sort thinly-voted titles last.
+             */
+            vote_count?: number | null;
         };
         PersonDto: {
             biography?: string | null;

@@ -1,5 +1,5 @@
 import { detectDeviceProfile, type Id } from "@reel/ui";
-import { api, type DecideRequest, type DecideResponse, type DeviceProfileWire } from "../api";
+import { api, type DecideRequest, type DecideResponse, type DeviceProfileWire, type Quality } from "../api";
 import { clientInfo, deviceId } from "./device";
 
 /**
@@ -57,13 +57,14 @@ function fromBrowserProbe(r: Record<string, unknown>): DeviceProfileWire {
  * `itemId`: the episode being watched — required for multi-episode files so progress lands on it.
  * Tracks: `null` / omitted = let the server choose from the user's preferences (`selected` in the
  * response), `subtitle: -1` = explicitly off. `forCast`: the stream goes to a Chromecast / AirPlay
- * receiver (absolute, long-lived URLs; receiver profile instead of this browser's).
+ * receiver (absolute, long-lived URLs; receiver profile instead of this browser's). `quality`: the
+ * device default or the player's pick (#87); omitted = the server's Auto.
  */
 export async function decide(
   fileId: Id,
-  o: { itemId?: Id | null; audio?: number | null; subtitle?: number | null; start?: number; forCast?: "chromecast" | "airplay" },
+  o: { itemId?: Id | null; audio?: number | null; subtitle?: number | null; start?: number; forCast?: "chromecast" | "airplay"; quality?: Quality },
 ): Promise<DecideResponse> {
-  const body: DecideRequest & { for_cast?: boolean } = {
+  const body: DecideRequest = {
     ...(o.forCast ? { preset: o.forCast } : decideProfile()),
     item_id: o.itemId ?? null,
     device_id: deviceId(),
@@ -72,6 +73,7 @@ export async function decide(
     start_s: o.start && o.start > 0 ? o.start : null,
   };
   if (o.forCast) body.for_cast = true;
+  if (o.quality) body.quality = o.quality;
   return api.decide(fileId, body);
 }
 

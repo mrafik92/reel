@@ -4,6 +4,8 @@ import { DEFAULT_PREFS, type PlaybackPrefs, type SubtitleMode } from "../api/pre
 import { loadPrefs, playbackPrefs, prefsSupported, savePrefs } from "../lib/prefs";
 import { previewSelection } from "../lib/tracks";
 import { chooseLiveDelivery, directAllowed, liveDelivery, type LiveDelivery } from "../lib/liveDelivery";
+import { chooseDeviceQuality, deviceQuality, fmtMbps, userLimitKbps } from "../lib/quality";
+import type { Quality } from "../api";
 import { Panel, Toggle } from "../components/AdminKit";
 import "../styles/prefs.css";
 
@@ -39,6 +41,22 @@ const DELIVERY: { id: LiveDelivery; title: string; body: string }[] = [
     title: "Straight from the provider",
     body: "This device connects to the provider itself, so Reel carries no video. It still uses one of the provider's connections, and zapping is slower. The provider login is sent to this device.",
   },
+];
+
+const QUALITY_CHOICES: { id: Quality; title: string; body: string }[] = [
+  {
+    id: "auto",
+    title: "Auto",
+    body: "The default. Plays the original whenever it can, and converts only when this device can't play it or it's over your account's limit.",
+  },
+  {
+    id: "original",
+    title: "Original — never re-encode the picture",
+    body: "Direct play or repackaging only (the sound may still be converted). If a title can't play that way here, Reel says why and offers to convert it.",
+  },
+  { id: "1080p", title: "1080p", body: "At most 1080p, about 8 Mbps. Smaller originals play as they are; nothing is upscaled." },
+  { id: "720p", title: "720p", body: "At most 720p, about 4 Mbps. Good for a slower connection away from home." },
+  { id: "480p", title: "480p", body: "At most 480p, about 2 Mbps. For a weak or metered connection." },
 ];
 
 const langLabel = (c: string) => (c === "original" ? "Original language" : languageName(c));
@@ -106,8 +124,9 @@ export default function SettingsPlayback(): JSX.Element {
           </p>
         </div>
         <p class="prefs__lede">
-          How Reel picks audio and subtitles when you press Play. Saved to your account, so it follows you to every
-          device. You can still switch tracks while watching.
+          How Reel picks quality, audio and subtitles when you press Play. Languages and subtitles are saved to your
+          account, so they follow you to every device; quality is set per device. You can still change them while
+          watching.
         </p>
       </header>
 
@@ -131,6 +150,33 @@ export default function SettingsPlayback(): JSX.Element {
             <button type="button" class="btn btn--sm prefs__add" disabled={off()} onClick={() => setAdding("audio")}>
               <Icon name="plus" /> <span>Add a language</span>
             </button>
+          </Panel>
+
+          <Panel title="Quality on this device" icon="quality">
+            <p class="panel__lede">
+              Films and episodes start at this quality. Saved on this device only, since the right choice depends on its
+              connection. You can still change it while watching.
+              <Show when={userLimitKbps()}>{(l) => <> Your account is limited to {fmtMbps(l())}.</>}</Show>
+            </p>
+            <div class="prefs__modes" role="radiogroup" aria-label="Playback quality on this device" data-nav-group>
+              <For each={QUALITY_CHOICES}>
+                {(m) => (
+                  <button
+                    type="button"
+                    role="radio"
+                    class="prefs__mode"
+                    aria-checked={deviceQuality() === m.id ? "true" : "false"}
+                    onClick={() => chooseDeviceQuality(m.id)}
+                  >
+                    <span class="prefs__radio" aria-hidden="true"><i /></span>
+                    <span class="prefs__modetext">
+                      <strong>{m.title}</strong>
+                      <small>{m.body}</small>
+                    </span>
+                  </button>
+                )}
+              </For>
+            </div>
           </Panel>
 
           <Show when={directAllowed()}>

@@ -8,7 +8,7 @@ import type { CastMember, Page } from "@reel/ui";
 import { MOCK } from "../lib/mode";
 import { http } from "./http";
 import { iptv } from "./iptv";
-import type { DecideResponse, DiscoverCard, SearchAll } from "./types";
+import type { DecideResponse, DiscoverCard, Quality, SearchAll } from "./types";
 
 export type VodKind = "movie" | "series";
 /** Provider ids are opaque to the client. */
@@ -104,6 +104,8 @@ export interface VodPlayBody {
   audio_index?: number | null;
   subtitle_index?: number | null;
   start_s?: number | null;
+  /** Playback quality (#87); omitted = Auto. */
+  quality?: Quality | null;
   /** Admins: stop other users' streams holding the provider (answer to a 409 `takeover: true`). */
   takeover?: boolean;
 }

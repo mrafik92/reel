@@ -12,7 +12,7 @@ import { castOfTmdb, createQueue, mockPerson, mockReviews } from "./extras";
 import type { DownloadItem } from "../types";
 import { enrichSummaries, genreCounts, lanes, libraryRecs, matches, searchAll, sortRecs } from "./browse";
 import { searchVod, vodIdsFor } from "./vod";
-import { mockSelected } from "./select";
+import { mockQuality, mockSelected, mockUserCap } from "./select";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const latency = () => sleep(120 + Math.random() * 220);
@@ -30,7 +30,8 @@ const lim = (p: Partial<Limits> = {}): Limits => ({
 
 const ADMIN: Me = {
   id: 1, username: "rafik", role: "admin",
-  limits: lim({ auto_approve: true }),
+  // `localStorage["reel.mock.maxBitrate"]` (kbit/s) tries out a bitrate limit (#87).
+  limits: lim({ auto_approve: true, max_bitrate_kbps: mockUserCap() }),
   direct_live: true,
 };
 
@@ -350,14 +351,17 @@ export function createMockApi(): MockApi {
       const selected = mockSelected(f, body.audio_index, body.subtitle_index, forCast);
       const sub = f.subtitles.find((s) => s.index === selected.subtitle_index);
       const imageSub = !!sub && /pgs|dvd/.test(sub.codec);
-      const mode: DecideResponse["mode"] = imageSub ? "transcode" : f.container === "mkv" ? "remux" : f.audio.some((a) => a.codec === "truehd") ? "audio_transcode" : "direct_play";
+      // Like a browser: HDR/DV and 4K can't play as they are (tone-mapped 1080p transcode).
+      const hdr = !!f.video && f.video.hdr !== "none";
+      const baseMode: DecideResponse["mode"] = imageSub || hdr ? "transcode" : f.container === "mkv" ? "remux" : f.audio.some((a) => a.codec === "truehd") ? "audio_transcode" : "direct_play";
       const reasons: string[] = [];
-      if (f.container === "mkv") reasons.push(`Container mkv not in profile (${body.preset ?? body.profile?.name ?? "web"})`);
-      if (imageSub) reasons.push("Image subtitles (PGS) must be burned in");
-      if (f.video && f.video.hdr !== "none") reasons.push(`${f.video.hdr.toUpperCase()} passthrough not supported by this display`);
+      if (f.container === "mkv") reasons.push(`container mkv not supported by ${body.preset ?? body.profile?.name ?? "web"}`);
+      if (imageSub) reasons.push("image subtitle (pgs) not renderable by client: burn-in");
+      if (hdr) reasons.push(`${f.video!.hdr === "dv" ? "Dv" : "Hdr10"} HDR not supported: tone-mapping to SDR`);
+      if (f.video && f.video.width > 1920) reasons.push(`resolution ${f.video.width}x${f.video.height} exceeds client max 1920x1080`);
       const sid = `mock-${Math.random().toString(36).slice(2, 10)}`;
       const res: DecideResponse = {
-        session_id: sid, mode, audio: f.audio,
+        session_id: sid, mode: baseMode, audio: f.audio,
         // Cast receivers get absolute URLs on the LAN base.
         url: forCast ? new URL(SAMPLE_VIDEO, location.href).href : SAMPLE_VIDEO,
         subtitles: f.subtitles.map((s, i) => ({
@@ -365,18 +369,28 @@ export function createMockApi(): MockApi {
           url: /pgs|dvd/.test(s.codec) ? null : `/mock-media/subs.vtt?lang=${s.language ?? "und"}`,
         })),
         decision: {
-          mode, reasons, audio_index: selected.audio_index ?? f.audio[0]?.index ?? null, subtitle_index: selected.subtitle_index,
-          video: mode === "transcode" ? { type: "encode", codec: "h264", width: 1920, height: 1080, bitrate_kbps: 8000, tonemap: f.video?.hdr !== "none" } : { type: "copy" },
-          audio: mode === "audio_transcode" || mode === "transcode" ? { type: "encode", codec: "aac", channels: 2, bitrate_kbps: 192 } : { type: "copy" },
+          mode: baseMode, reasons, audio_index: selected.audio_index ?? f.audio[0]?.index ?? null, subtitle_index: selected.subtitle_index,
+          video: baseMode === "transcode" ? { type: "encode", codec: "h264", width: 1920, height: 1080, bitrate_kbps: 8000, tonemap: hdr } : { type: "copy" },
+          audio: baseMode === "audio_transcode" || baseMode === "transcode" ? { type: "encode", codec: "aac", channels: 2, bitrate_kbps: 192 } : { type: "copy" },
           subtitle: imageSub ? { type: "burn_in" } : sub ? { type: "sidecar", format: "vtt" } : { type: "none" },
         },
       };
+      // Fixture sizes are for the full runtime (the sample clip is only 90 s).
+      const secs = d.runtime_s || f.duration_s;
+      const kbps = secs && f.size ? Math.round((f.size * 8) / secs / 1000) : null;
+      const qd = mockQuality(
+        { width: f.video?.width ?? 0, height: f.video?.height ?? 0, hdr: f.video?.hdr ?? "none", kbps },
+        forCast ? {} : body,
+        res.decision,
+      );
+      const mode = qd.mode;
+      Object.assign(res, { mode, decision: qd.decision, quality: qd.quality, bitrate_kbps: qd.bitrate_kbps, quality_options: qd.quality_options });
       playback.set(sid, {
         // Multi-episode files: credit the episode the client says it's watching.
         id: sid, user_id: 1, username: "rafik", item_id: body.item_id ?? f.item_ids?.[0] ?? itemId,
         item_title: body.item_id ? detail(db, body.item_id)?.title ?? d.title : d.title, file_id: f.id, active: true, mode,
         hwaccel: mode === "transcode" ? "vaapi" : "none", encoder: mode === "transcode" ? "h264_vaapi (low power)" : undefined, position_s: body.start_s ?? 0, progress: null,
-        bitrate_kbps: null, started_at: nowS(), last_ping: nowS(), device_id: body.device_id, reasons, decision: res.decision,
+        bitrate_kbps: null, started_at: nowS(), last_ping: nowS(), device_id: body.device_id, reasons: res.decision.reasons, decision: res.decision,
       });
       return Object.assign(res, { selected });
     },

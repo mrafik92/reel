@@ -9,8 +9,9 @@ bun install                  # once, from clients/
 cd apps/webos
 bun run package              # builds web → .staging/, runs ares-package if installed → out/*.ipk
 ```
-Without the CLI the script stages everything in `.staging/` and prints the commands to run. Placeholder icons
-(80×80 `icon.png`, 130×130 `largeIcon.png`, 1920×1080 `splash.png`) live in `assets/` (`bun run icons` regenerates them).
+Without the CLI the script stages everything in `.staging/` and prints the commands to run. The icons
+(80×80 `icon.png`, 130×130 `largeIcon.png`, 1920×1080 `splash.png`) live in `assets/`, generated from
+`packages/ui/assets/logo.svg` (`bun run icons` in `clients/` regenerates them, along with the web favicons).
 Set `VITE_REEL_URL=http://<server>:8420` at build time to bake in a default server; otherwise the app asks for the
 server address on first run (stored in `localStorage`).
 

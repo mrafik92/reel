@@ -304,6 +304,8 @@ pub struct CombinedCredit {
     pub poster_path: Option<String>,
     pub backdrop_path: Option<String>,
     pub vote_average: Option<f64>,
+    pub vote_count: Option<i64>,
+    pub popularity: Option<f64>,
     pub character: Option<String>,
     pub job: Option<String>,
 }

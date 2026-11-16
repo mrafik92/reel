@@ -46,7 +46,7 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
 
 /**
  * Retry `fn` with backoff while `active()` holds, and right away on resume. Returns a stop function.
- * Used for "Can't reach your Reel server" states.
+ * Used for "Can't reach Reel" states.
  */
 export function autoRetry(fn: () => void, active: () => boolean, delays = [3000, 6000, 12000, 20000, 30000]): () => void {
   let i = 0;

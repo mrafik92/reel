@@ -151,7 +151,7 @@ export function friendlyTuneError(e: unknown): TuneError {
     if (e.status === 503)
       return { kind: "offair", retry: true, title: "This channel isn't sending any picture", body: "The provider didn't deliver a stream. It may be off air for a moment — try again, or pick another channel." };
     if (e.status === 404) return { kind: "gone", retry: false, title: "This channel is no longer available", body: "It was removed from the provider's list. Pick another channel." };
-    if (e.status === 0) return { kind: "offline", retry: true, title: "Can't reach your Reel server", body: "Check your connection and try again." };
+    if (e.status === 0) return { kind: "offline", retry: true, title: "Can't reach Reel", body: "Check your connection and try again." };
   }
   return { kind: "other", retry: true, title: "Couldn't start this channel", body: msg || "Something went wrong." };
 }

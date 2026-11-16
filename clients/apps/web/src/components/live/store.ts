@@ -9,6 +9,8 @@
 import { createMemo, createRoot, createSignal } from "solid-js";
 import { iptv, type IptvChannel, type IptvGroup, type NowNext, type Program } from "../../api/iptv";
 import { currentUser } from "../../lib/auth";
+import { toast } from "../../lib/toast";
+import { isAborted } from "../../api/http";
 import { foldText } from "./groups";
 
 export type Filter = { kind: "all" } | { kind: "favorites" } | { kind: "group"; name: string };
@@ -143,11 +145,15 @@ export function filterKey(f: Filter): string {
 export function loadChannels(force = false): Promise<void> {
   if (loading) return loading;
   if (!force && store.state() === "ready" && Date.now() - loadedAt < 5 * 60_000) return Promise.resolve();
-  if (store.state() !== "ready") store.setState("loading");
-  store.setError(undefined);
+  const prev = store.state();
+  const wasReady = prev === "ready";
+  // Retrying from the error card keeps it on screen (and its Try again button focused, for the
+  // remote) until the load succeeds, instead of flashing the skeleton on every attempt (#90).
+  if (prev !== "ready" && prev !== "error") store.setState("loading");
   loading = Promise.all([iptv.groups(), iptv.channels({ favorites: true })])
     .then(([g, f]) => {
       loadedAt = Date.now();
+      store.setError(undefined);
       g = g.slice().sort((a, b) => a.name.localeCompare(b.name));
       store.setPrefs(readPrefs());
       store.setGroups(g);
@@ -180,6 +186,13 @@ export function loadChannels(force = false): Promise<void> {
       setTimeout(() => void loadAll(), 1200);
     })
     .catch((e) => {
+      // Cancelled (page left): nothing failed. Next visit loads again.
+      if (isAborted(e)) return;
+      // A failed refresh keeps the list already on screen (#90).
+      if (wasReady) {
+        toast("Couldn't refresh your channels. Check your connection and try again.", "error");
+        return;
+      }
       store.setError(e);
       store.setState("error");
     })

@@ -34,6 +34,12 @@ pub struct PersonCreditDto {
     pub character: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job: Option<String>,
+    /// TMDB vote count behind `vote_average`; clients sort thinly-voted titles last.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vote_count: Option<i64>,
+    /// TMDB popularity score ("best known" order).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub popularity: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -84,6 +90,8 @@ pub async fn get_person(
             role: c.role.to_string(),
             character: c.character.clone(),
             job: c.job.clone(),
+            vote_count: c.vote_count,
+            popularity: c.popularity,
         })
         .collect();
     scope_cards(&st, &u.user, credits.iter_mut().map(|c| &mut c.card)).await?;
