@@ -383,12 +383,6 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
   font-size: 1.9rem;
   box-shadow: 0 0.6rem 1.8rem rgba(0, 0, 0, 0.45);
 }
-.ptx__play .icon {
-  margin-left: 0.14em; /* optical centre of ▶ */
-}
-.ptx__play.is-playing .icon {
-  margin-left: 0;
-}
 .ptx__play:hover {
   background: var(--accent);
   color: var(--accent-ink);
