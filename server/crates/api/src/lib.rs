@@ -48,6 +48,10 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 use tower_http::{
+    compression::{
+        CompressionLayer,
+        predicate::{Predicate, SizeAbove},
+    },
     cors::{AllowOrigin, CorsLayer},
     limit::RequestBodyLimitLayer,
     services::{ServeDir, ServeFile},
@@ -755,6 +759,7 @@ pub fn app(state: AppState) -> Router {
                 tracing::info_span!("request", method = %req.method(), path = %req.uri().path())
             }),
         )
+        .layer(playlist_compression())
         .layer(RequestBodyLimitLayer::new(body_limit))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
@@ -770,6 +775,35 @@ pub fn app(state: AppState) -> Router {
         ))
         .layer(tower::util::option_layer(cors))
         .layer(axum::middleware::from_fn(media_cors))
+}
+
+/// gzip/br for HLS playlists only (#112): a VOD media playlist has one line per 4 s segment
+/// (175–260 KB for a film) and compresses ~30–60×, and hls.js must fetch all of it before the
+/// first segment. Scoped by the response `Content-Type`, so it covers every playlist route
+/// (session master/media, live, upstream proxy) while segments, direct play and other media bodies
+/// (already compressed, often ranged) pass through untouched with their `Content-Length` and
+/// `Accept-Ranges`.
+fn playlist_compression() -> CompressionLayer<impl Predicate> {
+    CompressionLayer::new()
+        .no_deflate()
+        .no_zstd()
+        .compress_when(SizeAbove::default().and(is_playlist_response))
+}
+
+fn is_playlist_response(
+    _: axum::http::StatusCode,
+    _: axum::http::Version,
+    h: &HeaderMap,
+    _: &axum::http::Extensions,
+) -> bool {
+    h.get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| {
+            let ct = ct.to_ascii_lowercase();
+            // application/vnd.apple.mpegurl, application/x-mpegurl, audio/mpegurl
+            ct.contains("mpegurl")
+        })
+        .unwrap_or(false)
 }
 
 /// Signed media routes answer cross-origin requests from anywhere (Chromecast receivers, hls.js on
@@ -900,5 +934,43 @@ mod tests {
         assert!(v.get("version").is_none());
         assert!(v.get("git_sha").is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_playlist_content_types_are_compressed() {
+        let check = |ct: &str| {
+            let mut h = HeaderMap::new();
+            h.insert(header::CONTENT_TYPE, HeaderValue::from_str(ct).unwrap());
+            is_playlist_response(
+                axum::http::StatusCode::OK,
+                axum::http::Version::HTTP_11,
+                &h,
+                &axum::http::Extensions::new(),
+            )
+        };
+        for ct in [
+            "application/vnd.apple.mpegurl",
+            "application/x-mpegURL",
+            "audio/mpegurl",
+            "application/vnd.apple.mpegurl; charset=utf-8",
+        ] {
+            assert!(check(ct), "{ct}");
+        }
+        for ct in [
+            "video/mp4",
+            "video/mp2t",
+            "video/x-matroska",
+            "text/vtt",
+            "application/json",
+            "image/jpeg",
+        ] {
+            assert!(!check(ct), "{ct}");
+        }
+        assert!(!is_playlist_response(
+            axum::http::StatusCode::OK,
+            axum::http::Version::HTTP_11,
+            &HeaderMap::new(),
+            &axum::http::Extensions::new(),
+        ));
     }
 }

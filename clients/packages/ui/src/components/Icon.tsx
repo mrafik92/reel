@@ -8,7 +8,9 @@ const PATHS = {
   search: "M10.5 18a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15zM21 21l-5.2-5.2",
   inbox: "M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6z",
   live: "M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8",
-  play: "M7 4.5v15l12.5-7.5z",
+  // Box centre x = 12.75: a small optical shift right of 12, since the triangle's mass sits left of
+  // its box. No CSS nudges on top (#143).
+  play: "M6.5 4.5v15L19 12z",
   pause: "M7 4.5h3.5v15H7zM13.5 4.5H17v15h-3.5z",
   back: "M15 5l-7 7 7 7",
   forward: "M9 5l7 7-7 7",
@@ -27,7 +29,8 @@ const PATHS = {
   info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v6M12 7.5v.5",
   layers: "M12 3 2 8l10 5 10-5zM2 13l10 5 10-5",
   fullscreen: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5",
-  next: "M5 5l10 7-10 7zM19 5v14",
+  // Filled icons render with stroke-width 0, so the bar must be a shape, not a line (#143).
+  next: "M5 5l10 7-10 7zM16.5 5H19v14h-2.5z",
   star: "M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z",
   sort: "M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4",
   grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
