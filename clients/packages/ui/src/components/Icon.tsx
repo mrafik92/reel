@@ -8,9 +8,10 @@ const PATHS = {
   search: "M10.5 18a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15zM21 21l-5.2-5.2",
   inbox: "M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6z",
   live: "M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8",
-  // Box centre x = 12.75: a small optical shift right of 12, since the triangle's mass sits left of
-  // its box. No CSS nudges on top (#143).
-  play: "M6.5 4.5v15L19 12z",
+  // YouTube's player play triangle (36px grid: 13×16, box 0.5 right of centre), scaled ×15/16 about
+  // the centre: box centre x ≈ 12.47, an optical shift for the triangle's left-heavy mass. No CSS
+  // nudges on top (#143).
+  play: "M6.375 4.5v15L18.5625 12z",
   pause: "M7 4.5h3.5v15H7zM13.5 4.5H17v15h-3.5z",
   back: "M15 5l-7 7 7 7",
   forward: "M9 5l7 7-7 7",
