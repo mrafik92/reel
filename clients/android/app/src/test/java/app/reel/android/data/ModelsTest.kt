@@ -48,6 +48,8 @@ class ModelsTest {
         GenreCount.serializer() to "GenreCount",
         PersonHit.serializer() to "PersonHit",
         SearchAll.serializer() to "SearchAll",
+        PlaybackPrefs.serializer() to "PlaybackPrefs",
+        SessionInfo.serializer() to "SessionDto",
     )
 
     private val openapi: JsonObject by lazy {
