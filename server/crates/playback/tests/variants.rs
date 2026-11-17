@@ -119,6 +119,7 @@ fn rung(req: &StartRequest, id: &str, w: u32, h: u32) -> VariantSpec {
     VariantSpec {
         id: id.into(),
         decision: d,
+        meta: None,
     }
 }
 
@@ -373,6 +374,7 @@ async fn bad_rungs_are_refused() {
         VariantSpec {
             id: "copy".into(),
             decision: req.decision.clone(),
+            meta: None,
         },
     ] {
         assert!(
@@ -385,4 +387,213 @@ async fn bad_rungs_are_refused() {
     }
     let dup = vec![rung(&req, "a", 284, 120), rung(&req, "a", 284, 120)];
     assert!(mgr.create_session_with_rungs(req, dup).await.is_err());
+}
+
+// ---- multi-variant sessions: lazy admission, idle stop, accounting (#111 part 2) ----------
+
+use reel_playback::PlaybackError;
+use reel_playback::session::AdaptiveRequest;
+use reel_playback::variants::VariantMeta;
+
+fn meta(label: &str, w: u32, h: u32, kbps: u32, codecs: &str) -> VariantMeta {
+    VariantMeta {
+        label: label.into(),
+        width: w,
+        height: h,
+        average_kbps: kbps,
+        peak_kbps: kbps + kbps / 5,
+        codecs: Some(codecs.into()),
+    }
+}
+
+/// Remux original (video and audio copied: holds no transcode slot) + one H.264 rung.
+fn adaptive(src: &Path, user_id: i64, start: &str) -> (StartRequest, AdaptiveRequest) {
+    let mut req = request(src, false);
+    req.user_id = user_id;
+    req.decision.mode = PlaybackMode::Remux;
+    req.decision.audio = AudioAction::Copy;
+    let low = rung(&req, "low", 284, 120);
+    let a = AdaptiveRequest {
+        primary_id: "original".into(),
+        primary_meta: meta("Original", 640, 272, 1000, "avc1.640028,ec-3"),
+        rungs: vec![VariantSpec {
+            meta: Some(meta("240p", 284, 120, 400, "avc1.64001F,ec-3")),
+            ..low
+        }],
+        start: start.into(),
+    };
+    (req, a)
+}
+
+fn capped_manager(
+    tmp: &Path,
+    global: usize,
+    idle: std::time::Duration,
+) -> std::sync::Arc<SessionManager> {
+    let mut cfg = SessionConfig::new(tmp);
+    cfg.max_global_transcodes = global;
+    cfg.variant_idle_timeout = idle;
+    SessionManager::new(cfg, HwAccel::Software)
+}
+
+#[tokio::test]
+async fn rungs_hold_a_transcode_slot_only_while_they_run() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let src = make_mkv(tmp.path());
+    let mgr = capped_manager(tmp.path(), 1, std::time::Duration::from_millis(1500));
+    let (r1, a1) = adaptive(&src, 1, "original");
+    let s1 = mgr.create_session_adaptive(r1, a1).await.unwrap();
+    let (r2, a2) = adaptive(&src, 2, "original");
+    let s2 = mgr.create_session_adaptive(r2, a2).await.unwrap();
+    // two remux sessions: no transcode slot used, the original runs, the rung is idle
+    assert_eq!(mgr.transcode_counts(1), (0, 0));
+    assert!(mgr.variant_running(&s1.id, "original").await.unwrap());
+    assert!(!mgr.variant_running(&s1.id, "low").await.unwrap());
+    let info = mgr.session(&s1.id).await.unwrap();
+    let states: Vec<(String, String)> = info
+        .variants
+        .iter()
+        .map(|v| (v.id.clone(), v.state.clone()))
+        .collect();
+    assert_eq!(
+        states,
+        vec![
+            ("original".into(), "running".into()),
+            ("low".into(), "idle".into())
+        ]
+    );
+    assert_eq!(info.variants[1].bandwidth_kbps, 400);
+
+    // the master lists both, ascending, with codecs
+    let m = mgr.master_playlist(&s1.id).unwrap();
+    let low_at = m.find("low/index.m3u8").unwrap();
+    let orig_at = m.find("original/index.m3u8").unwrap();
+    assert!(low_at < orig_at, "{m}");
+    assert!(m.contains("BANDWIDTH=480000,AVERAGE-BANDWIDTH=400000,RESOLUTION=284x120,CODECS=\"avc1.64001F,ec-3\"\nlow/index.m3u8"), "{m}");
+
+    // session 1 switches to the rung: it is admitted and takes the only slot
+    mgr.variant_segment_path(&s1.id, "low", "seg_00001.m4s")
+        .await
+        .unwrap();
+    assert_eq!(mgr.transcode_counts(1), (1, 1));
+    let info = mgr.session(&s1.id).await.unwrap();
+    assert_eq!(info.delivering.as_deref(), Some("low"));
+    assert!(
+        info.encoder.is_some(),
+        "encoder follows the delivered variant"
+    );
+    assert_eq!(mgr.transcode_room(2, None), 0);
+
+    // session 2's rung is refused (429), nothing is spawned for it
+    let e = mgr
+        .variant_segment_path(&s2.id, "low", "seg_00001.m4s")
+        .await
+        .unwrap_err();
+    assert!(matches!(e, PlaybackError::VariantRefused(_)), "{e:?}");
+    assert!(!mgr.variant_running(&s2.id, "low").await.unwrap());
+    // its original keeps working
+    mgr.variant_segment_path(&s2.id, "original", "seg_00001.m4s")
+        .await
+        .unwrap();
+
+    // session 1 goes back to the original; after the idle timeout its rung is stopped and the
+    // slot is free again (the original stays: it is still being fetched)
+    for _ in 0..4 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        mgr.variant_segment_path(&s1.id, "original", "seg_00002.m4s")
+            .await
+            .unwrap();
+    }
+    let stopped = mgr.stop_idle_variants().await;
+    assert!(
+        stopped.contains(&(s1.id.clone(), "low".to_string())),
+        "{stopped:?}"
+    );
+    assert!(!stopped.contains(&(s1.id.clone(), "original".to_string())));
+    assert!(!mgr.variant_running(&s1.id, "low").await.unwrap());
+    assert_eq!(mgr.transcode_counts(1), (0, 0));
+    // now session 2 may switch down
+    mgr.variant_segment_path(&s2.id, "low", "seg_00003.m4s")
+        .await
+        .unwrap();
+    assert_eq!(mgr.transcode_counts(2), (1, 1));
+    // session 1's rung: what it already produced is still served (no ffmpeg needed) ...
+    let ldir = mgr.variant_dir(&s1.id, "low").unwrap();
+    assert!(ldir.join("seg_00001.m4s").exists());
+    mgr.variant_segment_path(&s1.id, "low", "seg_00001.m4s")
+        .await
+        .unwrap();
+    assert!(!mgr.variant_running(&s1.id, "low").await.unwrap());
+    // ... but anything that needs its ffmpeg again is refused until session 2's rung stops
+    let total = plan_starts(&mgr.media_playlist_async(&s1.id).await.unwrap()).len() - 1;
+    let missing = (0..total)
+        .rev()
+        .find(|n| !ldir.join(format!("seg_{n:05}.m4s")).exists())
+        .expect("a segment the rung never produced");
+    assert!(matches!(
+        mgr.variant_segment_path(&s1.id, "low", &format!("seg_{missing:05}.m4s"))
+            .await,
+        Err(PlaybackError::VariantRefused(_))
+    ));
+    mgr.shutdown().await;
+}
+
+#[tokio::test]
+async fn adaptive_session_prestarts_its_start_variant_and_counts_it() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let src = make_mkv(tmp.path());
+    let mgr = capped_manager(tmp.path(), 1, std::time::Duration::from_secs(30));
+    // start low: the rung runs right away, the original is idle
+    let (r1, a1) = adaptive(&src, 1, "low");
+    let s1 = mgr.create_session_adaptive(r1, a1).await.unwrap();
+    assert!(mgr.variant_running(&s1.id, "low").await.unwrap());
+    assert!(!mgr.variant_running(&s1.id, "original").await.unwrap());
+    assert_eq!(mgr.transcode_counts(1), (1, 1));
+    // a second session that would start on a rung is refused at creation (cap 1)
+    let (r2, a2) = adaptive(&src, 2, "low");
+    assert!(matches!(
+        mgr.create_session_adaptive(r2, a2).await,
+        Err(PlaybackError::GlobalLimit(1))
+    ));
+    // one that starts on the remux original is fine
+    let (r3, a3) = adaptive(&src, 2, "original");
+    mgr.create_session_adaptive(r3, a3).await.unwrap();
+    // the original starts lazily, without a transcode slot
+    mgr.variant_segment_path(&s1.id, "original", "seg_00000.m4s")
+        .await
+        .unwrap();
+    assert_eq!(mgr.transcode_counts(1), (1, 1));
+    // removing the session frees the slot
+    mgr.remove(&s1.id).await;
+    assert_eq!(mgr.transcode_counts(1), (0, 0));
+    mgr.shutdown().await;
+}
+
+#[tokio::test]
+async fn adaptive_request_without_a_plan_is_single_variant_under_its_own_id() {
+    // a remote-like input with no readable index can't be multi-variant: only the original stays,
+    // and the master names it
+    let tmp = tempfile::tempdir().unwrap();
+    if !have_ffmpeg() {
+        return;
+    }
+    let src = make_mkv(tmp.path());
+    let mut cfg = SessionConfig::new(tmp.path());
+    cfg.keyframe_fast_timeout = std::time::Duration::from_millis(0);
+    let mgr = SessionManager::new(cfg, HwAccel::Software);
+    let (r, a) = adaptive(&src, 1, "low");
+    let s = mgr.create_session_adaptive(r, a).await.unwrap();
+    if s.fallback_playlist {
+        assert_eq!(mgr.variant_ids(&s.id).unwrap(), vec!["original"]);
+        let m = mgr.master_playlist(&s.id).unwrap();
+        assert!(m.contains("\noriginal/index.m3u8\n"), "{m}");
+        assert!(s.variants.is_empty());
+    }
+    mgr.shutdown().await;
 }

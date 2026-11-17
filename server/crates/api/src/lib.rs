@@ -321,6 +321,7 @@ fn session_config(config: &reel_core::Config) -> SessionConfig {
     }
     c.max_global_transcodes = config.max_transcodes;
     c.max_user_transcodes = config.max_user_transcodes;
+    c.variant_idle_timeout = std::time::Duration::from_secs(config.abr_variant_idle_secs.max(5));
     c
 }
 

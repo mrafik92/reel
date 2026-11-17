@@ -6033,6 +6033,13 @@
           "decision": {
             "$ref": "#/components/schemas/PlaybackDecision"
           },
+          "delivering": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The variant the player is being sent (of its most recent segment request)."
+          },
           "device_id": {
             "type": [
               "string",
@@ -6107,6 +6114,13 @@
               "string",
               "null"
             ]
+          },
+          "variants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VariantStatus"
+            },
+            "description": "Multi-variant sessions (#111): each variant and whether its ffmpeg runs; empty otherwise."
           }
         }
       },
@@ -7102,6 +7116,13 @@
       "DecideRequest": {
         "type": "object",
         "properties": {
+          "adaptive": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The player switches between variants itself (hls.js): ask for a multi-variant master\nplaylist, the original plus lazily transcoded rungs (#111). Ignored for casts, IPTV VOD\nand when the server's `REEL_ABR` is off."
+          },
           "audio_index": {
             "type": [
               "integer",
@@ -7109,6 +7130,15 @@
             ],
             "format": "int64",
             "description": "ffprobe stream index of the audio track to use. Omit to let the server choose from the\nuser's preferences (`GET /me/preferences`)."
+          },
+          "bandwidth_kbps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Measured throughput (kbit/s) of adaptive players. It picks the start variant and whether\na direct-playable file is direct played; unlike `max_bitrate_kbps` it caps nothing.",
+            "minimum": 0
           },
           "device_id": {
             "type": [
@@ -7199,7 +7229,8 @@
           "selected",
           "bitrate_kbps",
           "quality",
-          "quality_options"
+          "quality_options",
+          "variants"
         ],
         "properties": {
           "audio": {
@@ -7238,6 +7269,17 @@
           "session_id": {
             "type": "string"
           },
+          "start_variant": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Quality",
+                "description": "The variant the player should start on (prestarted by the server); adaptive sessions only."
+              }
+            ]
+          },
           "subtitles": {
             "type": "array",
             "items": {
@@ -7247,6 +7289,13 @@
           "url": {
             "type": "string",
             "description": "`/api/v1/direct/{id}` for direct play, else `/api/v1/stream/{session}/master.m3u8`."
+          },
+          "variants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VariantOption"
+            },
+            "description": "Variants of the master playlist (several for an adaptive session, #111; one otherwise;\nnone for direct play). `decision`, `quality` and `bitrate_kbps` describe the top one."
           }
         }
       },
@@ -10884,6 +10933,115 @@
           },
           "username": {
             "type": "string"
+          }
+        }
+      },
+      "VariantOption": {
+        "type": "object",
+        "description": "One variant of the session's master playlist (#111), in master order (ascending bandwidth).",
+        "required": [
+          "id",
+          "label",
+          "width",
+          "height",
+          "bandwidth_kbps",
+          "average_kbps",
+          "transcode"
+        ],
+        "properties": {
+          "average_kbps": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Average bitrate (kbit/s), the master's `AVERAGE-BANDWIDTH`.",
+            "minimum": 0
+          },
+          "bandwidth_kbps": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Peak bitrate (kbit/s), the master's `BANDWIDTH`.",
+            "minimum": 0
+          },
+          "codecs": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 6381 `CODECS` value, when every track can be described."
+          },
+          "height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "id": {
+            "$ref": "#/components/schemas/Quality",
+            "description": "`original` or a ladder rung: also the variant's URL path segment."
+          },
+          "label": {
+            "type": "string"
+          },
+          "transcode": {
+            "type": "boolean",
+            "description": "The picture is re-encoded for this variant."
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "VariantStatus": {
+        "type": "object",
+        "description": "State of one variant for the admin dashboard.",
+        "required": [
+          "id",
+          "label",
+          "width",
+          "height",
+          "bandwidth_kbps",
+          "state",
+          "last_request_s"
+        ],
+        "properties": {
+          "bandwidth_kbps": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Average bitrate (kbit/s) the master playlist announces.",
+            "minimum": 0
+          },
+          "encoder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Video encoder, e.g. `hevc_vaapi (low power)`; `None` when the video is copied."
+          },
+          "height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "last_request_s": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds since the player last requested one of its files.",
+            "minimum": 0
+          },
+          "state": {
+            "type": "string",
+            "description": "`running`, `paused` (read-ahead throttle) or `idle` (no ffmpeg)."
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },

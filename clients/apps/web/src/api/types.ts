@@ -36,11 +36,30 @@ export interface QualityOption {
   /** False when it would upscale, change nothing, or exceed the user's bitrate limit. */
   available: boolean;
 }
+/** One variant of an HLS session's master playlist (#111), in master order (ascending bandwidth). */
+export interface VariantOption {
+  /** `original` or a rung; also the variant's URL path segment (`…/{id}/index.m3u8`). */
+  id: Quality;
+  label: string;
+  width: number;
+  height: number;
+  /** Peak bitrate (kbit/s): the master's `BANDWIDTH`. */
+  bandwidth_kbps: number;
+  /** Average bitrate (kbit/s): the master's `AVERAGE-BANDWIDTH`. */
+  average_kbps: number;
+  codecs?: string;
+  /** The picture is re-encoded. */
+  transcode: boolean;
+}
 export type DecideRequest = S["DecideRequest"] & {
   quality?: Quality | null;
   /** Client bandwidth hint; the server caps it by the user's limit. */
   max_bitrate_kbps?: number | null;
   for_cast?: boolean | null;
+  /** The player switches variants itself (hls.js): ask for a multi-variant master (#111). */
+  adaptive?: boolean | null;
+  /** Measured throughput (kbit/s): picks the start variant; caps nothing. */
+  bandwidth_kbps?: number | null;
 };
 /** Older servers (and some mocks) omit the quality fields: treat them as optional. */
 export type DecideResponse = S["DecideResponse"] & {
@@ -48,6 +67,10 @@ export type DecideResponse = S["DecideResponse"] & {
   quality?: Quality;
   bitrate_kbps?: number;
   quality_options?: QualityOption[];
+  /** The master playlist's variants (several for an adaptive session, #111). */
+  variants?: VariantOption[];
+  /** Adaptive sessions: the variant to start on (the server prestarted it). */
+  start_variant?: Quality;
 };
 export type DeviceProfileWire = S["DeviceProfile"];
 export type PlaybackMode = S["PlaybackMode"];

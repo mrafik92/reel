@@ -32,6 +32,7 @@ pub mod select;
 pub mod session;
 pub mod subtitles;
 pub mod upstream;
+pub mod variants;
 
 pub use decision::{DecisionInput, PlaybackDecision, PlaybackMode, decide};
 pub use error::PlaybackError;
@@ -42,5 +43,6 @@ pub use profile::DeviceProfile;
 pub use quality::{Quality, QualityDecision, QualityOption, QualityRequest, decide_quality};
 pub use select::{Pick, PlaybackPrefs, Selected, SubtitleMode};
 pub use session::{
-    ExternalTranscodes, SessionConfig, SessionInfo, SessionManager, StartRequest, VariantSpec,
+    AdaptiveRequest, ExternalTranscodes, SessionConfig, SessionInfo, SessionManager, StartRequest,
+    VariantSpec, VariantStatus,
 };
