@@ -23,8 +23,28 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::process::{Child, Command};
 use utoipa::ToSchema;
 
-/// The only HLS variant name served (`/stream/{session}/main/index.m3u8`).
+/// Name of a session's primary variant (`/stream/{session}/main/index.m3u8`). Its files live in the
+/// session directory itself; further variants (rungs, #111) in `{session dir}/{variant id}/`.
 pub const VARIANT: &str = "main";
+
+/// An extra encoded variant of a session (a rung, #111). It shares the session's segment plan:
+/// on a keyframe plan its IDR frames are forced at exactly the plan's boundaries, on a fixed
+/// plan at the same absolute grid, so its segment `n` covers the same frames as every other
+/// variant's. Its ffmpeg starts on the first request for one of its files.
+#[derive(Debug, Clone)]
+pub struct VariantSpec {
+    /// URL path segment, `[a-z0-9]{1,16}`, unique within the session and not [`VARIANT`].
+    pub id: String,
+    /// Must encode the video; audio, subtitle and stream indexes should match the primary's.
+    pub decision: PlaybackDecision,
+}
+
+fn valid_variant_id(id: &str) -> bool {
+    (1..=16).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+}
 
 #[derive(Debug, Clone)]
 pub struct SessionConfig {
@@ -184,17 +204,13 @@ struct Proc {
     started: Instant,
 }
 
-struct Session {
+/// One rendition of a session, with its own ffmpeg (#111). All variants of a session share its
+/// segment plan, input and burn-in file.
+struct Variant {
     id: String,
-    user_id: i64,
-    device_id: Option<String>,
-    file: FileInfo,
     decision: PlaybackDecision,
-    dir: Option<PathBuf>,
-    started_at: i64,
-    plan: SegmentPlan,
-    event_mode: bool,
-    total_segments: u32,
+    /// Output directory: the session directory for the primary variant, a subdirectory otherwise.
+    dir: PathBuf,
     hw: Mutex<HwAccel>,
     last_req: AtomicU32,
     /// Incremented on every ffmpeg (re)start; in-flight post-processing of files from an older
@@ -204,17 +220,104 @@ struct Session {
     /// fragment processed after a (re)start and then applied to the whole run so continuity inside
     /// the run is preserved bit-exactly.
     run_delta: Mutex<Option<(u64, f64)>>,
+    /// Redacted tail of ffmpeg's stderr (server-side diagnostics only).
+    log: LogTail,
+    proc: tokio::sync::Mutex<Proc>,
+}
+
+impl Variant {
+    fn new(id: &str, decision: PlaybackDecision, dir: PathBuf, hw: HwAccel) -> Self {
+        Variant {
+            id: id.to_string(),
+            decision,
+            dir,
+            hw: Mutex::new(hw),
+            last_req: AtomicU32::new(0),
+            epoch: std::sync::atomic::AtomicU64::new(0),
+            run_delta: Mutex::new(None),
+            log: LogTail::default(),
+            proc: tokio::sync::Mutex::new(Proc {
+                child: None,
+                start_segment: 0,
+                paused: false,
+                started: Instant::now(),
+            }),
+        }
+    }
+
+    fn encodes_video(&self) -> bool {
+        matches!(self.decision.video, VideoAction::Encode { .. })
+    }
+
+    /// Copy output on a keyframe plan: ffmpeg writes one file per source GOP, assembled into plan
+    /// segments by the session.
+    fn gop_mode(&self, plan: &SegmentPlan) -> bool {
+        plan.is_keyframe_plan() && !self.encodes_video()
+    }
+
+    /// An encode on a keyframe plan: IDR frames forced at the plan's boundaries, one file per
+    /// segment, each checked against the plan (start and duration).
+    fn aligned(&self, plan: &SegmentPlan) -> bool {
+        plan.is_keyframe_plan() && self.encodes_video()
+    }
+
+    /// A segment's output exists or is in progress.
+    fn have_started(&self, plan: &SegmentPlan, n: u32) -> bool {
+        if self.dir.join(ffmpeg::segment_name(n)).exists() {
+            return true;
+        }
+        self.gop_mode(plan) && self.dir.join(ffmpeg::gop_name(plan.first_gop(n))).exists()
+    }
+
+    /// First segment index >= `start` that has not been started yet.
+    fn head(&self, plan: &SegmentPlan, start: u32) -> u32 {
+        let mut h = start;
+        while h < plan.len() && self.have_started(plan, h) {
+            h += 1;
+        }
+        h
+    }
+}
+
+struct Session {
+    id: String,
+    user_id: i64,
+    device_id: Option<String>,
+    file: FileInfo,
+    /// The primary variant's decision (what the session was created with).
+    decision: PlaybackDecision,
+    /// Session directory (`None` for direct play); the primary variant writes into it.
+    dir: Option<PathBuf>,
+    started_at: i64,
+    plan: SegmentPlan,
+    event_mode: bool,
+    total_segments: u32,
     source_video_codec: Option<String>,
     source_hdr: Hdr,
     /// What ffmpeg opens: a local path or a loopback upstream-proxy URL (never a provider URL).
     input: String,
     /// Process-budget slot held while the session exists.
     permit: Mutex<Option<ProcPermit>>,
-    /// Redacted tail of ffmpeg's stderr (server-side diagnostics only).
-    log: LogTail,
     burn_in: Mutex<Option<BurnIn>>,
     meta: Mutex<Meta>,
-    proc: tokio::sync::Mutex<Proc>,
+    /// Last segment requested on any variant: where a variant that has never run starts when its
+    /// `init.mp4` is asked for first (as hls.js does on a level switch).
+    last_req: AtomicU32,
+    /// The primary variant first; empty for direct play.
+    variants: Vec<Arc<Variant>>,
+}
+
+impl Session {
+    fn primary(&self) -> Option<&Arc<Variant>> {
+        self.variants.first()
+    }
+
+    fn variant(&self, id: &str) -> Result<&Arc<Variant>, PlaybackError> {
+        self.variants
+            .iter()
+            .find(|v| v.id == id)
+            .ok_or(PlaybackError::SessionNotFound)
+    }
 }
 
 /// `hw` after runtime degradation: software when the backend failed, without the low-power
@@ -371,6 +474,30 @@ impl SessionManager {
 
     /// Create a session. ffmpeg-backed sessions start producing immediately at `start_position_s`.
     pub async fn create_session(&self, req: StartRequest) -> Result<SessionInfo, PlaybackError> {
+        self.create_session_with_rungs(req, Vec::new()).await
+    }
+
+    /// Like [`SessionManager::create_session`], with extra encoded variants (#111) on the same
+    /// segment plan. Rungs start on their first request; they are dropped when the session has
+    /// no segment plan (EVENT fallback playlist) or no HLS output.
+    pub async fn create_session_with_rungs(
+        &self,
+        req: StartRequest,
+        rungs: Vec<VariantSpec>,
+    ) -> Result<SessionInfo, PlaybackError> {
+        let mut ids = vec![VARIANT];
+        for r in &rungs {
+            if !valid_variant_id(&r.id) || ids.contains(&r.id.as_str()) {
+                return Err(PlaybackError::Invalid(format!("bad variant id {:?}", r.id)));
+            }
+            if !matches!(r.decision.video, VideoAction::Encode { .. }) {
+                return Err(PlaybackError::Invalid(format!(
+                    "variant {} must encode the video",
+                    r.id
+                )));
+            }
+            ids.push(&r.id);
+        }
         let mode = req.decision.mode;
         let counts = matches!(mode, PlaybackMode::Transcode | PlaybackMode::AudioTranscode);
         let id = uuid::Uuid::new_v4().to_string();
@@ -525,6 +652,22 @@ impl SessionManager {
         let dir = mode
             .needs_ffmpeg()
             .then(|| self.cfg.transcode_root().join(&id));
+        let mut variants = Vec::new();
+        if let Some(dir) = &dir {
+            let hw = self.effective_hwaccel();
+            variants.push(Arc::new(Variant::new(
+                VARIANT,
+                req.decision.clone(),
+                dir.clone(),
+                hw.clone(),
+            )));
+            if !event_mode {
+                for r in rungs {
+                    let vdir = dir.join(&r.id);
+                    variants.push(Arc::new(Variant::new(&r.id, r.decision, vdir, hw.clone())));
+                }
+            }
+        }
         let session = Arc::new(Session {
             id: id.clone(),
             user_id: req.user_id,
@@ -536,15 +679,10 @@ impl SessionManager {
             plan,
             event_mode,
             total_segments,
-            hw: Mutex::new(self.effective_hwaccel()),
-            last_req: AtomicU32::new(0),
-            epoch: std::sync::atomic::AtomicU64::new(0),
-            run_delta: Mutex::new(None),
             source_video_codec: video.and_then(|v| v.codec.as_deref().map(normalize_codec)),
             source_hdr: video.map(|v| v.hdr).unwrap_or_default(),
             input,
             permit: Mutex::new(permit),
-            log: LogTail::default(),
             burn_in: Mutex::new(burn_in),
             meta: Mutex::new(Meta {
                 last_ping: now_unix(),
@@ -553,12 +691,8 @@ impl SessionManager {
                 position_s: req.start_position_s,
                 bitrate_kbps: None,
             }),
-            proc: tokio::sync::Mutex::new(Proc {
-                child: None,
-                start_segment: 0,
-                paused: false,
-                started: Instant::now(),
-            }),
+            last_req: AtomicU32::new(0),
+            variants,
         });
 
         {
@@ -607,21 +741,24 @@ impl SessionManager {
                 .acquire(&self.cfg, session.file.id, &session.file.path);
         }
 
-        if let Some(dir) = &dir {
+        if let (Some(dir), Some(primary)) = (&dir, session.primary()) {
             // map the resume position through the plan (real keyframe boundaries in copy mode)
             let start = session
                 .plan
                 .segment_at(req.start_position_s.max(0.0))
                 .min(total_segments.saturating_sub(1));
             session.last_req.store(start, Ordering::Relaxed);
+            for v in &session.variants {
+                v.last_req.store(start, Ordering::Relaxed);
+            }
             let res = async {
                 tokio::fs::create_dir_all(dir).await?;
                 if let Some((idx, external)) = &stage {
                     self.stage_burn_in(&session, dir, *idx, external.as_deref())
                         .await?;
                 }
-                let mut p = session.proc.lock().await;
-                self.start_ffmpeg(&session, &mut p, start).await
+                let mut p = primary.proc.lock().await;
+                self.start_ffmpeg(&session, primary, &mut p, start).await
             }
             .await;
             if let Err(e) = res {
@@ -740,53 +877,61 @@ impl SessionManager {
                 tick = tick.wrapping_add(1);
                 if tick % 10 == 0 && session_disk_cap > 0 && dir_size(&dir).await > session_disk_cap
                 {
-                    // bounded scratch: drop segments well behind the playhead (a seek back simply
-                    // restarts ffmpeg there)
-                    let keep_from = s.last_req.load(Ordering::Relaxed).saturating_sub(10);
-                    trim_behind(&dir, keep_from).await;
+                    // bounded scratch: drop segments well behind each variant's last request (a
+                    // seek back simply restarts ffmpeg there)
+                    for v in &s.variants {
+                        let keep_from = v.last_req.load(Ordering::Relaxed).saturating_sub(10);
+                        trim_behind(&v.dir, keep_from).await;
+                    }
                 }
                 if max_ahead == 0 {
                     continue;
                 }
-                let mut p = s.proc.lock().await;
-                let alive = p
-                    .child
-                    .as_mut()
-                    .is_some_and(|c| matches!(c.try_wait(), Ok(None)));
-                if !alive {
-                    continue;
-                }
-                let head = s.head(&dir, p.start_segment);
-                let ahead =
-                    head.saturating_sub(s.last_req.load(Ordering::Relaxed).max(p.start_segment));
-                if !p.paused && ahead > max_ahead {
-                    if let Some(c) = p.child.as_ref() {
-                        tracing::debug!(session = %s.id, ahead, "pausing ffmpeg (read-ahead limit)");
-                        signal(c, Sig::Stop);
-                        p.paused = true;
+                for v in &s.variants {
+                    let mut p = v.proc.lock().await;
+                    let alive = p
+                        .child
+                        .as_mut()
+                        .is_some_and(|c| matches!(c.try_wait(), Ok(None)));
+                    if !alive {
+                        continue;
                     }
-                } else if p.paused && ahead <= resume_at {
-                    if let Some(c) = p.child.as_ref() {
-                        signal(c, Sig::Cont);
+                    let head = v.head(&s.plan, p.start_segment);
+                    let ahead = head
+                        .saturating_sub(v.last_req.load(Ordering::Relaxed).max(p.start_segment));
+                    if !p.paused && ahead > max_ahead {
+                        if let Some(c) = p.child.as_ref() {
+                            tracing::debug!(session = %s.id, variant = %v.id, ahead, "pausing ffmpeg (read-ahead limit)");
+                            signal(c, Sig::Stop);
+                            p.paused = true;
+                        }
+                    } else if p.paused && ahead <= resume_at {
+                        if let Some(c) = p.child.as_ref() {
+                            signal(c, Sig::Cont);
+                        }
+                        p.paused = false;
                     }
-                    p.paused = false;
                 }
             }
         });
     }
 
     async fn info_of(&self, s: &Session) -> SessionInfo {
-        let (active, paused) = match s.proc.try_lock() {
-            Ok(mut p) => (
+        let (active, paused) = match s.primary().map(|v| v.proc.try_lock()) {
+            None => (false, false),
+            Some(Ok(mut p)) => (
                 p.child
                     .as_mut()
                     .is_some_and(|c| matches!(c.try_wait(), Ok(None))),
                 p.paused,
             ),
-            Err(_) => (true, false),
+            Some(Err(_)) => (true, false),
         };
         // clone: a guard taken inside the struct literal would live until its end (and deadlock)
-        let hw = s.hw.lock().unwrap().clone();
+        let hw = s
+            .primary()
+            .map(|v| v.hw.lock().unwrap().clone())
+            .unwrap_or_else(|| self.effective_hwaccel());
         let m = s.meta.lock().unwrap();
         SessionInfo {
             id: s.id.clone(),
@@ -873,8 +1018,8 @@ impl SessionManager {
     pub async fn remove(&self, id: &str) -> bool {
         let removed = self.sessions.lock().unwrap().remove(id);
         let Some(s) = removed else { return false };
-        {
-            let mut p = s.proc.lock().await;
+        for v in &s.variants {
+            let mut p = v.proc.lock().await;
             if let Some(mut c) = p.child.take() {
                 let _ = c.kill().await;
             }
@@ -1013,14 +1158,15 @@ impl SessionManager {
             {
                 return Ok(t);
             }
+            let primary = s.primary().ok_or(PlaybackError::SessionNotFound)?;
             let failed = {
-                let mut p = s.proc.lock().await;
+                let mut p = primary.proc.lock().await;
                 matches!(p.child.as_mut().map(|c| c.try_wait()), Some(Ok(Some(st))) if !st.success())
             };
             if failed || Instant::now() >= deadline {
                 return Err(PlaybackError::segment_unavailable(format!(
                     "no playlist from ffmpeg: {}",
-                    s.log.tail(5)
+                    primary.log.tail(5)
                 )));
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1033,14 +1179,60 @@ impl SessionManager {
 
     // ---------------- segments ----------------
 
-    /// Resolve `init.mp4` / `seg_NNNNN.m4s` to an existing file, (re)starting ffmpeg as needed.
+    /// Media playlist of one variant (all variants share the session's plan, so the same text).
+    pub async fn variant_playlist(&self, id: &str, variant: &str) -> Result<String, PlaybackError> {
+        self.get(id)?.variant(variant)?;
+        self.media_playlist_async(id).await
+    }
+
+    /// Ids of the session's variants, primary first (empty for direct play).
+    pub fn variant_ids(&self, id: &str) -> Result<Vec<String>, PlaybackError> {
+        Ok(self
+            .get(id)?
+            .variants
+            .iter()
+            .map(|v| v.id.clone())
+            .collect())
+    }
+
+    /// Output directory of one variant.
+    pub fn variant_dir(&self, id: &str, variant: &str) -> Result<PathBuf, PlaybackError> {
+        Ok(self.get(id)?.variant(variant)?.dir.clone())
+    }
+
+    /// Whether the variant's ffmpeg is currently running (or paused by the throttle).
+    pub async fn variant_running(&self, id: &str, variant: &str) -> Result<bool, PlaybackError> {
+        let s = self.get(id)?;
+        let v = s.variant(variant)?;
+        let mut p = v.proc.lock().await;
+        Ok(p.child
+            .as_mut()
+            .is_some_and(|c| matches!(c.try_wait(), Ok(None))))
+    }
+
+    /// Resolve `init.mp4` / `seg_NNNNN.m4s` of the primary variant (see
+    /// [`SessionManager::variant_segment_path`]).
     pub async fn segment_path(&self, id: &str, name: &str) -> Result<PathBuf, PlaybackError> {
+        self.variant_segment_path(id, VARIANT, name).await
+    }
+
+    /// Resolve `init.mp4` / `seg_NNNNN.m4s` of a variant to an existing file, (re)starting that
+    /// variant's ffmpeg as needed (a variant that isn't running starts here).
+    pub async fn variant_segment_path(
+        &self,
+        id: &str,
+        variant: &str,
+        name: &str,
+    ) -> Result<PathBuf, PlaybackError> {
         let s = self.get(id)?;
         self.touch(&s);
-        let dir = s
-            .dir
-            .clone()
-            .ok_or_else(|| PlaybackError::Invalid("no HLS output for this session".into()))?;
+        if s.dir.is_none() {
+            return Err(PlaybackError::Invalid(
+                "no HLS output for this session".into(),
+            ));
+        }
+        let v = s.variant(variant)?.clone();
+        let dir = v.dir.clone();
         let wanted: Option<u32> = if name == INIT_NAME {
             None
         } else {
@@ -1049,6 +1241,7 @@ impl SessionManager {
             if n >= s.total_segments {
                 return Err(PlaybackError::Invalid("segment beyond end of media".into()));
             }
+            v.last_req.store(n, Ordering::Relaxed);
             s.last_req.store(n, Ordering::Relaxed);
             Some(n)
         };
@@ -1071,15 +1264,22 @@ impl SessionManager {
                 // segments are written via temp file + rename (or assembled likewise): complete.
                 // Re-validate on every serve: only clean [styp] moof/mdat bytes may reach MSE.
                 let n = wanted.unwrap_or(0);
-                let epoch = s.epoch.load(Ordering::SeqCst);
-                let expected =
-                    if s.event_mode || !matches!(s.decision.video, VideoAction::Encode { .. }) {
-                        None // copy-mode files were normalised when assembled; fallback has no grid
-                    } else {
-                        Some((s.plan.start(n), n * 16 + 1))
-                    };
+                let epoch = v.epoch.load(Ordering::SeqCst);
+                let expected = if s.event_mode || !v.encodes_video() {
+                    None // copy-mode files were normalised when assembled; fallback has no grid
+                } else {
+                    Some(Expected {
+                        start: s.plan.start(n),
+                        seq: n * 16 + 1,
+                        // aligned rungs must cover exactly the plan segment (the last one may
+                        // end with the file's audio, so only its start is checked)
+                        len: (v.aligned(&s.plan) && n + 1 < s.total_segments)
+                            .then(|| s.plan.seg_len(n)),
+                        check_start: v.aligned(&s.plan),
+                    })
+                };
                 let valid = {
-                    match normalize_segment(&dir, &path, expected, &s, epoch).await {
+                    match normalize_segment(&dir, &path, expected, &v, epoch).await {
                         Ok(()) => true,
                         Err(e) => {
                             tracing::warn!(session = %id, segment = n, error = %e, "discarding invalid segment");
@@ -1094,8 +1294,8 @@ impl SessionManager {
                 }
                 force_restart = true;
             }
-            if let (Some(n), true) = (wanted, s.plan.is_keyframe_plan()) {
-                match assemble_segment(&dir, &s, n).await {
+            if let (Some(n), true) = (wanted, v.gop_mode(&s.plan)) {
+                match assemble_segment(&dir, &s, &v, n).await {
                     Ok(true) => return Ok(path),
                     Ok(false) => {}
                     Err(AssembleError::Invalid(e)) => {
@@ -1106,22 +1306,27 @@ impl SessionManager {
                 }
             }
             {
-                let mut p = s.proc.lock().await;
+                let mut p = v.proc.lock().await;
                 let state = p.child.as_mut().map(|c| c.try_wait());
                 let alive = matches!(state, Some(Ok(None)));
                 let failed = matches!(state, Some(Ok(Some(st))) if !st.success());
-                let target = wanted.unwrap_or(p.start_segment);
+                // an init request for a variant that has never run starts it where the player is
+                let target = wanted.unwrap_or(if p.child.is_none() {
+                    s.last_req.load(Ordering::Relaxed)
+                } else {
+                    p.start_segment
+                });
                 let mut fallback = false;
                 if failed {
-                    let cur = s.hw.lock().unwrap().clone();
-                    let codec = match &s.decision.video {
+                    let cur = v.hw.lock().unwrap().clone();
+                    let codec = match &v.decision.video {
                         VideoAction::Encode { codec, .. } => Some(codec.as_str()),
                         _ => None,
                     };
                     if let Some(codec) = codec.filter(|_| {
                         cur != HwAccel::Software
                             && p.started.elapsed() < self.cfg.hw_startup_grace
-                            && !s.have_started(&dir, p.start_segment)
+                            && !v.have_started(&s.plan, p.start_segment)
                     }) {
                         // first step down from the low-power encoder to the regular one, then to
                         // software (#113)
@@ -1133,11 +1338,12 @@ impl SessionManager {
                         };
                         tracing::warn!(
                             session = %id,
+                            variant = %v.id,
                             backend = cur.name(),
                             failed = degrade,
                             next = %next.encoder_label(codec),
                             "hardware ffmpeg failed before producing output; retrying: {}",
-                            s.log.tail(5)
+                            v.log.tail(5)
                         );
                         {
                             let mut d = self.degraded.lock().unwrap();
@@ -1145,7 +1351,7 @@ impl SessionManager {
                                 d.push(degrade.to_string());
                             }
                         }
-                        *s.hw.lock().unwrap() = next;
+                        *v.hw.lock().unwrap() = next;
                         fallback = true;
                     }
                 }
@@ -1162,7 +1368,7 @@ impl SessionManager {
                     match wanted {
                         None => false,
                         Some(n) => {
-                            let head = s.head(&dir, p.start_segment);
+                            let head = v.head(&s.plan, p.start_segment);
                             n < p.start_segment || n > head + self.cfg.lookahead_segments
                         }
                     }
@@ -1174,13 +1380,13 @@ impl SessionManager {
                         if restarts >= 2 {
                             return Err(PlaybackError::segment_unavailable(format!(
                                 "ffmpeg failed: {}",
-                                s.log.tail(5)
+                                v.log.tail(5)
                             )));
                         }
                         restarts += 1;
                     }
-                    tracing::info!(session = %id, segment = target, "restarting ffmpeg");
-                    self.start_ffmpeg(&s, &mut p, target).await?;
+                    tracing::info!(session = %id, variant = %v.id, segment = target, "restarting ffmpeg");
+                    self.start_ffmpeg(&s, &v, &mut p, target).await?;
                     force_restart = false;
                 }
             }
@@ -1196,6 +1402,7 @@ impl SessionManager {
     async fn start_ffmpeg(
         &self,
         s: &Session,
+        v: &Variant,
         p: &mut Proc,
         start_segment: u32,
     ) -> Result<(), PlaybackError> {
@@ -1203,29 +1410,32 @@ impl SessionManager {
             let _ = c.kill().await;
         }
         p.paused = false;
-        let dir = s
-            .dir
-            .as_ref()
-            .ok_or_else(|| PlaybackError::Invalid("no output dir".into()))?;
+        let dir = &v.dir;
         tokio::fs::create_dir_all(dir).await?;
         // everything this run will (re)produce must come from *this* run: drop leftovers of older
         // runs from `start_segment` on (init and earlier segments stay valid)
-        s.epoch.fetch_add(1, Ordering::SeqCst);
-        *s.run_delta.lock().unwrap() = None;
-        remove_stale(dir, start_segment, s.plan.is_keyframe_plan()).await;
-        let hw = s.hw.lock().unwrap().clone();
+        v.epoch.fetch_add(1, Ordering::SeqCst);
+        *v.run_delta.lock().unwrap() = None;
+        remove_stale(dir, start_segment, v.gop_mode(&s.plan)).await;
+        let hw = v.hw.lock().unwrap().clone();
         let params = BuildParams {
             input: &s.input,
-            decision: &s.decision,
+            decision: &v.decision,
             hwaccel: &hw,
             source_video_codec: s.source_video_codec.as_deref(),
             source_hdr: s.source_hdr,
-            burn_in: s.burn_in.lock().unwrap().clone(),
+            burn_in: if v.decision.subtitle == SubtitleAction::BurnIn {
+                s.burn_in.lock().unwrap().clone()
+            } else {
+                None
+            },
             start_segment,
             segment_secs: self.cfg.segment_secs,
             out_dir: dir,
         };
-        let args = if s.plan.is_keyframe_plan() {
+        // encodes always follow the plan's keyframe times (fixed or source keyframes); copy needs
+        // a keyframe plan (else it's the EVENT fallback)
+        let args = if v.gop_mode(&s.plan) || (v.encodes_video() && !s.event_mode) {
             ffmpeg::build_args_with_plan(&params, &s.plan)
         } else {
             ffmpeg::build_args(&params)
@@ -1241,7 +1451,7 @@ impl SessionManager {
         // stderr may contain URLs, credentials and paths: it is redacted line by line before it is
         // stored anywhere, and only a bounded tail is kept in memory
         if let Some(err) = child.stderr.take() {
-            let weak_log = s.log.handle();
+            let weak_log = v.log.handle();
             tokio::spawn(async move {
                 use tokio::io::AsyncReadExt;
                 let mut err = err;
@@ -1387,25 +1597,6 @@ impl Drop for Indexer {
     }
 }
 
-impl Session {
-    /// A segment's output exists or is in progress.
-    fn have_started(&self, dir: &Path, n: u32) -> bool {
-        if dir.join(ffmpeg::segment_name(n)).exists() {
-            return true;
-        }
-        self.plan.is_keyframe_plan() && dir.join(ffmpeg::gop_name(self.plan.first_gop(n))).exists()
-    }
-
-    /// First segment index >= `start` that has not been started yet.
-    fn head(&self, dir: &Path, start: u32) -> u32 {
-        let mut h = start;
-        while h < self.total_segments && self.have_started(dir, h) {
-            h += 1;
-        }
-        h
-    }
-}
-
 /// True if `data` is a complete init segment: top-level boxes exactly cover the buffer, starting
 /// with `ftyp` and including `moov`.
 pub fn init_is_complete(data: &[u8]) -> bool {
@@ -1443,6 +1634,7 @@ async fn ready_init(dir: &Path) -> Option<PathBuf> {
 }
 
 /// Delete output of earlier ffmpeg runs that the run starting at `start_segment` will replace.
+/// `copy_plan`: the variant writes GOP files (copy output on a keyframe plan).
 async fn remove_stale(dir: &Path, start_segment: u32, copy_plan: bool) {
     let Ok(mut rd) = tokio::fs::read_dir(dir).await else {
         return;
@@ -1487,14 +1679,33 @@ fn run_shift(
     Some(d)
 }
 
-/// Validate an ffmpeg-written segment. With `expected` (encoded fixed grid) it is also rewritten
-/// to `[styp] moof/mdat…` (no `sidx`) with its first video sample exactly at `expected` seconds.
+/// Where an encoded segment must sit on the plan.
+#[derive(Clone, Copy)]
+struct Expected {
+    /// Plan start (seconds) of the segment: its first video sample is moved there.
+    start: f64,
+    /// `mfhd` sequence number of the first fragment.
+    seq: u32,
+    /// Aligned rungs: the plan length the segment's video must cover.
+    len: Option<f64>,
+    /// Aligned rungs: the segment's own start (on the run's timeline) must be the plan start, so
+    /// a keyframe the encoder added by itself (a split segment) is caught instead of shifting
+    /// every later boundary.
+    check_start: bool,
+}
+
+/// How far an aligned rung's segment start or length may be off the plan: under one frame at
+/// ≥ 20 fps, well under any stray split.
+const ALIGN_TOLERANCE_S: f64 = 0.06;
+
+/// Validate an ffmpeg-written segment. With `expected` (encoded output) it is also rewritten
+/// to `[styp] moof/mdat…` (no `sidx`) with its first video sample exactly at the plan start.
 /// Discarded (rename skipped) if ffmpeg was restarted meanwhile.
 async fn normalize_segment(
     dir: &Path,
     path: &Path,
-    expected: Option<(f64, u32)>,
-    sess: &Session,
+    expected: Option<Expected>,
+    sess: &Variant,
     epoch_seen: u64,
 ) -> Result<(), String> {
     let epoch = &sess.epoch;
@@ -1503,13 +1714,29 @@ async fn normalize_segment(
     let data = tokio::fs::read(path).await.map_err(|e| e.to_string())?;
     let tracks = fmp4::init_tracks(&init);
     let cleaned = fmp4::clean_segment(&data, &tracks)?;
-    let Some((expected, expected_seq)) = expected else {
+    let Some(exp) = expected else {
         return Ok(());
     };
+    let (expected, expected_seq) = (exp.start, exp.seq);
     let mut out = cleaned.styp.unwrap_or_default();
     out.extend(cleaned.body);
     let delta = run_shift(&sess.run_delta, epoch, epoch_seen, &out, &tracks, expected)
         .ok_or("ffmpeg restarted")?;
+    if exp.check_start {
+        let actual = fmp4::first_video_pts(&out, &tracks).ok_or("no video")? + delta;
+        if (actual - expected).abs() > ALIGN_TOLERANCE_S {
+            return Err(format!(
+                "segment starts at {actual:.3}s, plan says {expected:.3}s (unforced keyframe?)"
+            ));
+        }
+    }
+    if let (Some(want), Some(got)) = (exp.len, fmp4::video_duration(&out, &tracks)) {
+        if (got - want).abs() > ALIGN_TOLERANCE_S {
+            return Err(format!(
+                "segment covers {got:.3}s, plan says {want:.3}s (unforced keyframe?)"
+            ));
+        }
+    }
     if delta.abs() >= 0.0005 && !fmp4::shift(&mut out, &tracks, delta) {
         tracing::warn!("could not normalise fragment timestamps");
     }
@@ -1545,8 +1772,13 @@ impl From<std::io::Error> for AssembleError {
 /// Concatenate the GOP files of plan segment `n` into `seg_n.m4s` once all exist: each GOP is
 /// validated (`[styp] [sidx] moof mdat` only, tracks known to the init) and retimed onto the
 /// index timeline; the segment is `styp` + all `moof/mdat` pairs.
-async fn assemble_segment(dir: &Path, sess: &Session, n: u32) -> Result<bool, AssembleError> {
-    let (plan, epoch) = (&sess.plan, &sess.epoch);
+async fn assemble_segment(
+    dir: &Path,
+    s: &Session,
+    sess: &Variant,
+    n: u32,
+) -> Result<bool, AssembleError> {
+    let (plan, epoch) = (&s.plan, &sess.epoch);
     let epoch_seen = epoch.load(Ordering::SeqCst);
     let (a, b) = plan.gop_range(n);
     for g in a..b {

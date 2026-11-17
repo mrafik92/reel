@@ -118,11 +118,53 @@ pub fn build_args(p: &BuildParams<'_>) -> Vec<String> {
     build_inner(p, None)
 }
 
-/// Copy-mode output cut at every source keyframe (`gop_%05d.m4s`, numbered by keyframe index).
-/// `start_segment` refers to `plan` segments; ffmpeg is started at that segment's keyframe.
+/// Output on a keyframe plan (`start_segment` refers to `plan` segments).
+///
+/// - Copy: cut at every source keyframe (`gop_%05d.m4s`, numbered by keyframe index); ffmpeg is
+///   started at that segment's keyframe and the session assembles GOPs into plan segments.
+/// - Encode (an aligned rung, #111): IDR frames are forced at exactly the plan's segment starts
+///   and nowhere else, and a file is cut at every keyframe, so `seg_n` covers the same frames as
+///   the copied variant's segment `n`.
 pub fn build_args_with_plan(p: &BuildParams<'_>, plan: &crate::plan::SegmentPlan) -> Vec<String> {
     build_inner(p, Some(plan))
 }
+
+/// GOP length of an encode on a plan: large enough that the encoder never inserts a keyframe of
+/// its own (only the forced ones at plan boundaries exist, and each starts a file).
+pub const ALIGNED_GOP: u32 = 100_000;
+
+/// Most bytes of the `-force_key_frames` time list (Linux caps one argument at 128 KiB). Past
+/// it the rung stops forcing keyframes; the segment check then rejects the next segment and the
+/// session restarts ffmpeg from there.
+pub const MAX_FORCED_LIST_BYTES: usize = 100_000;
+
+/// `-force_key_frames` list for an encode (re)started at plan segment `start`: the boundaries
+/// *after* it, each 1 ms early so the frame exactly at the boundary is the one chosen.
+///
+/// - Never a time before the run's first frame: ffmpeg forces one keyframe for every listed time
+///   already in the past (1-frame segments).
+/// - Not `start` itself: the encoder's first frame is always an IDR, and ffmpeg ≤ 6's accurate
+///   seek starts on the frame *covering* the seek time (79.997 s for `-ss 80` at 23.976 fps), so
+///   listing the boundary would force the next frame too (measured on CT 113, ffmpeg 5.1).
+pub fn forced_keyframe_list(plan: &crate::plan::SegmentPlan, start: u32) -> String {
+    let mut out = String::new();
+    for i in start + 1..plan.len() {
+        let ms = ((plan.start(i) * 1000.0).round() as i64 - 1).max(0);
+        let item = format!("{}.{:03}", ms / 1000, ms % 1000);
+        if out.len() + item.len() + 1 > MAX_FORCED_LIST_BYTES {
+            break;
+        }
+        if !out.is_empty() {
+            out.push(',');
+        }
+        out.push_str(&item);
+    }
+    out
+}
+
+/// Keyframe expression for an encode without a plan (legacy callers; sessions always pass their
+/// plan). Relative to the previous forced frame, so it drifts by up to a frame per segment.
+const RELATIVE_GRID: &str = "expr:if(isnan(prev_forced_t),gte(t,0),gte(t,prev_forced_t+{}))";
 
 fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> Vec<String> {
     let mut a: Vec<String> = Vec::new();
@@ -146,6 +188,9 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
         } => Some((codec.as_str(), *width, *height, *bitrate_kbps, *tonemap)),
         _ => None,
     };
+    // an encode on a plan (source keyframes or the fixed grid): IDR frames only at the plan's
+    // boundaries, one file per segment
+    let aligned = plan.filter(|_| encode.is_some());
     let burn = p.burn_in.is_some();
     let tonemap = encode.is_some_and(|e| e.4);
     let hwdec = encode.is_some() && hw_decode(p.hwaccel, burn, tonemap);
@@ -208,9 +253,11 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
         ]);
     }
     if p.start_segment > 0 {
-        let t = match plan {
-            Some(pl) => format!("{:.3}", pl.start(p.start_segment) + KEYFRAME_SEEK_MARGIN),
-            None => (p.start_segment * p.segment_secs).to_string(),
+        let t = match (plan, aligned) {
+            // encodes seek accurately (decode and drop): no margin
+            (Some(_), Some(pl)) => format!("{:.3}", pl.start(p.start_segment)),
+            (Some(pl), None) => format!("{:.3}", pl.start(p.start_segment) + KEYFRAME_SEEK_MARGIN),
+            (None, _) => (p.start_segment * p.segment_secs).to_string(),
         };
         if matches!(p.decision.video, VideoAction::Copy) {
             // do not trim decoded audio up to the (margin-shifted) seek time: audio must start
@@ -299,6 +346,11 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
             }
             let enc = p.hwaccel.video_encoder(codec);
             push(&["-c:v", enc]);
+            if enc.starts_with("hevc") {
+                // same sample entry as copied HEVC: hls.js only switches between variants whose
+                // codec fourCC matches (#111)
+                push(&["-tag:v", "hvc1"]);
+            }
             // fixed-function encoder when it passed the startup probe (#113)
             if p.hwaccel.low_power().for_codec(codec) {
                 push(&["-low_power", "1"]);
@@ -343,13 +395,25 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
                 "-bufsize",
                 &format!("{}k", br * 2),
             ]);
-            push(&[
-                "-force_key_frames",
-                &format!(
-                    "expr:if(isnan(prev_forced_t),gte(t,0),gte(t,prev_forced_t+{}))",
-                    p.segment_secs
-                ),
-            ]);
+            if aligned.is_some() {
+                push(&["-g", &ALIGNED_GOP.to_string()]);
+            }
+            // the list is absolute (source timestamps, also after `-ss` with `-copyts`), so every
+            // run and every variant lands on the same frames; an expression's `t` counts from the
+            // run's first frame instead
+            match aligned {
+                Some(pl) => {
+                    // empty when the run starts on the last segment: its first frame is the IDR
+                    let list = forced_keyframe_list(pl, p.start_segment);
+                    if !list.is_empty() {
+                        push(&["-force_key_frames", &list]);
+                    }
+                }
+                None => push(&[
+                    "-force_key_frames",
+                    &RELATIVE_GRID.replace("{}", &p.segment_secs.to_string()),
+                ]),
+            }
         }
         _ => {}
     }
@@ -377,6 +441,10 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
     // ---- HLS fMP4 output ----
     let dir = p.out_dir;
     let (hls_time, pattern, start_number) = match plan {
+        // cut at every (forced) keyframe: one file per plan segment
+        // (the muxer's own `hls_time` grid counts from the run's first frame, which an accurate
+        // seek puts up to a frame after the boundary: it would skip absolute keyframes)
+        Some(_) if aligned.is_some() => ("0.001".to_string(), SEGMENT_PATTERN, p.start_segment),
         // cut at every keyframe; the session concatenates GOP files per plan segment
         Some(pl) => (
             "0.001".to_string(),
@@ -643,13 +711,13 @@ mod tests {
         let d = dec(enc_codec("hevc"), aac());
         let got = s(build_args(&params(&d, &vaapi_lp(true, true), 0)));
         assert!(
-            got.contains("-c:v hevc_vaapi -low_power 1 -rc_mode VBR -b:v 4000k"),
+            got.contains("-c:v hevc_vaapi -tag:v hvc1 -low_power 1 -rc_mode VBR -b:v 4000k"),
             "{got}"
         );
         assert!(!got.contains("-profile:v high"), "{got}");
         let got = s(build_args(&params(&d, &vaapi_lp(true, false), 0)));
         assert!(
-            got.contains("-c:v hevc_vaapi -rc_mode VBR -b:v 4000k"),
+            got.contains("-c:v hevc_vaapi -tag:v hvc1 -rc_mode VBR -b:v 4000k"),
             "{got}"
         );
         // no HEVC in software: H.264 with its profile
@@ -767,6 +835,127 @@ mod tests {
         ));
         assert!(!got0.contains("-ss "));
         assert!(got0.contains("-start_number 0 "));
+    }
+
+    fn irregular_plan() -> crate::plan::SegmentPlan {
+        // the #111 prototype source: keyframes where the source put them
+        let kfs = [0.0, 3.208, 7.917, 12.5, 16.125, 21.0, 25.333, 28.625];
+        crate::plan::SegmentPlan::from_keyframes(&kfs, 30.0, 4)
+    }
+
+    #[test]
+    fn aligned_rung_forces_keyframes_at_plan_starts_only() {
+        let plan = irregular_plan();
+        assert_eq!(
+            (0..plan.len()).map(|i| plan.start(i)).collect::<Vec<_>>(),
+            vec![0.0, 7.917, 12.5, 21.0, 25.333]
+        );
+        let d = dec(enc(false), aac());
+        let got = s(build_args_with_plan(
+            &params(&d, &HwAccel::Software, 0),
+            &plan,
+        ));
+        assert!(!got.contains("-ss "), "{got}");
+        assert!(
+            got.contains("-g 100000 -force_key_frames 7.916,12.499,20.999,25.332 "),
+            "{got}"
+        );
+        assert!(got.contains("-hls_time 0.001"), "{got}");
+        assert!(
+            got.contains("-hls_segment_filename /tmp/o/seg_%05d.m4s"),
+            "{got}"
+        );
+        assert!(got.contains("-start_number 0 /tmp/o/ffmpeg.m3u8"), "{got}");
+        assert!(!got.contains("gop_"), "{got}");
+    }
+
+    #[test]
+    fn aligned_rung_restart_passes_only_future_times_and_seeks_exactly() {
+        let plan = irregular_plan();
+        let d = dec(enc(false), aac());
+        let got = s(build_args_with_plan(
+            &params(&d, &HwAccel::Software, 2),
+            &plan,
+        ));
+        // accurate seek to the boundary itself (no keyframe margin for encodes)
+        assert!(got.contains("-ss 12.500 -copyts"), "{got}");
+        // a past time (or the restart boundary itself) would force an extra 1-frame segment
+        assert!(got.contains("-force_key_frames 20.999,25.332 "), "{got}");
+        assert!(got.contains("-start_number 2 /tmp/o/ffmpeg.m3u8"), "{got}");
+    }
+
+    #[test]
+    fn copy_on_a_plan_is_unchanged_by_alignment() {
+        let plan = irregular_plan();
+        let d = dec(VideoAction::Copy, aac());
+        let got = s(build_args_with_plan(
+            &params(&d, &HwAccel::Software, 2),
+            &plan,
+        ));
+        assert!(got.contains("-noaccurate_seek -ss 12.750"), "{got}");
+        assert!(
+            !got.contains("-force_key_frames") && !got.contains("-g "),
+            "{got}"
+        );
+        assert!(got.contains("gop_%05d.m4s"), "{got}");
+    }
+
+    #[test]
+    fn fixed_plan_encode_uses_the_absolute_list_and_cuts_at_each_keyframe() {
+        let plan = crate::plan::SegmentPlan::fixed(130.0, 4);
+        let d = dec(enc(false), aac());
+        let got = s(build_args_with_plan(
+            &params(&d, &HwAccel::Software, 25),
+            &plan,
+        ));
+        assert!(got.contains("-ss 100.000 -copyts"), "{got}");
+        assert!(
+            got.contains(
+                "-force_key_frames 103.999,107.999,111.999,115.999,119.999,123.999,127.999 "
+            ),
+            "{got}"
+        );
+        assert!(!got.contains("prev_forced_t"), "{got}");
+        assert!(
+            got.contains("-g 100000 ")
+                && got.contains("-hls_time 0.001 ")
+                && got.contains("seg_%05d.m4s"),
+            "{got}"
+        );
+        assert!(got.contains("-start_number 25 "), "{got}");
+    }
+
+    #[test]
+    fn restart_on_the_last_segment_forces_nothing() {
+        let plan = irregular_plan();
+        let d = dec(enc(false), aac());
+        let got = s(build_args_with_plan(
+            &params(&d, &HwAccel::Software, plan.len() - 1),
+            &plan,
+        ));
+        assert!(!got.contains("-force_key_frames"), "{got}");
+        assert!(got.contains("-g 100000 "), "{got}");
+    }
+
+    #[test]
+    fn forced_list_is_capped() {
+        // ~12 h of 4 s segments would exceed one argv string
+        let plan = crate::plan::SegmentPlan::fixed(12.0 * 3600.0, 4);
+        let l = forced_keyframe_list(&plan, 0);
+        assert!(l.len() <= MAX_FORCED_LIST_BYTES);
+        assert!(l.starts_with("3.999,7.999,11.999,"), "{}", &l[..40]);
+        assert!(!l.ends_with(','));
+        assert!(l.split(',').count() < plan.len() as usize);
+    }
+
+    #[test]
+    fn hevc_encode_tagged_hvc1_like_copy() {
+        let d = dec(enc_codec("hevc"), aac());
+        let got = s(build_args(&params(&d, &vaapi_lp(false, false), 0)));
+        assert!(got.contains("-c:v hevc_vaapi -tag:v hvc1 "), "{got}");
+        let d = dec(enc(false), aac());
+        let got = s(build_args(&params(&d, &vaapi_lp(false, false), 0)));
+        assert!(!got.contains("hvc1"), "{got}");
     }
 
     #[test]

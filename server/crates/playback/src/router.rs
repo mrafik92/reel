@@ -5,7 +5,7 @@
 //! checks in front if desired.
 
 use crate::error::PlaybackError;
-use crate::session::{SessionManager, VARIANT};
+use crate::session::SessionManager;
 use axum::{
     Router,
     extract::{Path, State},
@@ -53,11 +53,8 @@ async fn variant_file(
     State(m): State<Arc<SessionManager>>,
     Path((sid, variant, file)): Path<(String, String, String)>,
 ) -> Result<Response, PlaybackError> {
-    if variant != VARIANT {
-        return Err(PlaybackError::SessionNotFound);
-    }
     if file == "index.m3u8" {
-        let body = m.media_playlist_async(&sid).await?;
+        let body = m.variant_playlist(&sid, &variant).await?;
         return Ok((
             [
                 (header::CONTENT_TYPE, M3U8),
@@ -67,7 +64,7 @@ async fn variant_file(
         )
             .into_response());
     }
-    let path = m.segment_path(&sid, &file).await?;
+    let path = m.variant_segment_path(&sid, &variant, &file).await?;
     let bytes = tokio::fs::read(path).await?;
     Ok((
         [
