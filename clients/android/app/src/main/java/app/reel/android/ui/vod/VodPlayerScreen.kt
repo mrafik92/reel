@@ -23,6 +23,7 @@ import app.reel.android.data.VodSeriesDetail
 import app.reel.android.player.VodPlayer
 import app.reel.android.ui.common.ErrorView
 import app.reel.android.ui.theme.ReelColors
+import kotlinx.coroutines.flow.first
 
 /** What the player shows for an IPTV title (a stand-in item: no library ids). */
 private data class VodTarget(val item: ItemDetail, val heading: String?, val runtimeS: Long?)
@@ -38,9 +39,11 @@ fun VodPlayerScreen(kind: String, id: Long, seriesId: Long?, startS: Double) {
     var target by remember { mutableStateOf<Result<VodTarget>?>(null) }
     var deviceId by remember { mutableStateOf<String?>(null) }
     var me by remember { mutableStateOf<app.reel.android.data.Me?>(null) }
+    var quality by remember { mutableStateOf("auto") }
     var attempt by remember { mutableIntStateOf(0) }
     LaunchedEffect(attempt) {
         me = (graph.session.state.value as? AuthState.SignedIn)?.user
+        quality = runCatching { graph.devicePrefs.quality.first() }.getOrNull() ?: "auto"
         deviceId = runCatching { graph.session.deviceId() }.getOrNull() ?: ""
         target = runCatching {
             if (kind == "movie") {
@@ -85,6 +88,7 @@ fun VodPlayerScreen(kind: String, id: Long, seriesId: Long?, startS: Double) {
                     startS = startS,
                     nextEnabled = false,
                     heading = v.heading,
+                    initialQuality = quality,
                 )
             }
         }

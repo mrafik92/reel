@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
+import app.reel.android.data.DevicePrefs
 import app.reel.android.data.SessionManager
 import app.reel.android.data.SessionStore
 import java.util.concurrent.TimeUnit
@@ -27,6 +28,9 @@ class AppGraph(context: Context) {
         .build()
 
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
+
+    /** Per-device settings (playback quality); the player reads them (#190). */
+    val devicePrefs = DevicePrefs(PreferenceDataStoreFactory.create { context.preferencesDataStoreFile("device_prefs") })
 
     val session = SessionManager(
         store = SessionStore(PreferenceDataStoreFactory.create { context.preferencesDataStoreFile("session") }),

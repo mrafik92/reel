@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,6 +26,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import app.reel.android.DeviceKind
 import app.reel.android.LocalAppGraph
 import app.reel.android.LocalDeviceKind
@@ -51,7 +54,17 @@ class LoadHandle<T> internal constructor() {
         internal set
     internal var attempt by mutableIntStateOf(0)
 
+    /** The next run keeps showing the current value (no spinner) and keeps it if it fails. */
+    internal var silent = false
+
     fun retry() {
+        attempt++
+    }
+
+    /** Reload in the background (e.g. when the app comes back to the front). No-op until loaded once. */
+    fun refresh() {
+        if (state !is Load.Ready) return
+        silent = true
         attempt++
     }
 }
@@ -71,16 +84,31 @@ fun <T> rememberLoad(vararg keys: Any?, block: suspend ReelApi.() -> T): LoadHan
     val handle = remember(*keys) { LoadHandle<T>() }
     LaunchedEffect(handle, handle.attempt, api) {
         if (api == null) return@LaunchedEffect
-        handle.state = Load.Loading
-        handle.state = try {
-            Load.Ready(api.block())
+        val silent = handle.silent && handle.state is Load.Ready
+        handle.silent = false
+        if (!silent) handle.state = Load.Loading
+        try {
+            handle.state = Load.Ready(api.block())
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Load.Failed(e)
+            if (!silent) handle.state = Load.Failed(e)
         }
     }
     return handle
+}
+
+/**
+ * Calls [action] each time the screen comes back to the front (app resumed, or Back to this
+ * screen), not on the first show. Pair with [LoadHandle.refresh].
+ */
+@Composable
+fun OnResume(action: () -> Unit) {
+    val current by rememberUpdatedState(action)
+    var first by remember { mutableStateOf(true) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (first) first = false else current()
+    }
 }
 
 /** Renders [handle]: a spinner, an error with *Try again*, [emptyText], or [content]. */
