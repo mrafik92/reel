@@ -15,9 +15,9 @@ class MainActivity : ComponentActivity() {
         val kind = DeviceKind.of(this)
         val graph = (application as ReelApplication).graph
         setContent {
-            CompositionLocalProvider(LocalAppGraph provides graph) {
+            CompositionLocalProvider(LocalAppGraph provides graph, LocalDeviceKind provides kind) {
                 ReelTheme(kind) {
-                    ReelRoot(kind)
+                    ReelRoot()
                 }
             }
         }

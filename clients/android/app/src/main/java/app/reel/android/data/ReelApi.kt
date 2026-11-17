@@ -6,8 +6,10 @@ import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.SerializationStrategy
@@ -81,6 +83,19 @@ class ReelApi(
      * [bodyJson] `null` sends no body. `Unit` responses accept any (or no) body.
      */
     suspend fun <T> request(
+        method: String,
+        path: String,
+        query: Map<String, Any?>,
+        bodyJson: String?,
+        result: DeserializationStrategy<T>,
+        auth: Boolean,
+    ): T = withContext(Dispatchers.IO) {
+        // Off the caller's thread: screens call from Main, and reading a body there throws
+        // NetworkOnMainThreadException once it isn't already buffered.
+        requestBlocking(method, path, query, bodyJson, result, auth)
+    }
+
+    private suspend fun <T> requestBlocking(
         method: String,
         path: String,
         query: Map<String, Any?>,

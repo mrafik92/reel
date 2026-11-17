@@ -168,8 +168,30 @@ app/src/main/java/app/reel/android/
     SessionManager.kt   AuthState (server → sign-in → signed in), connect / signIn / signOut, `api`
   ui/theme/Theme.kt     palette and type scale (tokens from packages/ui/src/styles/ui.css)
   ui/ReelRoot.kt        one screen per AuthState
-  ui/auth/              server address and sign-in screens; a signed-in placeholder until the shell (#187)
+  ui/auth/              server address and sign-in screens
+  ui/shell/
+    AppShell.kt         TV nav rail / phone bottom bar around the NavHost; Back behaviour
+    Destinations.kt     TopLevel tabs (Live TV only with IPTV access), Routes, LocalNavController
+    ReelNavGraph.kt     the destination registry: every screen is registered here
+  ui/tv/Focus.kt        D-pad focus kit: FocusCard, FocusMemory + Modifier.focusMemory + RestoreFocus
+  ui/common/            PosterCard / LandscapeCard, ReelImage (Coil), rememberLoad + Loadable
+                        (loading / error with Try again / empty)
+  ui/home/              Home rows (#188 grows it)
+  ui/stubs/             placeholders for Search, Live TV, Library, item detail, Settings
 ```
+
+### Adding a screen
+
+1. Write it in its own package (`ui/search/SearchScreen.kt`) and replace its placeholder (or add a route to
+   `Routes` + a `composable(...)`) in `ui/shell/ReelNavGraph.kt`.
+2. Load data with `val x = rememberLoad { get<Foo>("/foo") }` and render with `Loadable(x) { ... }`.
+3. Make every focusable element a `FocusCard` (or `PosterCard` / `LandscapeCard`), tag it with
+   `Modifier.focusMemory(memory, "<stable key>")`, and call `RestoreFocus(memory, ready = …)` once per screen.
+   Rows: `LazyRow(state = rememberLazyListState())` inside keyed lazy items keeps their scroll on Back.
+4. Navigate with `LocalNavController.current.navigate(Routes.item(id))`.
+
+Tests: `testDebugUnitTest` also runs Compose UI tests under Robolectric (`ui/FocusKitTest`). The first run
+downloads Robolectric's Android runtime (~200 MB, then cached in `~/.m2`).
 
 Screens call the API through `LocalAppGraph.current.session.api` (`api.get<Home>("/home")`). A 401 there
 signs out and shows the sign-in screen by itself. Show `ReelError.userMessage` for failures.
