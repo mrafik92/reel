@@ -20,8 +20,11 @@ sealed class ReelError(message: String, cause: Throwable? = null) : Exception(me
      */
     class Unauthorized(message: String = "Your session has ended. Please sign in again.") : ReelError(message)
 
-    /** 429: locked out (login backoff) or a limit was hit. [retryAfterS] comes from `Retry-After`. */
-    class RateLimited(message: String, val retryAfterS: Long?) : ReelError(message)
+    /**
+     * 429: locked out (login backoff) or a limit was hit. [retryAfterS] comes from `Retry-After`;
+     * [body] is the raw error JSON (IPTV "busy" answers name who holds the provider).
+     */
+    class RateLimited(message: String, val retryAfterS: Long?, val body: String? = null) : ReelError(message)
 
     /** Any other non-2xx answer. [body] is the raw error JSON (some carry extra fields, e.g. `takeover`). */
     class Http(val status: Int, message: String, val body: String? = null) : ReelError(message)

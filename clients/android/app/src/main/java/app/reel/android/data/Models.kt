@@ -50,6 +50,9 @@ data class Me(
 ) {
     val isAdmin get() = role == "admin"
     val canWatchLive get() = isAdmin || permissions.iptvAccess
+
+    /** IPTV movies and series (#193). */
+    val canWatchVod get() = isAdmin || permissions.vodAccess
 }
 
 /** Error responses: `{"error": "..."}` (some carry extra fields, e.g. `takeover`). */

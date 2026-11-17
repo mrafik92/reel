@@ -198,6 +198,12 @@ app/src/main/java/app/reel/android/
     PlayerScreen.kt     the Routes.PLAYER screen (rail / bar hidden), Compose controls, menus, up next
     PlayerControls.kt   seek bar, pills, mode badge, menu sheet
     PlayerKeys.kt       remote / media key mapping
+  ui/vod/               IPTV movies & series (#193), only for users with VOD access
+    VodRoutes.kt        routes + vodGraph (registered from ReelNavGraph); entered from the Library tab
+    VodScreens.kt       browse (lanes), paged grid, movie and series pages
+    VodPlayerScreen.kt  `/vod/play` in the VOD player (a stand-in item, no next episode)
+    VodSource.kt        PlaySource for /vod/play + busy / takeover wording (port of web vod/busy.ts)
+  data/VodModels.kt     IPTV VOD wire models
 ```
 
 The shell hides the rail / bar on `Routes.PLAYER` (`Routes.isFullScreen`).

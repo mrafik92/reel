@@ -1,5 +1,10 @@
 package app.reel.android.ui.library
 
+import app.reel.android.ui.vod.VodRoutes
+import app.reel.android.data.AuthState
+import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.outlined.LiveTv
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -64,20 +69,35 @@ import kotlinx.coroutines.flow.distinctUntilChanged
  */
 @Composable
 fun LibraryScreen(initialLibrary: Long? = null) {
-    val api = LocalAppGraph.current.session.api ?: return
+    val session = LocalAppGraph.current.session
+    val api = session.api ?: return
+    // IPTV movies & series (#193) are entered from here, for users with VOD access.
+    val auth by session.state.collectAsState()
+    val nav = LocalNavController.current
+    val onIptv: (() -> Unit)? = if ((auth as? AuthState.SignedIn)?.user?.canWatchVod == true) {
+        { nav.navigate(VodRoutes.browse()) }
+    } else {
+        null
+    }
     val vm: LibraryViewModel = viewModel(key = "library-${initialLibrary ?: "tab"}") { LibraryViewModel(api, initialLibrary) }
     val libs by vm.libraries.collectAsState()
     when (val l = libs) {
         Load.Loading -> LoadingView()
         is Load.Failed -> ErrorView(l.message, onRetry = vm::loadLibraries)
         is Load.Ready -> if (l.value.isEmpty()) {
-            EmptyView("No libraries yet. Add one in Reel on the web.")
+            if (onIptv != null) {
+                Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text("No libraries yet. Add one in Reel on the web.", color = ReelColors.Ink2)
+                    Pill("IPTV movies & series", onClick = onIptv, icon = Icons.Outlined.LiveTv, modifier = Modifier.testTag("open-vod"))
+                }
+            } else {
+                EmptyView("No libraries yet. Add one in Reel on the web.")
+            }
         } else {
             val selected by vm.selected.collectAsState()
             val query by vm.query.collectAsState()
             val genres by vm.genres.collectAsState()
             val paged by vm.pager.state.collectAsState()
-            val nav = LocalNavController.current
             LibraryContent(
                 libraries = l.value,
                 selected = selected,
@@ -89,6 +109,7 @@ fun LibraryScreen(initialLibrary: Long? = null) {
                 onLoadMore = vm.pager::loadMore,
                 onRetry = vm.pager::retry,
                 onOpen = { nav.navigate(Routes.item(it.id)) },
+                onIptv = onIptv,
             )
         }
     }
@@ -111,6 +132,8 @@ fun LibraryContent(
     onRetry: () -> Unit,
     onOpen: (ItemSummary) -> Unit,
     grid: LazyGridState = rememberLazyGridState(),
+    /** Shown as an *IPTV* pill at the end of the filters (users with VOD access, #193). */
+    onIptv: (() -> Unit)? = null,
 ) {
     val tv = LocalDeviceKind.current == DeviceKind.Tv
     val edge = if (tv) 48.dp else 16.dp
@@ -134,7 +157,7 @@ fun LibraryContent(
     }
 
     Column(Modifier.fillMaxSize().testTag("library")) {
-        FilterBar(libraries, selected, query, genres, memory, edge, onSelect, onQuery) { dialog = it }
+        FilterBar(libraries, selected, query, genres, memory, edge, onSelect, onQuery, onIptv) { dialog = it }
         // Until the first items arrive, show the state on its own: a grid holding only the keyed
         // footer would anchor its scroll position on it and jump to the end when the page lands.
         if (paged.items.isEmpty()) {
@@ -202,6 +225,7 @@ private fun FilterBar(
     edge: androidx.compose.ui.unit.Dp,
     onSelect: (Long) -> Unit,
     onQuery: (LibraryQuery) -> Unit,
+    onIptv: (() -> Unit)?,
     openDialog: (String) -> Unit,
 ) {
     // One row: libraries first (when there's more than one), then the filters. It scrolls sideways
@@ -249,6 +273,11 @@ private fun FilterBar(
                 onClick = { onQuery(query.copy(unwatched = !query.unwatched)) },
                 modifier = Modifier.focusMemory(memory, "unwatched").testTag("unwatched"),
             )
+        }
+        if (onIptv != null) {
+            item(key = "iptv") {
+                Pill("IPTV", icon = Icons.Outlined.LiveTv, onClick = onIptv, modifier = Modifier.focusMemory(memory, "iptv").testTag("open-vod"))
+            }
         }
     }
 }

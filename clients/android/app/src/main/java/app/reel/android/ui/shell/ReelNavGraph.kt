@@ -6,6 +6,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import app.reel.android.data.Me
 import app.reel.android.player.PlayerScreen
+import app.reel.android.ui.vod.vodGraph
 import app.reel.android.ui.home.HomeScreen
 import app.reel.android.ui.item.ItemScreen
 import app.reel.android.ui.library.LibraryScreen
@@ -42,4 +43,6 @@ fun NavGraphBuilder.reelGraph(user: Me) {
         val a = PlayerArgs.from(entry.arguments)
         PlayerScreen(fileId = a.fileId, itemId = a.itemId, startS = a.startS)
     }
+    // IPTV movies and series (#193), for users with VOD access; entered from the Library tab.
+    vodGraph(user)
 }

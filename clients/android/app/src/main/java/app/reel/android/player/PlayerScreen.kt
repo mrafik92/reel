@@ -146,6 +146,8 @@ fun VodPlayer(
     durationS: Double?,
     startS: Double,
     nextEnabled: Boolean = true,
+    /** The top line (a show's title) when [item] is a stand-in without a library parent. */
+    heading: String? = null,
     /** The device's default quality (`AppGraph.devicePrefs`). */
     initialQuality: String = "auto",
 ) {
@@ -362,7 +364,7 @@ fun VodPlayer(
             )
         }
 
-        val title = item?.let { i -> if (i.kind == "episode") series ?: i.title else i.title }.orEmpty()
+        val title = heading ?: item?.let { i -> if (i.kind == "episode") series ?: i.title else i.title }.orEmpty()
         val subtitle = item?.takeIf { it.kind == "episode" }?.let { i ->
             listOf(episodeCode(i.seasonNo, i.episodeNo), i.title).filter { it.isNotEmpty() }.joinToString(" · ")
         }

@@ -152,6 +152,7 @@ class ReelApi(
                 res.code == 429 -> throw ReelError.RateLimited(
                     msg ?: ReelError.friendly(429),
                     res.header("Retry-After")?.trim()?.toLongOrNull()?.takeIf { it > 0 },
+                    text.ifEmpty { null },
                 )
                 else -> throw ReelError.Http(res.code, msg ?: ReelError.friendly(res.code), text.ifEmpty { null })
             }

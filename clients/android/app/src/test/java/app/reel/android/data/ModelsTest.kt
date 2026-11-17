@@ -52,6 +52,15 @@ class ModelsTest {
         SearchAll.serializer() to "SearchAll",
         PlaybackPrefs.serializer() to "PlaybackPrefs",
         SessionInfo.serializer() to "SessionDto",
+        VodCard.serializer() to "VodCard",
+        VodSeeAll.serializer() to "VodSeeAll",
+        VodLane.serializer() to "VodLane",
+        VodPage.serializer() to "VodPage",
+        VodMovieDetail.serializer() to "VodMovieDetail",
+        VodEpisode.serializer() to "VodEpisode",
+        VodSeason.serializer() to "VodSeason",
+        VodSeriesDetail.serializer() to "VodSeriesDetail",
+        VodPlayRequest.serializer() to "VodPlayRequest",
     )
 
     private val openapi: JsonObject by lazy {
