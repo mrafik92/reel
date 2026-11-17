@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -44,7 +43,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import app.reel.android.LocalAppGraph
 import app.reel.android.R
-import app.reel.android.data.Me
 import app.reel.android.data.ReelError
 import app.reel.android.data.ServerAddress
 import app.reel.android.ui.theme.ReelColors
@@ -203,21 +201,5 @@ fun SignInScreen(server: ServerAddress, notice: String?) {
         ErrorText(error)
         SubmitButton("Sign in", busy, ::submit)
         TextButton(onClick = { session.changeServer() }) { Text("Change server") }
-    }
-}
-
-/** Signed in. The app shell (#187) replaces this with Home and the navigation. */
-@Composable
-fun SignedInPlaceholder(user: Me) {
-    val session = LocalAppGraph.current.session
-    val scope = rememberCoroutineScope()
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focus.requestFocus() }
-    AuthScaffold("Signed in as ${user.username}", session.api?.server?.origin) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = { scope.launch { session.signOut() } }, modifier = Modifier.focusRequester(focus)) {
-                Text("Sign out")
-            }
-        }
     }
 }

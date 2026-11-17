@@ -23,3 +23,6 @@ enum class DeviceKind {
         }
     }
 }
+
+/** The device kind for the whole UI; provided once in [MainActivity]. */
+val LocalDeviceKind = androidx.compose.runtime.staticCompositionLocalOf { DeviceKind.Phone }

@@ -67,6 +67,8 @@ android {
         abortOnError = true
     }
     testOptions {
+        // Compose UI tests (focus kit) run on the JVM under Robolectric; CI has no emulator.
+        unitTests.isIncludeAndroidResources = true
         unitTests.all {
             // The model drift test reads the server's OpenAPI document (#186).
             it.systemProperty("reel.openapi", rootProject.file("../../server/openapi.json").absolutePath)
@@ -75,18 +77,22 @@ android {
 }
 
 dependencies {
-    // The catalog also pins navigation + Coil (#187) and Media3 (#190); they're added with those tickets.
+    // The catalog also pins Media3 (#190); it's added with the player.
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.coil.compose)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
+    implementation(libs.compose.material.icons)
     debugImplementation(libs.compose.ui.tooling)
+    debugImplementation(libs.compose.ui.test.manifest)
 
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
@@ -95,4 +101,7 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
 }
