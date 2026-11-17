@@ -39,6 +39,8 @@ class ModelsTest {
         SubtitleOption.serializer() to "SubtitleOption",
         Selected.serializer() to "Selected",
         DecideResponse.serializer() to "DecideResponse",
+        PlaybackDecision.serializer() to "PlaybackDecision",
+        QualityOption.serializer() to "QualityOption",
         ProgressRequest.serializer() to "ProgressRequest",
         IptvChannel.serializer() to "IptvChannel",
         Program.serializer() to "Program",

@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -71,21 +72,24 @@ fun AppShell(user: Me) {
     val entry by nav.currentBackStackEntryAsState()
     val current = tabs.firstOrNull { tab -> entry?.destination?.hierarchy?.any { it.route == tab.route } == true }
     val go: (TopLevel) -> Unit = { tab -> nav.navigateTopLevel(tab) }
+    // The player takes the whole screen. The rail / bar are left out (not the layout swapped), so
+    // the NavHost keeps its place in the tree and its screens' state.
+    val fullScreen = Routes.isFullScreen(entry?.destination?.route)
 
     val server = LocalAppGraph.current.session.api?.server
     CompositionLocalProvider(LocalNavController provides nav, LocalServerAddress provides server) {
         if (LocalDeviceKind.current == DeviceKind.Tv) {
             // The rail sits over the content: icons only, widening with labels while it has focus.
             Box(Modifier.fillMaxSize().background(ReelColors.Bg)) {
-                Box(Modifier.padding(start = RAIL_COLLAPSED).fillMaxSize()) { ReelNavHost(nav, user) }
-                TvRail(tabs, current, go)
+                Box(Modifier.padding(start = if (fullScreen) 0.dp else RAIL_COLLAPSED).fillMaxSize()) { ReelNavHost(nav, user) }
+                if (!fullScreen) TvRail(tabs, current, go)
             }
         } else {
             Scaffold(
                 containerColor = ReelColors.Bg,
-                bottomBar = { PhoneBar(tabs, current, go) },
+                bottomBar = { if (!fullScreen) PhoneBar(tabs, current, go) },
             ) { padding ->
-                Box(Modifier.padding(padding).fillMaxSize()) { ReelNavHost(nav, user) }
+                Box(Modifier.padding(if (fullScreen) PaddingValues(0.dp) else padding).fillMaxSize()) { ReelNavHost(nav, user) }
             }
         }
     }

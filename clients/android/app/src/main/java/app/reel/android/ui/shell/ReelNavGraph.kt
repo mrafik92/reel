@@ -5,13 +5,13 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import app.reel.android.data.Me
+import app.reel.android.player.PlayerScreen
 import app.reel.android.ui.home.HomeScreen
 import app.reel.android.ui.item.ItemScreen
 import app.reel.android.ui.library.LibraryScreen
 import app.reel.android.ui.search.SearchScreen
 import app.reel.android.ui.settings.SettingsScreen
 import app.reel.android.ui.stubs.LivePlaceholder
-import app.reel.android.ui.stubs.PlayerPlaceholder
 
 /**
  * The destination registry: every screen of the app is registered here. Screen tickets replace a
@@ -39,7 +39,7 @@ fun NavGraphBuilder.reelGraph(user: Me) {
             navArgument("startS") { type = NavType.StringType },
         ),
     ) { entry ->
-        // #190 replaces the placeholder with the player screen; the arguments stay as they are.
-        PlayerPlaceholder(PlayerArgs.from(entry.arguments))
+        val a = PlayerArgs.from(entry.arguments)
+        PlayerScreen(fileId = a.fileId, itemId = a.itemId, startS = a.startS)
     }
 }

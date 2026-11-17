@@ -189,8 +189,18 @@ app/src/main/java/app/reel/android/
                         through RecognizerIntent when the device has a recognizer
   ui/settings/          Settings: SettingsViewModel (prefs saved on each change, devices, server
                         version) + SettingsLogic (languages, modes, last seen)
-  ui/stubs/             placeholders for Live TV and the player (#190)
+  ui/stubs/             placeholder for Live TV
+  player/               the player (#190)
+    ReelPlayer.kt       ExoPlayer + OkHttp (no token) behind PlayerPort; Live TV reuses it
+    PlayerPort.kt       what controllers need from a player: load, tracks, events (tests use a fake)
+    VodController.kt    VOD session state machine: decide, resume, progress, 404 / error re-decide, tracks
+    PlaySource.kt       where sessions come from: LibrarySource (decide); IPTV VOD adds its own
+    PlayerScreen.kt     the Routes.PLAYER screen (rail / bar hidden), Compose controls, menus, up next
+    PlayerControls.kt   seek bar, pills, mode badge, menu sheet
+    PlayerKeys.kt       remote / media key mapping
 ```
+
+The shell hides the rail / bar on `Routes.PLAYER` (`Routes.isFullScreen`).
 
 ### Adding a screen
 

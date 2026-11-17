@@ -26,6 +26,8 @@ object ReelColors {
 
     /** Good news: ratings, *Direct play*. */
     val Ok = Color(0xFF7FD4A0)
+    /** Caution: *Transcode*. */
+    val Warn = Color(0xFFFFD23F)
 }
 
 private val scheme = darkColorScheme(

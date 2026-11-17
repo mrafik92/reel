@@ -49,6 +49,9 @@ object Routes {
     const val PLAYER = "player/{fileId}/{itemId}/{startS}"
 
     fun player(fileId: Long, itemId: Long, startS: Double) = "player/$fileId/$itemId/$startS"
+
+    /** Routes that take the whole screen (no rail or bottom bar). */
+    fun isFullScreen(route: String?) = route == PLAYER
 }
 
 /** The [Routes.PLAYER] arguments: `Player(fileId: Long, itemId: Long, startS: Double)`. */
