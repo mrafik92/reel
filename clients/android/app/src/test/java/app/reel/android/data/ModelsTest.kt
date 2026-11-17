@@ -47,6 +47,11 @@ class ModelsTest {
         NowNext.serializer() to "NowNext",
         TuneBody.serializer() to "TuneBody",
         TuneResponse.serializer() to "TuneResponse",
+        GenreCount.serializer() to "GenreCount",
+        PersonHit.serializer() to "PersonHit",
+        SearchAll.serializer() to "SearchAll",
+        PlaybackPrefs.serializer() to "PlaybackPrefs",
+        SessionInfo.serializer() to "SessionDto",
     )
 
     private val openapi: JsonObject by lazy {

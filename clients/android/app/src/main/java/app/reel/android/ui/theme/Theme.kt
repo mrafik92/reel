@@ -23,8 +23,10 @@ object ReelColors {
     val AccentHi = Color(0xFFF26352)
     val AccentInk = Color(0xFFFFF6EA)
     val AccentWash = Color(0xFF2A1513)
-    /** Status: good (direct play) / caution (transcode). */
+
+    /** Good news: ratings, *Direct play*. */
     val Ok = Color(0xFF7FD4A0)
+    /** Caution: *Transcode*. */
     val Warn = Color(0xFFFFD23F)
 }
 

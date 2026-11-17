@@ -166,6 +166,8 @@ app/src/main/java/app/reel/android/
     ReelError.kt        Offline · Timeout · Unreachable · Unauthorized · RateLimited · Http · BadResponse
     SessionStore.kt     DataStore: server, token, cached user, per-install device id
     SessionManager.kt   AuthState (server → sign-in → signed in), connect / signIn / signOut, `api`
+    DevicePrefs.kt      per-device settings (DataStore `device_prefs`): playback quality
+    Account.kt          /me/preferences (GET/PUT), /me/sessions (list, sign one out)
   ui/theme/Theme.kt     palette and type scale (tokens from packages/ui/src/styles/ui.css)
   ui/ReelRoot.kt        one screen per AuthState
   ui/auth/              server address and sign-in screens
@@ -173,23 +175,32 @@ app/src/main/java/app/reel/android/
     AppShell.kt         TV nav rail / phone bottom bar around the NavHost; Back behaviour
     Destinations.kt     TopLevel tabs (Live TV only with IPTV access), Routes, LocalNavController
     ReelNavGraph.kt     the destination registry: every screen is registered here
-  ui/tv/Focus.kt        D-pad focus kit: FocusCard, FocusMemory + Modifier.focusMemory + RestoreFocus
-  ui/common/            PosterCard / LandscapeCard, ReelImage (Coil), rememberLoad + Loadable
-                        (loading / error with Try again / empty)
-  ui/home/              Home rows (#188 grows it)
-  ui/stubs/             placeholders for Search, Live TV, Library, item detail (has Play / Resume), Settings
+  ui/tv/Focus.kt        D-pad focus kit: FocusCard, FocusMemory + Modifier.focusMemory + RestoreFocus,
+                        KeepInView (scroll only as far as needed, for detail pages)
+  ui/common/            PosterCard / LandscapeCard, Pill + ChoiceDialog, ReelImage (Coil),
+                        rememberLoad + Loadable (loading / error with Try again / empty) + OnResume
+  data/Browse.kt        home, libraries, library items (LibraryQuery: sort / genre / unwatched),
+                        item, children, genres, played
+  ui/home/              Home: featured title (phone) / focus-following featured area (TV) + rows
+  ui/library/           Library tab: LibraryViewModel + ItemPager (keyset paging), grid + filters
+  ui/item/              item detail (ItemLogic: resume point, next episode, meta, badges),
+                        PlayLauncher (load an item, then open the player route)
+  ui/search/            Search: SearchViewModel (debounced, latest answer wins) + rows; voice
+                        through RecognizerIntent when the device has a recognizer
+  ui/settings/          Settings: SettingsViewModel (prefs saved on each change, devices, server
+                        version) + SettingsLogic (languages, modes, last seen)
+  ui/stubs/             placeholder for Live TV
   player/               the player (#190)
     ReelPlayer.kt       ExoPlayer + OkHttp (no token) behind PlayerPort; Live TV reuses it
     PlayerPort.kt       what controllers need from a player: load, tracks, events (tests use a fake)
     VodController.kt    VOD session state machine: decide, resume, progress, 404 / error re-decide, tracks
     PlaySource.kt       where sessions come from: LibrarySource (decide); IPTV VOD adds its own
-    PlayerScreen.kt     route `player/{fileId}?item=&start=` (Routes.player), Compose controls, menus, up next
+    PlayerScreen.kt     the Routes.PLAYER screen (rail / bar hidden), Compose controls, menus, up next
     PlayerControls.kt   seek bar, pills, mode badge, menu sheet
     PlayerKeys.kt       remote / media key mapping
 ```
 
-Open the player with `nav.navigate(Routes.player(fileId, itemId, resumePositionS(item)))`; the shell hides the
-rail / bar for it.
+The shell hides the rail / bar on `Routes.PLAYER` (`Routes.isFullScreen`).
 
 ### Adding a screen
 
@@ -199,7 +210,12 @@ rail / bar for it.
 3. Make every focusable element a `FocusCard` (or `PosterCard` / `LandscapeCard`), tag it with
    `Modifier.focusMemory(memory, "<stable key>")`, and call `RestoreFocus(memory, ready = …)` once per screen.
    Rows: `LazyRow(state = rememberLazyListState())` inside keyed lazy items keeps their scroll on Back.
-4. Navigate with `LocalNavController.current.navigate(Routes.item(id))`.
+4. Navigate with `LocalNavController.current.navigate(Routes.item(id))`. Playback goes through
+   `Routes.player(fileId, itemId, startS)` (`PlayerArgs` reads it back); `rememberPlayLauncher()`
+   does it for an item known only by id.
+5. State that must survive going into a page and back (a paged grid) lives in a `ViewModel`
+   (`viewModel { ... }` is scoped to the back-stack entry); simple reads use `rememberLoad`, which
+   reloads when the screen is shown again.
 
 Tests: `testDebugUnitTest` also runs Compose UI tests under Robolectric (`ui/FocusKitTest`). The first run
 downloads Robolectric's Android runtime (~200 MB, then cached in `~/.m2`).

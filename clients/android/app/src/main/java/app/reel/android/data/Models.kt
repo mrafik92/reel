@@ -295,3 +295,60 @@ data class TuneResponse(
     @SerialName("channel_id") val channelId: Long,
     @SerialName("channel_name") val channelName: String,
 )
+
+/** `GET /genres?library_id=`: a genre and how many movies/shows carry it. */
+@Serializable
+data class GenreCount(val name: String, val count: Long = 0)
+
+/** A person in `GET /search/all`: library cast/crew merged with TMDB people. */
+@Serializable
+data class PersonHit(
+    @SerialName("tmdb_id") val tmdbId: Long,
+    val name: String,
+    @SerialName("known_for") val knownFor: List<String> = emptyList(),
+    @SerialName("in_library_count") val inLibraryCount: Long = 0,
+    @SerialName("known_for_department") val knownForDepartment: String? = null,
+    @SerialName("photo_url") val photoUrl: String? = null,
+)
+
+/**
+ * `GET /search/all?q=`: movies and shows (title matches, then cast/crew matches), episodes and
+ * people. The server also sends `discover` and `vod`; the app doesn't show those yet.
+ */
+@Serializable
+data class SearchAll(
+    val library: List<ItemSummary> = emptyList(),
+    val episodes: List<ItemSummary> = emptyList(),
+    val people: List<PersonHit> = emptyList(),
+) {
+    val isEmpty get() = library.isEmpty() && episodes.isEmpty() && people.isEmpty()
+}
+
+/**
+ * `GET/PUT /me/preferences`: how Reel picks audio and subtitles at Play, saved to the account (so
+ * the web and every device share them). Quality is per device instead (see [DevicePrefs]).
+ */
+@Serializable
+data class PlaybackPrefs(
+    /** Ordered; `"original"` = the title's original language. */
+    @SerialName("audio_languages") val audioLanguages: List<String> = listOf("original"),
+    @SerialName("subtitle_languages") val subtitleLanguages: List<String> = listOf("en"),
+    /** `off` | `forced_only` | `auto` | `always`. */
+    @SerialName("subtitle_mode") val subtitleMode: String = "auto",
+    @SerialName("prefer_sdh") val preferSdh: Boolean = false,
+    @SerialName("burn_in_image_subs") val burnInImageSubs: Boolean = false,
+)
+
+/** `GET /me/sessions`: a signed-in device. */
+@Serializable
+data class SessionInfo(
+    val id: Long,
+    @SerialName("last_seen") val lastSeen: Long,
+    /** The session making the request (this app). */
+    val current: Boolean = false,
+    val client: String? = null,
+    @SerialName("device_id") val deviceId: String? = null,
+    @SerialName("device_name") val deviceName: String? = null,
+    @SerialName("expires_at") val expiresAt: Long? = null,
+    val ip: String? = null,
+)

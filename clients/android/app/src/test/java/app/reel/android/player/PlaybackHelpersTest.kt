@@ -51,6 +51,7 @@ class PlaybackHelpersTest {
         assertEquals("1:01:01", formatTime(3_661_000))
         assertEquals("0:09", formatTime(9_400))
         assertEquals("S1 E2", episodeCode(1, 2))
-        assertEquals("player/7?item=3&start=12.5", Routes.player(7, 3, 12.5))
+        assertEquals(true, Routes.isFullScreen(Routes.PLAYER))
+        assertEquals(false, Routes.isFullScreen(Routes.ITEM))
     }
 }

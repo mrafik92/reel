@@ -34,16 +34,36 @@ enum class TopLevel(val route: String, val label: String, val icon: ImageVector)
 object Routes {
     const val ITEM = "item/{id}"
 
-    /** The VOD player (#190): full screen, no rail or bottom bar. */
-    const val PLAYER = "player/{fileId}?item={itemId}&start={startS}"
-
     fun item(id: Long) = "item/$id"
 
-    /** Play [fileId] of item [itemId] from [startS] seconds (absolute; see `resumePositionS`). */
-    fun player(fileId: Long, itemId: Long, startS: Double) = "player/$fileId?item=$itemId&start=$startS"
+    /** One library's grid (Home's *See all*); the Library tab itself opens the first library. */
+    const val LIBRARY = "library/{id}"
 
-    /** Routes that take the whole screen. */
+    fun library(id: Long) = "library/$id"
+
+    /**
+     * The VOD player (#190): play [fileId] for [itemId] (progress is credited to it) from
+     * [startS] seconds. The contract between the browse screens (#188) and the player; see
+     * [PlayerArgs].
+     */
+    const val PLAYER = "player/{fileId}/{itemId}/{startS}"
+
+    fun player(fileId: Long, itemId: Long, startS: Double) = "player/$fileId/$itemId/$startS"
+
+    /** Routes that take the whole screen (no rail or bottom bar). */
     fun isFullScreen(route: String?) = route == PLAYER
+}
+
+/** The [Routes.PLAYER] arguments: `Player(fileId: Long, itemId: Long, startS: Double)`. */
+data class PlayerArgs(val fileId: Long, val itemId: Long, val startS: Double) {
+    companion object {
+        /** From a back-stack entry's arguments (`startS` travels as a string: NavType has no Double). */
+        fun from(args: android.os.Bundle?): PlayerArgs = PlayerArgs(
+            fileId = args?.getLong("fileId") ?: 0,
+            itemId = args?.getLong("itemId") ?: 0,
+            startS = args?.getString("startS")?.toDoubleOrNull() ?: 0.0,
+        )
+    }
 }
 
 /** The shell's nav controller; screens navigate with `LocalNavController.current.navigate(Routes.item(id))`. */

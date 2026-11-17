@@ -2,6 +2,7 @@ package app.reel.android.ui.tv
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -35,7 +36,8 @@ import app.reel.android.ui.theme.ReelColors
 /**
  * The D-pad focus kit (#187). Every screen uses these instead of inventing its own focus handling:
  *
- * - [FocusCard]: a clickable surface that scales up with a cream outline when focused.
+ * - [FocusCard]: a clickable surface that scales up (×1.1) with a 3dp cream outline and a shadow
+ *   when focused.
  * - [FocusMemory] + [Modifier.focusMemory] + [RestoreFocus]: on TV, a screen focuses its first
  *   element on entry, and the element it left from when the user comes back (Back from a detail
  *   page). The remembered key survives navigation (it's saveable).
@@ -43,7 +45,7 @@ import app.reel.android.ui.theme.ReelColors
  */
 
 /** Scale of a focused card (TV look; on touch nothing is focused, so phones never see it). */
-const val FOCUS_SCALE = 1.08f
+const val FOCUS_SCALE = 1.1f
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -52,22 +54,50 @@ fun FocusCard(
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(8.dp),
     onLongClick: (() -> Unit)? = null,
+    /** Wide elements (an episode row) scale less, or they'd spill over the screen edge. */
+    focusScale: Float = FOCUS_SCALE,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     val source = remember { MutableInteractionSource() }
     val focused by source.collectIsFocusedAsState()
-    val scale by animateFloatAsState(if (focused) FOCUS_SCALE else 1f, label = "focus-scale")
+    val scale by animateFloatAsState(if (focused) focusScale else 1f, label = "focus-scale")
+    val cardShape = shape
     Box(
         modifier
             .zIndex(if (focused) 1f else 0f)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
+                // A soft drop shadow lifts the focused card off the row.
+                shadowElevation = if (focused) 16.dp.toPx() else 0f
+                this.shape = cardShape
+                clip = false
             }
             .border(if (focused) 3.dp else 0.dp, if (focused) ReelColors.Ink else Color.Transparent, shape)
             .clip(shape)
             .combinedClickable(interactionSource = source, indication = ripple(), onClick = onClick, onLongClick = onLongClick),
     ) { content(focused) }
+}
+
+/** Scale for full-width focusable rows (episode lists, settings rows). */
+const val ROW_FOCUS_SCALE = 1.02f
+
+/**
+ * Scroll only as far as needed to show the focused element. On TV, Compose's default scrolls lazy
+ * lists so focus sits about a third of the way down (good for rows of cards), which pushes a detail
+ * page's title off the top when its Play button takes focus. Provide it with
+ * `CompositionLocalProvider(LocalBringIntoViewSpec provides KeepInView)`.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+val KeepInView: BringIntoViewSpec = object : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        val end = offset + size
+        return when {
+            offset >= 0 && end <= containerSize -> 0f
+            offset < 0 || size > containerSize -> offset
+            else -> end - containerSize
+        }
+    }
 }
 
 /**
@@ -86,9 +116,12 @@ class FocusMemory internal constructor(initial: String?) {
         lastKey = key
     }
 
-    /** Focus the remembered element, else the first tagged one. False if neither is on screen yet. */
-    fun restore(): Boolean {
-        val keys = listOfNotNull(lastKey) + requesters.keys.take(1)
+    /**
+     * Focus the remembered element, else [first] (when given and on screen), else the first tagged
+     * one. False if none of them is on screen yet.
+     */
+    fun restore(first: String? = null): Boolean {
+        val keys = listOfNotNull(lastKey, first) + requesters.keys.take(1)
         for (k in keys) {
             val r = requesters[k] ?: continue
             if (runCatching { r.requestFocus() }.isSuccess) return true
@@ -112,17 +145,18 @@ fun Modifier.focusMemory(memory: FocusMemory, key: String): Modifier =
  * On TV, focus the screen's remembered (or first) element once it's on screen. Phones skip it:
  * touch has no focus, and a focused card would show its outline.
  *
- * [ready] is false while the content is still loading; restoring waits for it.
+ * [ready] is false while the content is still loading; restoring waits for it. [first] names the
+ * element to start on when nothing is remembered (e.g. Play), if it isn't the first one tagged.
  */
 @Composable
-fun RestoreFocus(memory: FocusMemory, ready: Boolean = true) {
+fun RestoreFocus(memory: FocusMemory, ready: Boolean = true, first: String? = null) {
     if (LocalDeviceKind.current != DeviceKind.Tv) return
     LaunchedEffect(ready) {
         if (!ready) return@LaunchedEffect
         // Lazy rows compose their items a frame or two after the screen; try for a few frames.
         repeat(10) {
             withFrameNanos { }
-            if (memory.restore()) return@LaunchedEffect
+            if (memory.restore(first)) return@LaunchedEffect
         }
     }
 }

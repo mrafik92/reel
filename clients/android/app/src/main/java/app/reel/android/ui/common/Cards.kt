@@ -7,7 +7,12 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,11 +44,12 @@ fun PosterCard(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     progress: Double? = null,
+    played: Boolean = false,
 ) {
     Column(modifier.width(CardSize.poster())) {
         FocusCard(onClick = onClick, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)) {
             ReelImage(imageUrl, contentDescription = title, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f))
-            ProgressBar(progress)
+            if (played) WatchedBadge() else ProgressBar(progress)
         }
         CardCaption(title, subtitle)
     }
@@ -58,13 +64,25 @@ fun LandscapeCard(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     progress: Double? = null,
+    played: Boolean = false,
 ) {
     Column(modifier.width(CardSize.landscape())) {
         FocusCard(onClick = onClick, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
             ReelImage(imageUrl, contentDescription = title, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-            ProgressBar(progress)
+            if (played) WatchedBadge() else ProgressBar(progress)
         }
         CardCaption(title, subtitle)
+    }
+}
+
+/** A check in the corner of a watched title. */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.WatchedBadge() {
+    Box(
+        Modifier.align(Alignment.TopEnd).padding(6.dp).size(22.dp).background(ReelColors.Accent, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Icons.Outlined.Check, contentDescription = "Watched", tint = ReelColors.AccentInk, modifier = Modifier.size(16.dp))
     }
 }
 

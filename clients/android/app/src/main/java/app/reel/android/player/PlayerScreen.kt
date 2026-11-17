@@ -86,6 +86,7 @@ import app.reel.android.ui.shell.Routes
 import app.reel.android.ui.theme.ReelColors
 import app.reel.android.ui.tv.FocusCard
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 private enum class Menu { Audio, Subtitles, Quality, Info }
@@ -105,11 +106,17 @@ fun PlayerScreen(fileId: Long, itemId: Long, startS: Double) {
     var detail by remember(itemId) { mutableStateOf<Result<ItemDetail>?>(null) }
     LaunchedEffect(itemId) { detail = runCatching { api.get<ItemDetail>("/items/$itemId") } }
     var deviceId by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) { deviceId = runCatching { graph.session.deviceId() }.getOrNull() ?: "" }
+    var quality by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        // This device's starting quality (Settings, #194); the quality menu overrides it per play.
+        quality = runCatching { graph.devicePrefs.quality.first() }.getOrNull() ?: "auto"
+        deviceId = runCatching { graph.session.deviceId() }.getOrNull() ?: ""
+    }
     val d = detail
     val dev = deviceId
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        if (d == null || dev == null) {
+        val q = quality
+        if (d == null || dev == null || q == null) {
             CircularProgressIndicator(Modifier.align(Alignment.Center), color = ReelColors.Accent)
         } else {
             val item = d.getOrNull()
@@ -120,6 +127,7 @@ fun PlayerScreen(fileId: Long, itemId: Long, startS: Double) {
                 item = item,
                 durationS = item?.files?.firstOrNull { it.id == fileId }?.durationS,
                 startS = startS,
+                initialQuality = q,
             )
         }
     }
@@ -131,7 +139,16 @@ fun PlayerScreen(fileId: Long, itemId: Long, startS: Double) {
  */
 @OptIn(UnstableApi::class)
 @Composable
-fun VodPlayer(source: PlaySource, api: ReelApi, item: ItemDetail?, durationS: Double?, startS: Double, nextEnabled: Boolean = true) {
+fun VodPlayer(
+    source: PlaySource,
+    api: ReelApi,
+    item: ItemDetail?,
+    durationS: Double?,
+    startS: Double,
+    nextEnabled: Boolean = true,
+    /** The device's default quality (`AppGraph.devicePrefs`). */
+    initialQuality: String = "auto",
+) {
     val graph = LocalAppGraph.current
     val context = LocalContext.current
     val nav = LocalNavController.current
@@ -147,6 +164,7 @@ fun VodPlayer(source: PlaySource, api: ReelApi, item: ItemDetail?, durationS: Do
             resolve = { url -> api.server.url.resolve(url)?.toString() ?: url },
             now = SystemClock::elapsedRealtime,
             knownDurationS = durationS,
+            initialQuality = initialQuality,
         )
     }
     DisposableEffect(controller) {
