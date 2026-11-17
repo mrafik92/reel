@@ -180,7 +180,7 @@ pub fn web_chrome() -> DeviceProfile {
             v("av1", "", 0, 10, &[Hdr::Hdr10, Hdr::Hlg]),
         ],
         audio: vec![
-            a("aac", 8),
+            a("aac", 6),
             a("mp3", 2),
             a("opus", 8),
             a("flac", 2),

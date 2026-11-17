@@ -629,3 +629,52 @@ fn db_mode_mapping_and_presets() {
     assert_eq!(j["mode"], "remux");
     assert_eq!(j["video"]["type"], "copy");
 }
+
+/// Guardians of the Galaxy Vol. 3 (file 56): AAC 7.1 copied to Chrome never started
+/// ("mediaSourceRequiresReset" at 0:00) because Chrome's MSE AAC parser rejects 7.1 AAC (PCE or
+/// channel config 12). MSE players get 7.1 AAC as 5.1 AAC with the video still copied, even when
+/// the client claims 8 channels; 5.1 AAC and 7.1 Opus are still copied.
+#[test]
+fn mse_never_gets_seven_one_aac_as_a_copy() {
+    let mut claims_8 = DeviceProfile::preset("web_chrome").unwrap();
+    for a in claims_8.audio.iter_mut() {
+        a.max_channels = 8;
+    }
+    let presets = [DeviceProfile::preset("web_chrome").unwrap(), claims_8];
+    for profile in &presets {
+        let run = |codec: &str, ch: i64| {
+            let f = file("/m/g.mkv", "matroska,webm", 9000);
+            // (the file is HEVC 10-bit, which the phone's probed profile decodes; the preset
+            // has no HEVC, so H.264 keeps the video side out of the picture)
+            let streams = vec![vid("h264", 1920, 1012), aud(1, codec, ch, true)];
+            decide(&DecisionInput {
+                file: &f,
+                streams: &streams,
+                audio_index: None,
+                subtitle_index: None,
+                profile,
+                max_bitrate_kbps: None,
+            })
+        };
+        let d = run("aac", 8);
+        assert_eq!(d.mode, PlaybackMode::AudioTranscode, "{}", reasons(&d));
+        assert_eq!(d.video, VideoAction::Copy);
+        assert_eq!(
+            d.audio,
+            AudioAction::Encode {
+                codec: "aac".into(),
+                channels: 6,
+                bitrate_kbps: 384
+            }
+        );
+        assert!(
+            d.reasons
+                .iter()
+                .any(|r| r.contains("8 audio channels exceed")),
+            "{}",
+            reasons(&d)
+        );
+        assert_eq!(run("aac", 6).mode, PlaybackMode::Remux);
+        assert_eq!(run("opus", 8).mode, PlaybackMode::Remux);
+    }
+}

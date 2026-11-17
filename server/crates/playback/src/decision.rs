@@ -236,6 +236,9 @@ fn pick_audio<'a>(
 }
 
 /// Decide how to deliver `input.file` to `input.profile`.
+/// Most AAC channels an MSE player is sent as a copy: 5.1 (see `decide`).
+pub const MSE_AAC_MAX_CHANNELS: u8 = 6;
+
 pub fn decide(input: &DecisionInput<'_>) -> PlaybackDecision {
     let profile = input.profile;
     let mut reasons: Vec<String> = Vec::new();
@@ -393,14 +396,16 @@ pub fn decide(input: &DecisionInput<'_>) -> PlaybackDecision {
             }
             Some(sup) => {
                 let ch = a.channels.unwrap_or(2);
-                // MSE browsers downmix multichannel AAC/Opus themselves, so for them
-                // `max_channels` is not a hard limit (only a sanity cap of 8).
-                let limit = if profile.player == PlayerKind::Mse
-                    && matches!(codec.as_str(), "aac" | "opus")
-                {
-                    sup.max_channels.max(8)
-                } else {
-                    sup.max_channels
+                // MSE browsers downmix multichannel AAC/Opus themselves, so for them the
+                // client's `max_channels` is not a hard limit. AAC stops at 5.1 though: 7.1 AAC is
+                // signalled with a program config element (channel config 0) or config 12, and
+                // Chrome's MSE AAC parser rejects both (CHUNK_DEMUXER_ERROR_APPEND_FAILED, the
+                // stream never starts), so 7.1 AAC is re-encoded to 5.1 AAC with the video copied.
+                // 7.1 Opus plays (checked in Chrome).
+                let limit = match (profile.player, codec.as_str()) {
+                    (PlayerKind::Mse, "aac") => MSE_AAC_MAX_CHANNELS,
+                    (PlayerKind::Mse, "opus") => sup.max_channels.max(8),
+                    _ => sup.max_channels,
                 };
                 if ch > limit as i64 {
                     audio_copy_ok = false;
