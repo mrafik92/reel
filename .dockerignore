@@ -7,3 +7,4 @@ server/data
 deploy/data
 **/*.log
 clients/apps/*/mock-media
+clients/android
