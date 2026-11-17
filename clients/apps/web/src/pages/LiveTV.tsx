@@ -395,7 +395,8 @@ function Watch(): JSX.Element {
     });
   });
 
-  // Full screen: a click shows/hides the overlay (never pauses). In the page: a click tunes the
+  // Full screen: a click or tap shows/hides the overlay. Live TV can't pause, so unlike the
+  // library player (#183) a mouse click doesn't pause here either. In the page: a click tunes the
   // idle hero channel or goes full screen. Single clicks wait out a possible double-click so it
   // doesn't flicker the overlay (see lib/tap).
   const activate = () => {

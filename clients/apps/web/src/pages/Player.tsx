@@ -24,7 +24,7 @@ import { toast } from "../lib/toast";
 import { ErrorState } from "../components/States";
 import { CtlButton, Osd, Scrubber, Transport, Volume, useOsd, type ScrubberApi } from "../components/player/Controls";
 import { playHref, toPath } from "../lib/links";
-import { createTapToggle } from "../lib/tap";
+import { createDoubleTap, createTapToggle, pointerKind, zoneOf, type TapResult } from "../lib/tap";
 import { CastSheet } from "../components/casting/CastSheet";
 import { CastRemote } from "../components/casting/CastRemote";
 import { getServerUrl } from "@reel/ui";
@@ -190,8 +190,8 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     }, HIDE_AFTER);
   };
 
-  // A click on the picture shows the controls, or hides them if they're up; it never
-  // plays/pauses (Space/K and the transport button do that). Double-click is full screen.
+  // A touch/pen tap on the picture (and any click in TV mode) shows the controls, or hides them
+  // if they're up; it never plays/pauses. A mouse click plays/pauses (see onPictureClick, #183).
   const tap = createTapToggle({
     shown: visible,
     show: poke,
@@ -872,6 +872,57 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     else if (root.requestFullscreen) root.requestFullscreen().catch(() => undefined);
   };
 
+  // ---- clicks and taps on the picture (#183, YouTube's split) ---------------------------
+  // Mouse: a click plays/pauses at once with the centre flash; a double-click toggles full
+  // screen and undoes that click, so playback ends where it started. Touch/pen: a tap
+  // shows/hides the controls (createTapToggle); a double-tap on the left/right third seeks
+  // ∓10 s and further taps add up. TV mode keeps every click on the controls path: the magic
+  // remote's pointer reports "mouse", and OK/Space already pause there.
+  let clickKind: "mouse" | "touch" | undefined;
+  /** The play state a mouse click changed, and when: a double-click right after restores it. */
+  let mouseUndo: { was: boolean; at: number } | undefined;
+  const taps = createDoubleTap();
+  const [ripple, setRipple] = createSignal<Extract<TapResult, { kind: "seek" }> & { key: number }>();
+  let rippleTimer: ReturnType<typeof setTimeout> | undefined;
+  let rippleKey = 0;
+  onCleanup(() => rippleTimer && clearTimeout(rippleTimer));
+  const onPictureClick = (e: MouseEvent) => {
+    const kind = clickKind ?? pointerKind((e as PointerEvent).pointerType);
+    clickKind = undefined;
+    if (TV || e.detail === 0) return tap.onClick(e);
+    if (kind === "mouse") {
+      tap.cancel();
+      if (e.detail > 1) return; // second click of a double-click: onDblClick owns it
+      const was = playing();
+      toggle();
+      flash({ icon: was ? "pause" : "play" });
+      mouseUndo = { was, at: Date.now() };
+      return;
+    }
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const r = taps.tap(Date.now(), zoneOf(e.clientX - box.left, box.width));
+    if (r.kind === "single") return tap.onClick(e);
+    tap.cancel();
+    if (r.kind === "double") return fullscreen();
+    seekBy(r.delta);
+    setRipple({ ...r, key: ++rippleKey });
+    if (rippleTimer) clearTimeout(rippleTimer);
+    rippleTimer = setTimeout(() => setRipple(undefined), 750);
+  };
+  const onPictureDblClick = () => {
+    if (TV) {
+      tap.cancel();
+      return fullscreen();
+    }
+    // Touch double-taps are handled in onPictureClick (browsers differ on firing dblclick for them).
+    const undo = mouseUndo;
+    mouseUndo = undefined;
+    if (!undo || Date.now() - undo.at > 1000) return;
+    fullscreen();
+    if (undo.was) userPlay();
+    else userPause();
+  };
+
   onMount(() => {
     if (!file) {
       setError({ title: "Nothing to play", body: "This title has no playable file yet.", retry: false });
@@ -1182,15 +1233,23 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
         playsinline
         preload="auto"
         crossorigin={getServerUrl() ? "anonymous" : undefined}
-        onPointerDown={tap.onPointerDown}
-        onClick={tap.onClick}
-        onDblClick={() => {
-          tap.cancel();
-          fullscreen();
+        onPointerDown={(e) => {
+          clickKind = pointerKind(e.pointerType);
+          tap.onPointerDown();
         }}
+        onClick={onPictureClick}
+        onDblClick={onPictureDblClick}
       />
 
       <Osd osd={osd()} />
+      <Show when={ripple()} keyed>
+        {(r) => (
+          <div class="pripple" classList={{ "pripple--back": r.total < 0 }} aria-hidden="true">
+            <Icon name={r.total < 0 ? "replay" : "skip"} />
+            <span>{`${r.total < 0 ? "−" : "+"}${Math.abs(r.total)} s`}</span>
+          </div>
+        )}
+      </Show>
 
       <Show when={cueHtml()}>
         <div
