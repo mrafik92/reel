@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 // Optional release signing, from either
@@ -72,13 +73,21 @@ android {
         warningsAsErrors = false
         abortOnError = true
     }
+    testOptions {
+        unitTests.all {
+            // The model drift test reads the server's OpenAPI document (#186).
+            it.systemProperty("reel.openapi", rootProject.file("../../server/openapi.json").absolutePath)
+        }
+    }
 }
 
 dependencies {
-    // Only what the skeleton uses. The catalog already pins the libraries the next tickets add:
-    // OkHttp + kotlinx.serialization + DataStore (#186), navigation + Coil (#187), Media3 (#190).
+    // The catalog also pins navigation + Coil (#187) and Media3 (#190); they're added with those tickets.
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.datastore.preferences)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
@@ -86,5 +95,11 @@ dependencies {
     implementation(libs.compose.material3)
     debugImplementation(libs.compose.ui.tooling)
 
+    implementation(libs.okhttp)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.coroutines.android)
+
     testImplementation(libs.junit)
+    testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
