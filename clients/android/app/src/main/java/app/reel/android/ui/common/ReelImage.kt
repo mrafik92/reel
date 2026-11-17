@@ -4,7 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
-import app.reel.android.LocalAppGraph
+import androidx.compose.runtime.compositionLocalOf
 import app.reel.android.data.ServerAddress
 import app.reel.android.ui.theme.ReelColors
 import coil.compose.AsyncImage
@@ -21,7 +21,7 @@ fun ReelImage(
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
 ) {
-    val server = LocalAppGraph.current.session.api?.server
+    val server = LocalServerAddress.current
     AsyncImage(
         model = resolveImageUrl(server, url),
         contentDescription = contentDescription,
@@ -29,6 +29,9 @@ fun ReelImage(
         modifier = modifier.background(ReelColors.Bg2),
     )
 }
+
+/** The signed-in server, for resolving relative image URLs. Provided by the app shell. */
+val LocalServerAddress = compositionLocalOf<ServerAddress?> { null }
 
 /** Absolute URLs pass through; `/path` is resolved against [server]. */
 fun resolveImageUrl(server: ServerAddress?, url: String?): String? = when {

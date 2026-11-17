@@ -173,11 +173,17 @@ app/src/main/java/app/reel/android/
     AppShell.kt         TV nav rail / phone bottom bar around the NavHost; Back behaviour
     Destinations.kt     TopLevel tabs (Live TV only with IPTV access), Routes, LocalNavController
     ReelNavGraph.kt     the destination registry: every screen is registered here
-  ui/tv/Focus.kt        D-pad focus kit: FocusCard, FocusMemory + Modifier.focusMemory + RestoreFocus
-  ui/common/            PosterCard / LandscapeCard, ReelImage (Coil), rememberLoad + Loadable
-                        (loading / error with Try again / empty)
-  ui/home/              Home rows (#188 grows it)
-  ui/stubs/             placeholders for Search, Live TV, Library, item detail, Settings
+  ui/tv/Focus.kt        D-pad focus kit: FocusCard, FocusMemory + Modifier.focusMemory + RestoreFocus,
+                        KeepInView (scroll only as far as needed, for detail pages)
+  ui/common/            PosterCard / LandscapeCard, Pill + ChoiceDialog, ReelImage (Coil),
+                        rememberLoad + Loadable (loading / error with Try again / empty) + OnResume
+  data/Browse.kt        home, libraries, library items (LibraryQuery: sort / genre / unwatched),
+                        item, children, genres, played
+  ui/home/              Home: featured title (phone) / focus-following featured area (TV) + rows
+  ui/library/           Library tab: LibraryViewModel + ItemPager (keyset paging), grid + filters
+  ui/item/              item detail (ItemLogic: resume point, next episode, meta, badges),
+                        PlayLauncher (load an item, then open the player route)
+  ui/stubs/             placeholders for Search, Live TV, Settings and the player (#190)
 ```
 
 ### Adding a screen
@@ -188,7 +194,12 @@ app/src/main/java/app/reel/android/
 3. Make every focusable element a `FocusCard` (or `PosterCard` / `LandscapeCard`), tag it with
    `Modifier.focusMemory(memory, "<stable key>")`, and call `RestoreFocus(memory, ready = …)` once per screen.
    Rows: `LazyRow(state = rememberLazyListState())` inside keyed lazy items keeps their scroll on Back.
-4. Navigate with `LocalNavController.current.navigate(Routes.item(id))`.
+4. Navigate with `LocalNavController.current.navigate(Routes.item(id))`. Playback goes through
+   `Routes.player(fileId, itemId, startS)` (`PlayerArgs` reads it back); `rememberPlayLauncher()`
+   does it for an item known only by id.
+5. State that must survive going into a page and back (a paged grid) lives in a `ViewModel`
+   (`viewModel { ... }` is scoped to the back-stack entry); simple reads use `rememberLoad`, which
+   reloads when the screen is shown again.
 
 Tests: `testDebugUnitTest` also runs Compose UI tests under Robolectric (`ui/FocusKitTest`). The first run
 downloads Robolectric's Android runtime (~200 MB, then cached in `~/.m2`).
