@@ -177,8 +177,19 @@ app/src/main/java/app/reel/android/
   ui/common/            PosterCard / LandscapeCard, ReelImage (Coil), rememberLoad + Loadable
                         (loading / error with Try again / empty)
   ui/home/              Home rows (#188 grows it)
-  ui/stubs/             placeholders for Search, Live TV, Library, item detail, Settings
+  ui/stubs/             placeholders for Search, Live TV, Library, item detail (has Play / Resume), Settings
+  player/               the player (#190)
+    ReelPlayer.kt       ExoPlayer + OkHttp (no token) behind PlayerPort; Live TV reuses it
+    PlayerPort.kt       what controllers need from a player: load, tracks, events (tests use a fake)
+    VodController.kt    VOD session state machine: decide, resume, progress, 404 / error re-decide, tracks
+    PlaySource.kt       where sessions come from: LibrarySource (decide); IPTV VOD adds its own
+    PlayerScreen.kt     route `player/{fileId}?item=&start=` (Routes.player), Compose controls, menus, up next
+    PlayerControls.kt   seek bar, pills, mode badge, menu sheet
+    PlayerKeys.kt       remote / media key mapping
 ```
+
+Open the player with `nav.navigate(Routes.player(fileId, itemId, resumePositionS(item)))`; the shell hides the
+rail / bar for it.
 
 ### Adding a screen
 

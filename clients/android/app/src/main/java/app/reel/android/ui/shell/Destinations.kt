@@ -34,7 +34,16 @@ enum class TopLevel(val route: String, val label: String, val icon: ImageVector)
 object Routes {
     const val ITEM = "item/{id}"
 
+    /** The VOD player (#190): full screen, no rail or bottom bar. */
+    const val PLAYER = "player/{fileId}?item={itemId}&start={startS}"
+
     fun item(id: Long) = "item/$id"
+
+    /** Play [fileId] of item [itemId] from [startS] seconds (absolute; see `resumePositionS`). */
+    fun player(fileId: Long, itemId: Long, startS: Double) = "player/$fileId?item=$itemId&start=$startS"
+
+    /** Routes that take the whole screen. */
+    fun isFullScreen(route: String?) = route == PLAYER
 }
 
 /** The shell's nav controller; screens navigate with `LocalNavController.current.navigate(Routes.item(id))`. */

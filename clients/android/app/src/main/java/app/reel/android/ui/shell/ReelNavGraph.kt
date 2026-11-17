@@ -5,6 +5,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import app.reel.android.data.Me
+import app.reel.android.player.PlayerScreen
 import app.reel.android.ui.home.HomeScreen
 import app.reel.android.ui.stubs.ItemPlaceholder
 import app.reel.android.ui.stubs.LibraryPlaceholder
@@ -26,5 +27,26 @@ fun NavGraphBuilder.reelGraph(user: Me) {
 
     composable(Routes.ITEM, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
         ItemPlaceholder(entry.arguments?.getLong("id") ?: 0)
+    }
+    composable(
+        Routes.PLAYER,
+        arguments = listOf(
+            navArgument("fileId") { type = NavType.LongType },
+            navArgument("itemId") {
+                type = NavType.LongType
+                defaultValue = 0L
+            },
+            navArgument("startS") {
+                type = NavType.FloatType
+                defaultValue = 0f
+            },
+        ),
+    ) { entry ->
+        val a = entry.arguments
+        PlayerScreen(
+            fileId = a?.getLong("fileId") ?: 0,
+            itemId = a?.getLong("itemId") ?: 0,
+            startS = (a?.getFloat("startS") ?: 0f).toDouble(),
+        )
     }
 }

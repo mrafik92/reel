@@ -42,6 +42,9 @@ class SessionManager(
     /** The API of the configured server. Only `null` before a server is picked. */
     val api: ReelApi? get() = current
 
+    /** This install's stable id: sent with decide so the server tells this device's sessions apart. */
+    suspend fun deviceId(): String = store.deviceId()
+
     /** Read the stored session. Signed in users go straight in (offline too); `/me` refreshes in the background. */
     suspend fun start() {
         val s = store.current()

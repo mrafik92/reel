@@ -206,18 +206,52 @@ data class Selected(
     @SerialName("subtitle_index") val subtitleIndex: Long? = null,
 )
 
+/** One stream's action in a [PlaybackDecision]. Only `type` is read; encode details are ignored. */
+@Serializable
+data class StreamAction(
+    /** Video / audio: `none` | `copy` | `encode`. Subtitles: `none` | `sidecar` | `burn_in` | `native`. */
+    val type: String = "none",
+)
+
+/** How the server delivers each stream, and why (shown as the player's *why it transcodes*). */
+@Serializable
+data class PlaybackDecision(
+    val mode: String = "",
+    val video: StreamAction = StreamAction(),
+    val audio: StreamAction = StreamAction(),
+    val subtitle: StreamAction = StreamAction(),
+    val reasons: List<String> = emptyList(),
+    @SerialName("audio_index") val audioIndex: Long? = null,
+    @SerialName("subtitle_index") val subtitleIndex: Long? = null,
+)
+
+/** An entry of the quality menu (#87). `id`: `original` | `1080p` | `720p` | `480p`. */
+@Serializable
+data class QualityOption(
+    val id: String,
+    val label: String,
+    @SerialName("bitrate_kbps") val bitrateKbps: Int = 0,
+    val available: Boolean = true,
+)
+
 @Serializable
 data class DecideResponse(
     @SerialName("session_id") val sessionId: String,
     /** `direct_play` | `remux` | `audio_transcode` | `transcode`. */
     val mode: String,
     val url: String,
+    val decision: PlaybackDecision = PlaybackDecision(),
     val subtitles: List<SubtitleOption> = emptyList(),
     val audio: List<AudioStream> = emptyList(),
     val selected: Selected = Selected(),
     @SerialName("bitrate_kbps") val bitrateKbps: Int = 0,
+    /** Resolved quality: `original` or a ladder rung. */
+    val quality: String? = null,
+    @SerialName("quality_options") val qualityOptions: List<QualityOption> = emptyList(),
 ) {
-    val isHls get() = url.contains(".m3u8")
+    val isHls get() = url.substringBefore('?').endsWith(".m3u8")
+    val isDirect get() = mode == "direct_play"
+    val burnsSubtitles get() = decision.subtitle.type == "burn_in"
 }
 
 @Serializable
