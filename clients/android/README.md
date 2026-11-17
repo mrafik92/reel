@@ -62,8 +62,24 @@ Signed release APKs on a tag come with #195.
 
 ```
 app/src/main/java/app/reel/android/
+  ReelApplication.kt    makes the AppGraph once per process
+  AppGraph.kt           process-wide objects (OkHttp, SessionManager); screens get it via LocalAppGraph
   MainActivity.kt       entry point; picks DeviceKind (TV or phone) once
   DeviceKind.kt         TV vs phone from the UI mode
+  data/
+    Models.kt           hand-written wire models (kotlinx.serialization); ModelsTest checks them
+                        against server/openapi.json, so add every new model to its list
+    Json.kt             ReelJson: ignores unknown fields, leaves nulls out of requests
+    ServerAddress.kt    parses what the user typed into an origin (http for LAN-style, https otherwise)
+    ReelApi.kt          /api/v1 client: bearer only to the server's origin, ReelError classes,
+                        GET retried once; get/post/delete helpers for new endpoints
+    ReelError.kt        Offline · Timeout · Unreachable · Unauthorized · RateLimited · Http · BadResponse
+    SessionStore.kt     DataStore: server, token, cached user, per-install device id
+    SessionManager.kt   AuthState (server → sign-in → signed in), connect / signIn / signOut, `api`
   ui/theme/Theme.kt     palette and type scale (tokens from packages/ui/src/styles/ui.css)
-  ui/ReelRoot.kt        placeholder root until sign-in (#186) and the app shell (#187)
+  ui/ReelRoot.kt        one screen per AuthState
+  ui/auth/              server address and sign-in screens; a signed-in placeholder until the shell (#187)
 ```
+
+Screens call the API through `LocalAppGraph.current.session.api` (`api.get<Home>("/home")`). A 401 there
+signs out and shows the sign-in screen by itself. Show `ReelError.userMessage` for failures.

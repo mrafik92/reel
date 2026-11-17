@@ -34,6 +34,7 @@ jobs:
               - '.github/workflows/ci.yml'
             android:
               - 'clients/android/**'
+              - 'server/openapi.json'   # ModelsTest checks the app's models against it
               - '.github/workflows/ci.yml'
 
   server:

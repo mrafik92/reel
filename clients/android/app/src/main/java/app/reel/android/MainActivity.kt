@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.CompositionLocalProvider
 import app.reel.android.ui.ReelRoot
 import app.reel.android.ui.theme.ReelTheme
 
@@ -12,9 +13,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val kind = DeviceKind.of(this)
+        val graph = (application as ReelApplication).graph
         setContent {
-            ReelTheme(kind) {
-                ReelRoot(kind)
+            CompositionLocalProvider(LocalAppGraph provides graph) {
+                ReelTheme(kind) {
+                    ReelRoot(kind)
+                }
             }
         }
     }
