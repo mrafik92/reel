@@ -921,6 +921,8 @@ html.tv .results-grid {
   height: 100%;
   object-fit: contain;
   background: #000;
+  /* Double-tap seeks (#183): no double-tap zoom, no click delay. */
+  touch-action: manipulation;
 }
 .player__loading,
 .player__buffer {

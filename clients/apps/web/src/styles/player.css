@@ -647,6 +647,46 @@ html[data-input="key"] .pvol__bar:focus .pvol__knob {
   }
 }
 
+/* ---------- Double-tap seek ripple (touch, #183): "−20 s" on the side that was tapped ---------- */
+.pripple {
+  position: absolute;
+  top: 50%;
+  right: 12%;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 3.2rem;
+  margin-top: -1.6rem;
+  padding: 0 1.1rem;
+  border-radius: 999px;
+  background: rgba(var(--bg-rgb), 0.62);
+  color: var(--ink);
+  font-size: 1.3rem;
+  pointer-events: none;
+  animation: pripple 750ms var(--ease-out) both;
+}
+.pripple--back {
+  right: auto;
+  left: 12%;
+}
+.pripple span {
+  font: 750 1rem/1 var(--font-body);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@keyframes pripple {
+  0% { opacity: 0; transform: scale(0.86); }
+  15% { opacity: 1; transform: scale(1); }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pripple {
+    animation-name: posd-fade;
+  }
+}
+
 /* ---------- Seek mode (TV): dim the picture a touch so the timeline reads ---------- */
 .player__stage.is-seekmode .pc__scrim--bottom {
   opacity: 1;
