@@ -166,6 +166,8 @@ app/src/main/java/app/reel/android/
     ReelError.kt        Offline · Timeout · Unreachable · Unauthorized · RateLimited · Http · BadResponse
     SessionStore.kt     DataStore: server, token, cached user, per-install device id
     SessionManager.kt   AuthState (server → sign-in → signed in), connect / signIn / signOut, `api`
+    DevicePrefs.kt      per-device settings (DataStore `device_prefs`): playback quality
+    Account.kt          /me/preferences (GET/PUT), /me/sessions (list, sign one out)
   ui/theme/Theme.kt     palette and type scale (tokens from packages/ui/src/styles/ui.css)
   ui/ReelRoot.kt        one screen per AuthState
   ui/auth/              server address and sign-in screens
@@ -185,7 +187,9 @@ app/src/main/java/app/reel/android/
                         PlayLauncher (load an item, then open the player route)
   ui/search/            Search: SearchViewModel (debounced, latest answer wins) + rows; voice
                         through RecognizerIntent when the device has a recognizer
-  ui/stubs/             placeholders for Live TV, Settings and the player (#190)
+  ui/settings/          Settings: SettingsViewModel (prefs saved on each change, devices, server
+                        version) + SettingsLogic (languages, modes, last seen)
+  ui/stubs/             placeholders for Live TV and the player (#190)
 ```
 
 ### Adding a screen

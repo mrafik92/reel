@@ -9,9 +9,9 @@ import app.reel.android.ui.home.HomeScreen
 import app.reel.android.ui.item.ItemScreen
 import app.reel.android.ui.library.LibraryScreen
 import app.reel.android.ui.search.SearchScreen
+import app.reel.android.ui.settings.SettingsScreen
 import app.reel.android.ui.stubs.LivePlaceholder
 import app.reel.android.ui.stubs.PlayerPlaceholder
-import app.reel.android.ui.stubs.SettingsPlaceholder
 
 /**
  * The destination registry: every screen of the app is registered here. Screen tickets replace a
@@ -23,7 +23,7 @@ fun NavGraphBuilder.reelGraph(user: Me) {
     composable(TopLevel.Search.route) { SearchScreen() }
     if (user.canWatchLive) composable(TopLevel.Live.route) { LivePlaceholder() }
     composable(TopLevel.Library.route) { LibraryScreen() }
-    composable(TopLevel.Settings.route) { SettingsPlaceholder(user) }
+    composable(TopLevel.Settings.route) { SettingsScreen(user) }
 
     composable(Routes.ITEM, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
         ItemScreen(entry.arguments?.getLong("id") ?: 0)

@@ -289,3 +289,32 @@ data class SearchAll(
 ) {
     val isEmpty get() = library.isEmpty() && episodes.isEmpty() && people.isEmpty()
 }
+
+/**
+ * `GET/PUT /me/preferences`: how Reel picks audio and subtitles at Play, saved to the account (so
+ * the web and every device share them). Quality is per device instead (see [DevicePrefs]).
+ */
+@Serializable
+data class PlaybackPrefs(
+    /** Ordered; `"original"` = the title's original language. */
+    @SerialName("audio_languages") val audioLanguages: List<String> = listOf("original"),
+    @SerialName("subtitle_languages") val subtitleLanguages: List<String> = listOf("en"),
+    /** `off` | `forced_only` | `auto` | `always`. */
+    @SerialName("subtitle_mode") val subtitleMode: String = "auto",
+    @SerialName("prefer_sdh") val preferSdh: Boolean = false,
+    @SerialName("burn_in_image_subs") val burnInImageSubs: Boolean = false,
+)
+
+/** `GET /me/sessions`: a signed-in device. */
+@Serializable
+data class SessionInfo(
+    val id: Long,
+    @SerialName("last_seen") val lastSeen: Long,
+    /** The session making the request (this app). */
+    val current: Boolean = false,
+    val client: String? = null,
+    @SerialName("device_id") val deviceId: String? = null,
+    @SerialName("device_name") val deviceName: String? = null,
+    @SerialName("expires_at") val expiresAt: Long? = null,
+    val ip: String? = null,
+)
