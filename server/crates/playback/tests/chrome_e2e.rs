@@ -284,6 +284,7 @@ async fn chrome_switches_between_aligned_variants() {
                 vec![VariantSpec {
                     id: "low".into(),
                     decision: low,
+                    meta: None,
                 }],
             )
             .await

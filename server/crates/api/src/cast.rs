@@ -830,6 +830,8 @@ async fn resolve_request(st: &AppState, u: AuthUser, req: &CastPlayRequest) -> A
                     for_cast: Some(true),
                     quality: None,
                     max_bitrate_kbps: None,
+                    adaptive: None,
+                    bandwidth_kbps: None,
                 }),
             )
             .await?

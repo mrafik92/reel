@@ -91,6 +91,14 @@ pub struct Config {
     /// through Reel. Off by default: the tune response then carries the provider URL, which
     /// contains the provider login.
     pub allow_direct_live: bool,
+    /// `REEL_ABR`: multi-variant HLS for players that switch variants themselves (#111): the
+    /// original plus lazily transcoded rungs. Default on; `false`/`0` serves one rendition per
+    /// session everywhere (a rollback lever without a rebuild).
+    #[serde(deserialize_with = "bool_or_num")]
+    pub abr: bool,
+    /// `REEL_ABR_VARIANT_IDLE_SECS`: a variant nobody fetched for this long has its ffmpeg stopped
+    /// and its transcode slot released (default 30).
+    pub abr_variant_idle_secs: u64,
     /// OMDb API key (`REEL_OMDB_API_KEY`): adds IMDb / Rotten Tomatoes / Metacritic scores.
     pub omdb_api_key: Option<String>,
     /// Trakt client id (`REEL_TRAKT_CLIENT_ID`): adds Trakt comments.
@@ -142,10 +150,35 @@ impl Default for Config {
             cast_base_url: None,
             cast_discovery: true,
             allow_direct_live: false,
+            abr: true,
+            abr_variant_idle_secs: 30,
             omdb_api_key: None,
             trakt_client_id: None,
             libraries: Vec::new(),
         }
+    }
+}
+
+/// A bool from TOML/env that also accepts `0`/`1` (figment hands `REEL_ABR=0` over as a number).
+fn bool_or_num<'de, D>(d: D) -> std::result::Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum B {
+        Bool(bool),
+        Num(i64),
+        Str(String),
+    }
+    match B::deserialize(d)? {
+        B::Bool(b) => Ok(b),
+        B::Num(n) => Ok(n != 0),
+        B::Str(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Ok(true),
+            "0" | "false" | "no" | "off" => Ok(false),
+            other => Err(serde::de::Error::custom(format!("not a bool: {other}"))),
+        },
     }
 }
 
@@ -204,8 +237,24 @@ mod tests {
             assert!(c.tmdb_api_key.is_none());
             assert_eq!(c.image_cache_max_mb, 4096);
             assert!(c.cast_discovery);
+            assert!(c.abr);
+            assert_eq!(c.abr_variant_idle_secs, 30);
             Ok(())
         });
+    }
+
+    #[test]
+    fn abr_switch_accepts_numbers_and_words() {
+        for (v, want) in [("0", false), ("1", true), ("false", false), ("true", true)] {
+            figment::Jail::expect_with(|jail| {
+                jail.set_env("REEL_ABR", v);
+                jail.set_env("REEL_ABR_VARIANT_IDLE_SECS", "45");
+                let c = Config::load(None).unwrap();
+                assert_eq!(c.abr, want, "REEL_ABR={v}");
+                assert_eq!(c.abr_variant_idle_secs, 45);
+                Ok(())
+            });
+        }
     }
 
     #[test]

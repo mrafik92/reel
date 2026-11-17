@@ -13,11 +13,12 @@ use crate::media::{MediaCtx, ProcPermit};
 use crate::model::{FileInfo, Hdr, StreamInfo, StreamKind};
 use crate::plan::{self, SegmentPlan};
 use crate::redact::redact_text;
+use crate::variants::VariantMeta;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::process::{Child, Command};
@@ -37,6 +38,40 @@ pub struct VariantSpec {
     pub id: String,
     /// Must encode the video; audio, subtitle and stream indexes should match the primary's.
     pub decision: PlaybackDecision,
+    /// How the master playlist describes it (adaptive sessions).
+    pub meta: Option<VariantMeta>,
+}
+
+/// A multi-variant session (#111): the primary variant (the session's decision) under its own
+/// id plus encoded rungs, all listed in the master playlist. Each variant's ffmpeg runs only
+/// while the player fetches it: it is admitted (transcode caps, process budget) when first
+/// requested, counts against the caps until it is stopped, and is stopped after
+/// `variant_idle_timeout` without requests.
+#[derive(Debug, Clone)]
+pub struct AdaptiveRequest {
+    /// Id of the primary variant (`original`, or the top rung of a transcode-only session).
+    pub primary_id: String,
+    pub primary_meta: VariantMeta,
+    pub rungs: Vec<VariantSpec>,
+    /// The variant started right away (the player's start level).
+    pub start: String,
+}
+
+/// State of one variant for the admin dashboard.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+pub struct VariantStatus {
+    pub id: String,
+    pub label: String,
+    pub width: u32,
+    pub height: u32,
+    /// Average bitrate (kbit/s) the master playlist announces.
+    pub bandwidth_kbps: u32,
+    /// Video encoder, e.g. `hevc_vaapi (low power)`; `None` when the video is copied.
+    pub encoder: Option<String>,
+    /// `running`, `paused` (read-ahead throttle) or `idle` (no ffmpeg).
+    pub state: String,
+    /// Seconds since the player last requested one of its files.
+    pub last_request_s: u64,
 }
 
 fn valid_variant_id(id: &str) -> bool {
@@ -96,6 +131,9 @@ pub struct SessionConfig {
     pub max_total_disk_bytes: u64,
     /// Sessions idle for at least this long may be evicted to free scratch space.
     pub disk_evict_min_idle: Duration,
+    /// Adaptive sessions: a variant whose files nobody requested for this long has its ffmpeg
+    /// stopped and its transcode slot / process slot released (#111).
+    pub variant_idle_timeout: Duration,
     /// Lifetime of upstream-proxy tokens of a session (also revoked when the session ends).
     pub upstream_ttl: Duration,
     /// Bounds of reading a remote (provider) file's keyframe index from its container metadata.
@@ -127,6 +165,7 @@ impl SessionConfig {
             max_session_disk_bytes: 4 << 30,
             max_total_disk_bytes: 20 << 30,
             disk_evict_min_idle: Duration::from_secs(15),
+            variant_idle_timeout: Duration::from_secs(30),
             upstream_ttl: Duration::from_secs(12 * 3600),
             remote_index: plan::RemoteIndexLimits::default(),
         }
@@ -186,6 +225,12 @@ pub struct SessionInfo {
     /// seekable); remote files only when their container has an index readable over `Range`.
     #[serde(default)]
     pub fallback_playlist: bool,
+    /// Multi-variant sessions (#111): every variant with its state; empty otherwise.
+    #[serde(default)]
+    pub variants: Vec<VariantStatus>,
+    /// The variant of the most recent segment request (what the player is being sent).
+    #[serde(default)]
+    pub delivering: Option<String>,
 }
 
 struct Meta {
@@ -223,11 +268,22 @@ struct Variant {
     /// Redacted tail of ffmpeg's stderr (server-side diagnostics only).
     log: LogTail,
     proc: tokio::sync::Mutex<Proc>,
+    meta: Option<VariantMeta>,
+    /// Adaptive sessions: admitted (counts against the caps if it encodes, holds `permit`)
+    /// from its first start until it is stopped for being idle.
+    admitted: AtomicBool,
+    permit: Mutex<Option<ProcPermit>>,
+    /// Last request for one of its files (playlist, init, segment).
+    last_used: Mutex<Instant>,
 }
 
 impl Variant {
     fn new(id: &str, decision: PlaybackDecision, dir: PathBuf, hw: HwAccel) -> Self {
         Variant {
+            meta: None,
+            admitted: AtomicBool::new(false),
+            permit: Mutex::new(None),
+            last_used: Mutex::new(Instant::now()),
             id: id.to_string(),
             decision,
             dir,
@@ -247,6 +303,15 @@ impl Variant {
 
     fn encodes_video(&self) -> bool {
         matches!(self.decision.video, VideoAction::Encode { .. })
+    }
+
+    /// Re-encodes the picture or the sound: counts against the transcode caps while admitted.
+    fn encodes(&self) -> bool {
+        self.encodes_video() || matches!(self.decision.audio, AudioAction::Encode { .. })
+    }
+
+    fn used(&self) {
+        *self.last_used.lock().unwrap() = Instant::now();
     }
 
     /// Copy output on a keyframe plan: ffmpeg writes one file per source GOP, assembled into plan
@@ -303,6 +368,12 @@ struct Session {
     /// Last segment requested on any variant: where a variant that has never run starts when its
     /// `init.mp4` is asked for first (as hls.js does on a level switch).
     last_req: AtomicU32,
+    /// Multi-variant session (#111): per-variant admission, idle stop and accounting.
+    adaptive: bool,
+    /// The user's own transcode limit (re-checked when a variant starts lazily).
+    user_max_transcodes: Option<usize>,
+    /// Variant of the most recent segment request.
+    delivering: Mutex<Option<String>>,
     /// The primary variant first; empty for direct play.
     variants: Vec<Arc<Variant>>,
 }
@@ -407,11 +478,74 @@ impl SessionManager {
     /// `(this user's, server-wide)` transcode sessions of this manager.
     pub fn transcode_counts(&self, user_id: i64) -> (usize, usize) {
         let map = self.sessions.lock().unwrap();
-        let live: Vec<&Arc<Session>> = map.values().filter(|s| counts_as_transcode(s)).collect();
-        (
-            live.iter().filter(|s| s.user_id == user_id).count(),
-            live.len(),
-        )
+        let mine = map
+            .values()
+            .filter(|s| s.user_id == user_id)
+            .map(|s| transcode_weight(s))
+            .sum();
+        (mine, map.values().map(|s| transcode_weight(s)).sum())
+    }
+
+    /// Transcode slots still free for `user_id` (the smaller of the global and the per-user
+    /// room, live TV included); `usize::MAX` when neither is capped. Decide uses it to choose
+    /// how many rungs to list (#111).
+    pub fn transcode_room(&self, user_id: i64, user_max: Option<usize>) -> usize {
+        let _a = self.admission();
+        let (ext_user, ext_global) = self.external_counts(user_id);
+        let (mine, all) = self.transcode_counts(user_id);
+        let (user_cap, global_cap) = self.transcode_caps(user_max);
+        let room = |cap: usize, used: usize| {
+            if cap == 0 {
+                usize::MAX
+            } else {
+                cap.saturating_sub(used)
+            }
+        };
+        room(global_cap, all + ext_global).min(room(user_cap, mine + ext_user))
+    }
+
+    /// Admit a variant of a multi-variant session before its ffmpeg starts: re-check the
+    /// transcode caps (if it re-encodes) and take a process slot. Refused with
+    /// [`PlaybackError::VariantRefused`] (429): the player keeps another variant.
+    fn admit_variant(&self, s: &Session, v: &Variant) -> Result<(), PlaybackError> {
+        if v.admitted.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let counts = v.encodes();
+        let _a = counts.then(|| self.admission());
+        if counts {
+            let (ext_user, ext_global) = self.external_counts(s.user_id);
+            let (mine, all) = self.transcode_counts(s.user_id);
+            let (user_cap, global_cap) = self.transcode_caps(s.user_max_transcodes);
+            if global_cap > 0 && all + ext_global >= global_cap {
+                return Err(PlaybackError::VariantRefused(format!(
+                    "the server's transcode limit ({global_cap}) is reached"
+                )));
+            }
+            if user_cap > 0 && mine + ext_user >= user_cap {
+                return Err(PlaybackError::VariantRefused(format!(
+                    "your transcode limit ({user_cap}) is reached"
+                )));
+            }
+        }
+        let permit = self
+            .media
+            .try_proc()
+            .map_err(|_| PlaybackError::VariantRefused("the server is busy".into()))?;
+        *v.permit.lock().unwrap() = Some(permit);
+        v.admitted.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Stop a variant's ffmpeg and release its slots (adaptive sessions); its finished segments
+    /// stay for a quick return.
+    async fn release_variant(&self, v: &Variant, p: &mut Proc) {
+        if let Some(mut c) = p.child.take() {
+            let _ = c.kill().await;
+        }
+        p.paused = false;
+        v.admitted.store(false, Ordering::SeqCst);
+        v.permit.lock().unwrap().take();
     }
 
     /// `(per-user, global)` transcode caps for a user whose own limit is `user_max`
@@ -485,7 +619,49 @@ impl SessionManager {
         req: StartRequest,
         rungs: Vec<VariantSpec>,
     ) -> Result<SessionInfo, PlaybackError> {
-        let mut ids = vec![VARIANT];
+        self.create_inner(req, VARIANT, None, rungs, None).await
+    }
+
+    /// A multi-variant session (#111, see [`AdaptiveRequest`]). Only the start variant's ffmpeg
+    /// runs at first. Without a keyframe index (EVENT fallback) the rungs are dropped and the
+    /// session is a plain single-variant one.
+    pub async fn create_session_adaptive(
+        &self,
+        req: StartRequest,
+        a: AdaptiveRequest,
+    ) -> Result<SessionInfo, PlaybackError> {
+        if !valid_variant_id(&a.primary_id) {
+            return Err(PlaybackError::Invalid(format!(
+                "bad variant id {:?}",
+                a.primary_id
+            )));
+        }
+        if a.start != a.primary_id && !a.rungs.iter().any(|r| r.id == a.start) {
+            return Err(PlaybackError::Invalid(format!(
+                "unknown start variant {:?}",
+                a.start
+            )));
+        }
+        let primary_id = a.primary_id.clone();
+        self.create_inner(
+            req,
+            &primary_id,
+            Some(a.primary_meta),
+            a.rungs,
+            Some(a.start),
+        )
+        .await
+    }
+
+    async fn create_inner(
+        &self,
+        req: StartRequest,
+        primary_id: &str,
+        primary_meta: Option<VariantMeta>,
+        rungs: Vec<VariantSpec>,
+        start_variant: Option<String>,
+    ) -> Result<SessionInfo, PlaybackError> {
+        let mut ids = vec![primary_id];
         for r in &rungs {
             if !valid_variant_id(&r.id) || ids.contains(&r.id.as_str()) {
                 return Err(PlaybackError::Invalid(format!("bad variant id {:?}", r.id)));
@@ -499,7 +675,7 @@ impl SessionManager {
             ids.push(&r.id);
         }
         let mode = req.decision.mode;
-        let counts = matches!(mode, PlaybackMode::Transcode | PlaybackMode::AudioTranscode);
+        let adaptive_req = start_variant.is_some() && mode.needs_ffmpeg();
         let id = uuid::Uuid::new_v4().to_string();
         let seg = self.cfg.segment_secs;
         let duration = req.file.duration_s.unwrap_or(0.0);
@@ -636,8 +812,9 @@ impl SessionManager {
                 return Err(e);
             }
         }
-        // one slot of the global ffmpeg budget per ffmpeg-backed session (remux included)
-        let permit = if mode.needs_ffmpeg() {
+        // one slot of the global ffmpeg budget per ffmpeg-backed session (remux included);
+        // multi-variant sessions take one per running variant instead (`admit_variant`)
+        let permit = if mode.needs_ffmpeg() && !adaptive_req {
             match self.media.try_proc() {
                 Ok(p) => Some(p),
                 Err(e) => {
@@ -655,19 +832,41 @@ impl SessionManager {
         let mut variants = Vec::new();
         if let Some(dir) = &dir {
             let hw = self.effective_hwaccel();
-            variants.push(Arc::new(Variant::new(
-                VARIANT,
-                req.decision.clone(),
-                dir.clone(),
-                hw.clone(),
-            )));
+            let mut primary =
+                Variant::new(primary_id, req.decision.clone(), dir.clone(), hw.clone());
+            primary.meta = primary_meta;
+            variants.push(Arc::new(primary));
             if !event_mode {
                 for r in rungs {
                     let vdir = dir.join(&r.id);
-                    variants.push(Arc::new(Variant::new(&r.id, r.decision, vdir, hw.clone())));
+                    let mut v = Variant::new(&r.id, r.decision, vdir, hw.clone());
+                    v.meta = r.meta;
+                    variants.push(Arc::new(v));
                 }
             }
         }
+        // a multi-variant session needs a plan (its rungs are aligned to it)
+        let adaptive = adaptive_req && !event_mode;
+        let start_id = start_variant
+            .filter(|s| adaptive && variants.iter().any(|v| &v.id == s))
+            .unwrap_or_else(|| primary_id.to_string());
+        let start_v = variants.iter().find(|v| v.id == start_id).cloned();
+        let counts = if adaptive {
+            start_v.as_ref().is_some_and(|v| v.encodes())
+        } else {
+            matches!(mode, PlaybackMode::Transcode | PlaybackMode::AudioTranscode)
+        };
+        // an EVENT-fallback session asked to be adaptive is a classic one: it takes its permit now
+        let permit = match permit {
+            None if adaptive_req && !adaptive => match self.media.try_proc() {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    revoke(self);
+                    return Err(e);
+                }
+            },
+            p => p,
+        };
         let session = Arc::new(Session {
             id: id.clone(),
             user_id: req.user_id,
@@ -692,6 +891,9 @@ impl SessionManager {
                 bitrate_kbps: None,
             }),
             last_req: AtomicU32::new(0),
+            adaptive,
+            user_max_transcodes: req.user_max_transcodes,
+            delivering: Mutex::new(None),
             variants,
         });
 
@@ -714,8 +916,7 @@ impl SessionManager {
                 }
             }
             if counts {
-                let live = |s: &&Arc<Session>| counts_as_transcode(s);
-                let global = map.values().filter(live).count() + ext_global;
+                let global = map.values().map(|s| transcode_weight(s)).sum::<usize>() + ext_global;
                 if self.cfg.max_global_transcodes > 0 && global >= self.cfg.max_global_transcodes {
                     drop(map);
                     revoke(self);
@@ -723,9 +924,9 @@ impl SessionManager {
                 }
                 let user = map
                     .values()
-                    .filter(live)
                     .filter(|s| s.user_id == req.user_id)
-                    .count()
+                    .map(|s| transcode_weight(s))
+                    .sum::<usize>()
                     + ext_user;
                 let (user_max, _) = self.transcode_caps(req.user_max_transcodes);
                 if user_max > 0 && user >= user_max {
@@ -734,6 +935,18 @@ impl SessionManager {
                     return Err(PlaybackError::UserLimit(user_max));
                 }
             }
+            if let (true, Some(v)) = (adaptive, &start_v) {
+                // the start variant is admitted with the session (same lock, so the caps hold)
+                match self.media.try_proc() {
+                    Ok(p) => *v.permit.lock().unwrap() = Some(p),
+                    Err(e) => {
+                        drop(map);
+                        revoke(self);
+                        return Err(e);
+                    }
+                }
+                v.admitted.store(true, Ordering::SeqCst);
+            }
             map.insert(id.clone(), session.clone());
         }
         if event_mode && !remote {
@@ -741,7 +954,7 @@ impl SessionManager {
                 .acquire(&self.cfg, session.file.id, &session.file.path);
         }
 
-        if let (Some(dir), Some(primary)) = (&dir, session.primary()) {
+        if let (Some(dir), Some(primary)) = (&dir, start_v.as_ref()) {
             // map the resume position through the plan (real keyframe boundaries in copy mode)
             let start = session
                 .plan
@@ -917,21 +1130,73 @@ impl SessionManager {
     }
 
     async fn info_of(&self, s: &Session) -> SessionInfo {
-        let (active, paused) = match s.primary().map(|v| v.proc.try_lock()) {
-            None => (false, false),
-            Some(Ok(mut p)) => (
-                p.child
-                    .as_mut()
-                    .is_some_and(|c| matches!(c.try_wait(), Ok(None))),
-                p.paused,
-            ),
-            Some(Err(_)) => (true, false),
+        // (alive, paused) per variant; a variant busy (re)starting counts as running
+        let states: Vec<(bool, bool)> = s
+            .variants
+            .iter()
+            .map(|v| match v.proc.try_lock() {
+                Ok(mut p) => (
+                    p.child
+                        .as_mut()
+                        .is_some_and(|c| matches!(c.try_wait(), Ok(None))),
+                    p.paused,
+                ),
+                Err(_) => (true, false),
+            })
+            .collect();
+        let delivering = s.delivering.lock().unwrap().clone();
+        // the variant that describes the session: what is being delivered, else the primary
+        let shown = delivering
+            .as_deref()
+            .and_then(|d| s.variants.iter().position(|v| v.id == d))
+            .unwrap_or(0);
+        let (active, paused) = if s.adaptive {
+            let alive: Vec<&(bool, bool)> = states.iter().filter(|x| x.0).collect();
+            (
+                !alive.is_empty(),
+                !alive.is_empty() && alive.iter().all(|x| x.1),
+            )
+        } else {
+            states.first().copied().unwrap_or((false, false))
         };
+        let shown_v = s.variants.get(shown);
+        let decision = shown_v.map_or(&s.decision, |v| &v.decision);
         // clone: a guard taken inside the struct literal would live until its end (and deadlock)
-        let hw = s
-            .primary()
+        let hw = shown_v
             .map(|v| v.hw.lock().unwrap().clone())
             .unwrap_or_else(|| self.effective_hwaccel());
+        let variants = if s.adaptive {
+            s.variants
+                .iter()
+                .zip(&states)
+                .map(|(v, (alive, paused))| {
+                    let vhw = v.hw.lock().unwrap().clone();
+                    let meta = v.meta.clone();
+                    VariantStatus {
+                        id: v.id.clone(),
+                        label: meta
+                            .as_ref()
+                            .map_or_else(|| v.id.clone(), |m| m.label.clone()),
+                        width: meta.as_ref().map_or(0, |m| m.width),
+                        height: meta.as_ref().map_or(0, |m| m.height),
+                        bandwidth_kbps: meta.as_ref().map_or(0, |m| m.average_kbps),
+                        encoder: match &v.decision.video {
+                            VideoAction::Encode { codec, .. } => Some(vhw.encoder_label(codec)),
+                            _ => None,
+                        },
+                        state: match (alive, paused) {
+                            (true, true) => "paused",
+                            (true, false) => "running",
+                            _ => "idle",
+                        }
+                        .into(),
+                        last_request_s: v.last_used.lock().unwrap().elapsed().as_secs(),
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let m = s.meta.lock().unwrap();
         SessionInfo {
             id: s.id.clone(),
@@ -943,12 +1208,19 @@ impl SessionManager {
             started_at: s.started_at,
             last_ping: m.last_ping,
             position_s: m.position_s,
-            bitrate_kbps: m.bitrate_kbps.or_else(|| match &s.decision.video {
-                VideoAction::Encode { bitrate_kbps, .. } => Some(*bitrate_kbps),
-                _ => s.file.bitrate.map(|b| (b / 1000) as u32),
-            }),
+            bitrate_kbps: if s.adaptive {
+                shown_v
+                    .and_then(|v| v.meta.as_ref())
+                    .map(|m| m.average_kbps)
+                    .or(m.bitrate_kbps)
+            } else {
+                m.bitrate_kbps.or_else(|| match &s.decision.video {
+                    VideoAction::Encode { bitrate_kbps, .. } => Some(*bitrate_kbps),
+                    _ => s.file.bitrate.map(|b| (b / 1000) as u32),
+                })
+            },
             hwaccel: hw.name().into(),
-            encoder: match &s.decision.video {
+            encoder: match &decision.video {
                 VideoAction::Encode { codec, .. } => Some(hw.encoder_label(codec)),
                 _ => None,
             },
@@ -956,6 +1228,8 @@ impl SessionManager {
             paused,
             client_paused: m.client_paused,
             fallback_playlist: s.event_mode,
+            variants,
+            delivering: if s.adaptive { delivering } else { None },
         }
     }
 
@@ -1023,6 +1297,8 @@ impl SessionManager {
             if let Some(mut c) = p.child.take() {
                 let _ = c.kill().await;
             }
+            v.admitted.store(false, Ordering::SeqCst);
+            v.permit.lock().unwrap().take();
         }
         if let Some(dir) = &s.dir {
             let _ = tokio::fs::remove_dir_all(dir).await;
@@ -1080,7 +1356,42 @@ impl SessionManager {
             tracing::info!(session = %id, "reaping idle playback session");
             self.remove(id).await;
         }
+        self.stop_idle_variants().await;
         victims
+    }
+
+    /// Multi-variant sessions: stop each admitted variant the player hasn't fetched from for
+    /// `variant_idle_timeout`, releasing its transcode and process slots (#111).
+    pub async fn stop_idle_variants(&self) -> Vec<(String, String)> {
+        let limit = self.cfg.variant_idle_timeout;
+        let candidates: Vec<(Arc<Session>, Arc<Variant>)> = {
+            let map = self.sessions.lock().unwrap();
+            map.values()
+                .filter(|s| s.adaptive)
+                .flat_map(|s| {
+                    s.variants
+                        .iter()
+                        .filter(|v| {
+                            v.admitted.load(Ordering::SeqCst)
+                                && v.last_used.lock().unwrap().elapsed() >= limit
+                        })
+                        .map(|v| (s.clone(), v.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
+        let mut stopped = Vec::new();
+        for (s, v) in candidates {
+            let mut p = v.proc.lock().await;
+            // a request may have arrived while we waited for the lock
+            if !v.admitted.load(Ordering::SeqCst) || v.last_used.lock().unwrap().elapsed() < limit {
+                continue;
+            }
+            tracing::info!(session = %s.id, variant = %v.id, "stopping idle variant");
+            self.release_variant(&v, &mut p).await;
+            stopped.push((s.id.clone(), v.id.clone()));
+        }
+        stopped
     }
 
     /// Directory of a session (None for direct play).
@@ -1099,6 +1410,15 @@ impl SessionManager {
                 "direct-play sessions have no HLS playlist".into(),
             ));
         }
+        if s.adaptive {
+            let mut vs: Vec<(&str, &VariantMeta)> = s
+                .variants
+                .iter()
+                .filter_map(|v| Some((v.id.as_str(), v.meta.as_ref()?)))
+                .collect();
+            vs.sort_by_key(|(_, m)| m.peak_kbps);
+            return Ok(build_multivariant_playlist(&vs));
+        }
         let (w, h, vb) = match &s.decision.video {
             VideoAction::Encode {
                 width,
@@ -1116,7 +1436,12 @@ impl SessionManager {
             AudioAction::Encode { bitrate_kbps, .. } => *bitrate_kbps,
             _ => 192,
         };
-        Ok(build_master_playlist(((vb + ab) as u64) * 1000, w.zip(h)))
+        let primary = s.primary().map_or(VARIANT, |v| v.id.as_str());
+        Ok(build_master_playlist_for(
+            primary,
+            ((vb + ab) as u64) * 1000,
+            w.zip(h),
+        ))
     }
 
     /// Full VOD media playlist (`main/index.m3u8`), generated up front from the duration.
@@ -1181,7 +1506,7 @@ impl SessionManager {
 
     /// Media playlist of one variant (all variants share the session's plan, so the same text).
     pub async fn variant_playlist(&self, id: &str, variant: &str) -> Result<String, PlaybackError> {
-        self.get(id)?.variant(variant)?;
+        self.get(id)?.variant(variant)?.used();
         self.media_playlist_async(id).await
     }
 
@@ -1232,6 +1557,7 @@ impl SessionManager {
             ));
         }
         let v = s.variant(variant)?.clone();
+        v.used();
         let dir = v.dir.clone();
         let wanted: Option<u32> = if name == INIT_NAME {
             None
@@ -1243,6 +1569,7 @@ impl SessionManager {
             }
             v.last_req.store(n, Ordering::Relaxed);
             s.last_req.store(n, Ordering::Relaxed);
+            *s.delivering.lock().unwrap() = Some(v.id.clone());
             Some(n)
         };
         let path = dir.join(name);
@@ -1384,6 +1711,11 @@ impl SessionManager {
                             )));
                         }
                         restarts += 1;
+                    }
+                    if s.adaptive {
+                        // a variant that was idle (never started, or stopped) is admitted again:
+                        // caps and process budget re-checked (429 → the player switches)
+                        self.admit_variant(&s, &v)?;
                     }
                     tracing::info!(session = %id, variant = %v.id, segment = target, "restarting ffmpeg");
                     self.start_ffmpeg(&s, &v, &mut p, target).await?;
@@ -1944,12 +2276,44 @@ async fn trim_behind(dir: &Path, keep_from: u32) {
 }
 
 pub fn build_master_playlist(bandwidth_bps: u64, resolution: Option<(u32, u32)>) -> String {
+    build_master_playlist_for(VARIANT, bandwidth_bps, resolution)
+}
+
+/// Single-variant master pointing at variant `id`.
+pub fn build_master_playlist_for(
+    id: &str,
+    bandwidth_bps: u64,
+    resolution: Option<(u32, u32)>,
+) -> String {
     let res = resolution
         .map(|(w, h)| format!(",RESOLUTION={w}x{h}"))
         .unwrap_or_default();
     format!(
-        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-STREAM-INF:BANDWIDTH={bandwidth_bps}{res}\n{VARIANT}/index.m3u8\n"
+        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-STREAM-INF:BANDWIDTH={bandwidth_bps}{res}\n{id}/index.m3u8\n"
     )
+}
+
+/// Master playlist of a multi-variant session (#111): one `EXT-X-STREAM-INF` per variant, in the
+/// given order (ascending bandwidth), with both bandwidth figures (hls.js uses the average while
+/// its buffer is healthy, the peak when it's low) and `CODECS` (hls.js drops a level it can't
+/// play, and switches only between levels of one codec set).
+pub fn build_multivariant_playlist(variants: &[(&str, &VariantMeta)]) -> String {
+    let mut o = String::from("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n");
+    for (id, m) in variants {
+        o.push_str(&format!(
+            "#EXT-X-STREAM-INF:BANDWIDTH={},AVERAGE-BANDWIDTH={}",
+            m.peak_kbps.max(m.average_kbps) as u64 * 1000,
+            m.average_kbps as u64 * 1000
+        ));
+        if m.width > 0 && m.height > 0 {
+            o.push_str(&format!(",RESOLUTION={}x{}", m.width, m.height));
+        }
+        if let Some(c) = &m.codecs {
+            o.push_str(&format!(",CODECS=\"{c}\""));
+        }
+        o.push_str(&format!("\n{id}/index.m3u8\n"));
+    }
+    o
 }
 
 /// VOD playlist from a segment plan (real keyframe boundaries in copy mode).
@@ -1986,6 +2350,19 @@ pub fn build_vod_playlist(duration_s: f64, seg_secs: u32) -> String {
     o
 }
 
+/// Transcode slots a session holds: one for a classic (audio-)transcode session for its whole
+/// life; for a multi-variant session, one per admitted variant that re-encodes something.
+fn transcode_weight(s: &Session) -> usize {
+    if s.adaptive {
+        s.variants
+            .iter()
+            .filter(|v| v.admitted.load(Ordering::SeqCst) && v.encodes())
+            .count()
+    } else {
+        usize::from(counts_as_transcode(s))
+    }
+}
+
 fn counts_as_transcode(s: &Session) -> bool {
     matches!(
         s.decision.mode,
@@ -2020,6 +2397,34 @@ mod tests {
         assert!(p.contains("#EXTINF:4.000,\nseg_00001.m4s"));
         assert!(p.contains("#EXTINF:2.000,\nseg_00002.m4s"));
         assert!(p.trim_end().ends_with("#EXT-X-ENDLIST"));
+    }
+
+    #[test]
+    fn multivariant_master_shape() {
+        let m = |label: &str, w, h, avg, peak, codecs: Option<&str>| VariantMeta {
+            label: label.into(),
+            width: w,
+            height: h,
+            average_kbps: avg,
+            peak_kbps: peak,
+            codecs: codecs.map(str::to_string),
+        };
+        let low = m(
+            "480p",
+            854,
+            462,
+            1592,
+            1872,
+            Some("hvc1.2.4.L90.B0,mp4a.40.2"),
+        );
+        let orig = m("Original", 1920, 1038, 6500, 11050, None);
+        let p = build_multivariant_playlist(&[("480p", &low), ("original", &orig)]);
+        assert_eq!(
+            p,
+            "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n\
+             #EXT-X-STREAM-INF:BANDWIDTH=1872000,AVERAGE-BANDWIDTH=1592000,RESOLUTION=854x462,CODECS=\"hvc1.2.4.L90.B0,mp4a.40.2\"\n480p/index.m3u8\n\
+             #EXT-X-STREAM-INF:BANDWIDTH=11050000,AVERAGE-BANDWIDTH=6500000,RESOLUTION=1920x1038\noriginal/index.m3u8\n"
+        );
     }
 
     #[test]

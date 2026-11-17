@@ -1445,6 +1445,8 @@ async fn vod_play_inner(
             default: s.default,
         })
         .collect();
+    // IPTV VOD is single-variant: two ffmpegs would need two provider connections (#111)
+    let variants = crate::playback::single_variant(&decision, quality, bitrate_kbps, &streams);
     Ok((
         DecideResponse {
             session_id: info.id,
@@ -1457,6 +1459,8 @@ async fn vod_play_inner(
             bitrate_kbps,
             quality,
             quality_options,
+            variants,
+            start_variant: None,
         },
         vs,
     ))

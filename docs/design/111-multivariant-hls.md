@@ -1,8 +1,23 @@
 # Design: multi-variant HLS with lazy rungs (#111)
 
-> **Status: approved 2026-11-17 (PR #178). Being built: ① (segment plan + keyframe alignment) is in
-> review; ②–④ aren't built.** Until ② ships, every session the API creates is single-rendition. Once it ships, the stable parts move into
-> [ARCHITECTURE.md](../ARCHITECTURE.md) §3.1 and this note is trimmed to what's still useful.
+> **Status: approved 2026-11-17 (PR #178); the owner accepted every proposal in §16. ① (segment plan +
+> keyframe alignment, #182) is merged; ② (master playlist, lazy rung lifecycle, API) is in review; ③–④
+> aren't built.** No client asks for a multi-variant session until ③ ships. Once it does, the stable parts
+> move into [ARCHITECTURE.md](../ARCHITECTURE.md) §3.1 and this note is trimmed to what's still useful.
+>
+> **Built differently from the text below (②):**
+> - The original's `BANDWIDTH` is always 1.7× its average bitrate; peaks from the index's byte positions
+>   aren't read (the readers return times only).
+> - Classic single-variant sessions keep today's one-line master without `CODECS` (adding it could make
+>   hls.js drop a level whose string a browser rejects). Their variant stays `main`; a multi-variant session
+>   names its primary `original`, or the top rung's class (`1080p`, `720p`, `480p`) when it only transcodes.
+> - A stopped rung's finished segments are still served without starting its ffmpeg; only a segment it never
+>   produced needs a new start (and admission).
+> - A session counts against the caps per admitted variant that re-encodes something (an audio-only
+>   transcode original counts while admitted). A variant is admitted from its first start until it is
+>   stopped for being idle, not just while its process lives, so ffmpeg reaching the end of the file doesn't
+>   free the slot early.
+> - The variant ladder lives in `playback/src/variants.rs`; the decision rows of §4/§8 are its unit tests.
 
 Epic #151, Wave 2. Replaces decision A6 ("one session = one rendition"). Builds on #87 (quality choice),
 #112 item 1 (compressed playlists) and #113 part 1 (low-power encoders). Takes over what's left of #1
@@ -381,13 +396,13 @@ shows the level).
 - Admin → Now playing shows the delivered variant. `ps` on CT 113 shows the rung's ffmpeg only while it's
   fetched.
 
-## 16. Open questions for the owner
+## 16. Questions the owner decided (2026-11-17: every proposal accepted)
 
-| # | Question | Proposal |
+| # | Question | Decision |
 |---|---|---|
 | Q1 | Direct-playable files under Auto: keep direct play (no ABR) or remux to get ABR? | Direct play when the stored estimate ≥ 1.5× the file's bitrate, else remux + rungs (and remux on the first play with no estimate). Costs one remux process (~107× realtime, no GPU) |
 | Q2 | AV1/VP9 originals (14 AV1 files): the N100 can't encode an AV1 rung, and hls.js won't auto-switch to an H.264 one | Original only, plus #1's stall → re-decide fallback. Alternative: list H.264 rungs and have the client force a cross-codec switch (Chrome supports `changeType`), which means custom ABR code |
-| Q3 | HEVC rung bitrates | 1080p 5 M / 720p 2.8 M / 480p 1.4 M (about 0.7× H.264); confirm with a quick VMAF check in ① |
+| Q3 | HEVC rung bitrates | 1080p 5 M / 720p 2.8 M / 480p 1.4 M (about 0.7× H.264). **VMAF check (2026-11-17)**: 60 s of Meet Joe Black (10-bit x265 1080p) from 30:00, low-power VAAPI on CT 113, each encode scaled back to 1920×1040 and scored against the source. HEVC vs H.264 per rung: 1080p 78.9 vs 79.3 (5.5 vs 9.0 Mbit/s measured), 720p 73.6 vs 73.9 (3.1 vs 4.5), 480p 64.5 vs 64.5 (1.5 vs 2.3). Same picture within 0.4 VMAF at 61–68 % of the bitrate |
 | Q4 | How many rungs to list | All qualifying (≤ 3), since idle rungs cost nothing. Alternative: cap at 2 (highest below the original + 480p) |
 | Q5 | IPTV VOD stays single-variant (two ffmpegs would need two provider connections; the plan allows one) | Yes. Later option: one ffmpeg with two outputs (copy + encode) on the single connection, but then the rung always runs |
 | Q6 | Safari/webOS/Tizen native players and casts: their own ABR could use a multi-variant master, but they can't be pinned to Original/720p | Single variant for now; opt Safari in later once ② is proven |

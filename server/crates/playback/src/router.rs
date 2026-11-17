@@ -22,7 +22,8 @@ impl IntoResponse for PlaybackError {
             PlaybackError::Invalid(_) => StatusCode::BAD_REQUEST,
             PlaybackError::GlobalLimit(_)
             | PlaybackError::UserLimit(_)
-            | PlaybackError::UserStreamLimit(_) => StatusCode::TOO_MANY_REQUESTS,
+            | PlaybackError::UserStreamLimit(_)
+            | PlaybackError::VariantRefused(_) => StatusCode::TOO_MANY_REQUESTS,
             PlaybackError::SegmentUnavailable(_)
             | PlaybackError::Busy
             | PlaybackError::DiskBudget => StatusCode::SERVICE_UNAVAILABLE,

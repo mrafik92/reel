@@ -57,6 +57,32 @@ pub struct DecideRequest {
     pub quality: Option<Quality>,
     /// Client bandwidth estimate (kbit/s). The effective cap is `min(this, your bitrate limit)`.
     pub max_bitrate_kbps: Option<u32>,
+    /// The player switches between variants itself (hls.js): ask for a multi-variant master
+    /// playlist, the original plus lazily transcoded rungs (#111). Ignored for casts, IPTV VOD
+    /// and when the server's `REEL_ABR` is off.
+    pub adaptive: Option<bool>,
+    /// Measured throughput (kbit/s) of adaptive players. It picks the start variant and whether
+    /// a direct-playable file is direct played; unlike `max_bitrate_kbps` it caps nothing.
+    pub bandwidth_kbps: Option<u32>,
+}
+
+/// One variant of the session's master playlist (#111), in master order (ascending bandwidth).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct VariantOption {
+    /// `original` or a ladder rung: also the variant's URL path segment.
+    pub id: Quality,
+    pub label: String,
+    pub width: u32,
+    pub height: u32,
+    /// Peak bitrate (kbit/s), the master's `BANDWIDTH`.
+    pub bandwidth_kbps: u32,
+    /// Average bitrate (kbit/s), the master's `AVERAGE-BANDWIDTH`.
+    pub average_kbps: u32,
+    /// RFC 6381 `CODECS` value, when every track can be described.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codecs: Option<String>,
+    /// The picture is re-encoded for this variant.
+    pub transcode: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -92,6 +118,119 @@ pub struct DecideResponse {
     /// Choices for a quality menu, with expected bitrates and availability (never upscales,
     /// respects the user's bitrate limit).
     pub quality_options: Vec<QualityOption>,
+    /// Variants of the master playlist (several for an adaptive session, #111; one otherwise;
+    /// none for direct play). `decision`, `quality` and `bitrate_kbps` describe the top one.
+    pub variants: Vec<VariantOption>,
+    /// The variant the player should start on (prestarted by the server); adaptive sessions only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_variant: Option<Quality>,
+}
+
+/// A multi-variant session plan (#111).
+struct Adaptive {
+    top: PlaybackDecision,
+    quality: Quality,
+    planned: Vec<reel_playback::variants::PlannedVariant>,
+    start: usize,
+}
+
+/// Plan a multi-variant session for an adaptive player, or `None` (a classic single-variant
+/// session). `top` is the decision with no bandwidth hint (user limit and device applied).
+/// What [`plan_adaptive`] needs to know about the request.
+struct AdaptiveCtx<'a> {
+    user_id: i64,
+    user_max_transcodes: Option<usize>,
+    user_cap_kbps: Option<u32>,
+    file: &'a model::FileInfo,
+    streams: &'a [model::StreamInfo],
+    asked: Quality,
+    estimate_kbps: Option<u32>,
+}
+
+fn plan_adaptive(
+    st: &AppState,
+    c: &AdaptiveCtx<'_>,
+    top: reel_playback::QualityDecision,
+) -> Option<Adaptive> {
+    use reel_playback::variants;
+    let mut decision = top.decision;
+    if decision.mode == PlaybackMode::DirectPlay {
+        // Q1: direct play when the link is comfortably faster than the file, else a remux
+        // original with rungs below it (also on a first play, with no estimate)
+        if c.asked != Quality::Auto || variants::direct_play_fits(c.file, c.estimate_kbps) {
+            return None;
+        }
+        decision = variants::remux_of_direct(&decision, c.streams)?;
+    }
+    if !decision.mode.needs_ffmpeg() || reel_playback::ffmpeg::is_remote(&c.file.path) {
+        return None;
+    }
+    let hw = st.playback.effective_hwaccel();
+    let planned = variants::plan_variants(&variants::VariantInput {
+        file: c.file,
+        streams: c.streams,
+        top: &decision,
+        user_cap_kbps: c.user_cap_kbps,
+        hw: &hw,
+        free_transcode_slots: st.playback.transcode_room(c.user_id, c.user_max_transcodes),
+    });
+    // one variant gives nothing a classic session doesn't (and a remux of a direct-playable
+    // file would only cost a process)
+    if planned.len() < 2 {
+        return None;
+    }
+    let start = variants::start_index(&planned, c.asked, c.estimate_kbps);
+    let quality = planned
+        .iter()
+        .find(|v| v.decision == decision)
+        .map_or(top.quality, |v| v.id);
+    Some(Adaptive {
+        top: decision,
+        quality,
+        planned,
+        start,
+    })
+}
+
+/// The one variant of a classic session (none for direct play).
+pub(crate) fn single_variant(
+    d: &PlaybackDecision,
+    quality: Quality,
+    bitrate_kbps: u32,
+    streams: &[model::StreamInfo],
+) -> Vec<VariantOption> {
+    if d.mode == PlaybackMode::DirectPlay {
+        return Vec::new();
+    }
+    let (w, h, transcode) = match &d.video {
+        reel_playback::decision::VideoAction::Encode { width, height, .. } => {
+            (*width, *height, true)
+        }
+        _ => {
+            let v = streams
+                .iter()
+                .find(|s| s.kind == StreamKind::Video && Some(s.idx) == d.video_index);
+            (
+                v.and_then(|v| v.width).unwrap_or(0).max(0) as u32,
+                v.and_then(|v| v.height).unwrap_or(0).max(0) as u32,
+                false,
+            )
+        }
+    };
+    vec![VariantOption {
+        id: quality,
+        label: if quality == Quality::Original {
+            "Original".into()
+        } else {
+            quality.id().into()
+        },
+        width: w,
+        height: h,
+        bandwidth_kbps: bitrate_kbps,
+        average_kbps: bitrate_kbps,
+        codecs: None,
+        transcode,
+    }]
 }
 
 /// Re-deciding for the same file on the same device (quality switch, resume position) replaces
@@ -216,9 +355,52 @@ pub async fn decide_playback(
             max_bitrate_kbps: req.max_bitrate_kbps.filter(|v| *v > 0),
         },
     );
-    let (decision, quality, bitrate_kbps, quality_options) =
-        (qd.decision, qd.quality, qd.bitrate_kbps, qd.options);
-    if let Some(max) = limits.max_transcodes {
+    let user_cap = max_bitrate_kbps.and_then(|v| u32::try_from(v).ok());
+    let user_max_transcodes = limits.max_transcodes.and_then(|v| usize::try_from(v).ok());
+    let adaptive = if req.adaptive == Some(true) && cast.is_none() && st.config.abr {
+        // the top variant: Auto with no bandwidth hint (only the user limit and the device)
+        let asked = req.quality.unwrap_or_default();
+        let top = decide_quality(
+            &DecisionInput {
+                file: &file,
+                streams: &streams,
+                audio_index: selected.audio_index,
+                subtitle_index: selected.subtitle_index,
+                profile: &profile,
+                max_bitrate_kbps: user_cap,
+            },
+            &QualityRequest::default(),
+        );
+        plan_adaptive(
+            &st,
+            &AdaptiveCtx {
+                user_id: u.id(),
+                user_max_transcodes,
+                user_cap_kbps: user_cap,
+                file: &file,
+                streams: &streams,
+                asked,
+                estimate_kbps: req.bandwidth_kbps.filter(|v| *v > 0),
+            },
+            top,
+        )
+    } else {
+        None
+    };
+    let (decision, quality, bitrate_kbps, quality_options) = match &adaptive {
+        Some(a) => (
+            a.top.clone(),
+            a.quality,
+            a.planned
+                .iter()
+                .find(|v| v.decision == a.top)
+                .map_or(qd.bitrate_kbps, |v| v.meta.average_kbps),
+            qd.options,
+        ),
+        None => (qd.decision, qd.quality, qd.bitrate_kbps, qd.options),
+    };
+    // multi-variant sessions are checked atomically when they are created (per running variant)
+    if let (Some(max), None) = (limits.max_transcodes, &adaptive) {
         let transcoding = mine
             .iter()
             .filter(|s| {
@@ -238,20 +420,72 @@ pub async fn decide_playback(
             )));
         }
     }
-    let info = st
-        .playback
-        .create_session(reel_playback::StartRequest {
-            user_id: u.id(),
-            device_id: req.device_id.clone(),
-            file: file.clone(),
-            streams: streams.clone(),
-            decision: decision.clone(),
-            start_position_s: req.start_s.unwrap_or(0.0).max(0.0),
-            user_max_streams: limits.max_streams.and_then(|v| usize::try_from(v).ok()),
-            user_max_transcodes: limits.max_transcodes.and_then(|v| usize::try_from(v).ok()),
-            user_agent: None,
-        })
-        .await?;
+    let start_req = reel_playback::StartRequest {
+        user_id: u.id(),
+        device_id: req.device_id.clone(),
+        file: file.clone(),
+        streams: streams.clone(),
+        decision: decision.clone(),
+        start_position_s: req.start_s.unwrap_or(0.0).max(0.0),
+        user_max_streams: limits.max_streams.and_then(|v| usize::try_from(v).ok()),
+        user_max_transcodes,
+        user_agent: None,
+    };
+    let info = match &adaptive {
+        Some(a) => {
+            let primary = a
+                .planned
+                .iter()
+                .find(|v| v.decision == a.top)
+                .ok_or_else(|| ApiError::Internal("adaptive plan without its top".into()))?;
+            let rungs = a
+                .planned
+                .iter()
+                .filter(|v| v.decision != a.top)
+                .map(|v| reel_playback::VariantSpec {
+                    id: v.id.id().into(),
+                    decision: v.decision.clone(),
+                    meta: Some(v.meta.clone()),
+                })
+                .collect();
+            st.playback
+                .create_session_adaptive(
+                    start_req,
+                    reel_playback::session::AdaptiveRequest {
+                        primary_id: primary.id.id().into(),
+                        primary_meta: primary.meta.clone(),
+                        rungs,
+                        start: a.planned[a.start].id.id().into(),
+                    },
+                )
+                .await?
+        }
+        None => st.playback.create_session(start_req).await?,
+    };
+    // what the master really lists (a session without a keyframe plan drops its rungs)
+    let (variants, start_variant) = match &adaptive {
+        Some(a) if !info.variants.is_empty() => (
+            a.planned
+                .iter()
+                .filter(|v| info.variants.iter().any(|s| s.id == v.id.id()))
+                .map(|v| VariantOption {
+                    id: v.id,
+                    label: v.meta.label.clone(),
+                    width: v.meta.width,
+                    height: v.meta.height,
+                    bandwidth_kbps: v.meta.peak_kbps,
+                    average_kbps: v.meta.average_kbps,
+                    codecs: v.meta.codecs.clone(),
+                    transcode: v.transcode(),
+                })
+                .collect(),
+            Some(a.planned[a.start].id),
+        ),
+        _ => (
+            single_variant(&decision, quality, bitrate_kbps, &streams),
+            None,
+        ),
+    };
     let sg = st.signer(u.id());
     let ttl = if cast.is_some() {
         crate::prefs::Cast::ttl(&st)
@@ -343,6 +577,8 @@ pub async fn decide_playback(
         bitrate_kbps,
         quality,
         quality_options,
+        variants,
+        start_variant,
     }))
 }
 
@@ -580,6 +816,12 @@ pub struct AdminSession {
     pub active: bool,
     pub started_at: i64,
     pub last_ping: i64,
+    /// Multi-variant sessions (#111): each variant and whether its ffmpeg runs; empty otherwise.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<reel_playback::VariantStatus>,
+    /// The variant the player is being sent (of its most recent segment request).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivering: Option<String>,
 }
 
 /// Live playback sessions.
@@ -622,6 +864,8 @@ pub async fn admin_sessions(
             active: s.active,
             started_at: s.started_at,
             last_ping: s.last_ping,
+            variants: s.variants,
+            delivering: s.delivering,
         });
     }
     // Drop DB rows of sessions that ended without an explicit DELETE (reaped).

@@ -41,6 +41,10 @@ pub enum PlaybackError {
     UserStreamLimit(usize),
     #[error("the server is busy; try again shortly")]
     Busy,
+    /// A variant of a multi-variant session couldn't start (transcode caps or process budget
+    /// full); the player switches to another variant (#111).
+    #[error("this quality isn't available right now: {0}")]
+    VariantRefused(String),
     #[error("not enough scratch space for another transcode right now")]
     DiskBudget,
     #[error("segment unavailable (ref {})", .0.id)]

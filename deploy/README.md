@@ -155,7 +155,10 @@ No GPU / macOS / Windows Docker Desktop: add the override so compose does not lo
 Debian's ffmpeg loads the NVENC libraries at runtime, so no image change is needed.
 
 Limit concurrent transcodes with `REEL_MAX_TRANSCODES` / `REEL_MAX_USER_TRANSCODES` (or per user in
-the admin UI).
+the admin UI). Browsers that switch quality themselves get a multi-variant stream: the original plus
+lower-quality versions that are only transcoded while they're being watched, each counting against those
+limits while it runs. `REEL_ABR=0` turns that off (one version per stream); `REEL_ABR_VARIANT_IDLE_SECS`
+(default 30) sets how soon an unwatched version stops.
 
 ## 6. IPTV
 
