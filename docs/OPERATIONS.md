@@ -28,6 +28,7 @@
 | IPTV provider login, qBittorrent password, Arr API keys | Reel DB (entered in Settings) |
 | `PROJECT_TOKEN` (classic PAT: `repo`, `project`) | GitHub repo secret, used by the `deploy` workflow to comment on tickets and move them to Deployed |
 | Cloudflare API token for Caddy DNS-01 (`CF_API_TOKEN`: zone rafikii.co, Zone Read + DNS Edit) | CT 107 `/etc/caddy/cloudflare.env` (root, 0600), loaded by the caddy unit's `override.conf`. Was written to the journal by `--environ` until 2026-11-15; **rotation pending** (owner deferred it), see Public edge → Token rotation |
+| Android release signing (#195): keystore `reel-release.jks` (alias `reel`) and its password | GitHub Actions secrets `ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` (used only by `android-release.yml`), plus the original keystore file and password in the owner's password manager (the only backup: losing the key means future APKs can't update installed apps). Locally, optionally `~/.reel-android/` (0700) and a git-ignored `clients/android/keystore.properties`. Setup commands: `clients/android/README.md` → Release builds |
 | OPNsense API key (firewall automation) | Mac `~/.config/opnsense-api` (0600). Revoke in OPNsense if no longer needed |
 
 ## Build & deploy pipeline
@@ -72,6 +73,11 @@ CT 113:  Actions → deploy → Run workflow  (runner CT 116 → ssh forced comm
   ```
 - **Preferred: GitHub.** After an image build, its run summary links to **Actions → deploy → Run workflow**. That click is the gate (web or the GitHub mobile app). The job runs `deploy/ct113/deploy.py --forced` on CT 116: it deploys, health-checks, moves tickets to Deployed and writes a run summary. Runs are serialized, and the job refuses to deploy while a newer image build is still running. Recovery: run it with **since = <old sha>** to (re)process tickets without deploying.
 - **Fallback from the Mac:** `deploy/ct113/deploy.py` (or `--dry-run`). It pulls the latest successful image, restarts, runs a health check, then finds tickets referenced in the commits since the previously deployed build. Each gets a comment "🚀 Deployed to CT 113 — build `abc1234`" and moves to **Deployed** on the project board.
+- **Android app releases** (#195) are separate from the server image: push a tag `android-vX.Y.Z` and
+  `android-release.yml` builds a signed, R8-shrunk APK (versionName `X.Y.Z`, versionCode
+  `X*1_000_000 + Y*1_000 + Z`) and attaches it and `SHA256SUMS` to a GitHub release. It needs the four
+  `ANDROID_*` secrets (see Credentials) and fails before building if one is missing. Sideloading:
+  `clients/android/README.md`.
 - Rollback: pin `image: ghcr.io/mrafik92/reel:sha-<previous>` in the compose file and run `up -d`.
 
 ### Ticket flow (GitHub Project #1)
