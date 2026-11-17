@@ -1,6 +1,6 @@
 # Design: native Android app for TV and phone (#29)
 
-> **Status: proposed 2026-11-17.** Built so far: the project skeleton (#185) and connect + sign-in (#186). When a part ships,
+> **Status: proposed 2026-11-17.** Built so far: the project skeleton (#185) and connect + sign-in (#186) and the app shell (#187). When a part ships,
 > FEATURES.md and ARCHITECTURE.md describe it and this note is trimmed to what's still open.
 
 Epic #29 · milestone **M5 – Mobile** · sub-issues #185–#196.
@@ -41,7 +41,7 @@ clients/android/                     standalone Gradle project (not part of the 
 
 | Choice | Picked | Why |
 |---|---|---|
-| UI | Compose + Material 3; TV focus with plain `focusable`/`clickable` modifiers | One toolkit for phone and TV. `androidx.tv:tv-material` is optional (#187 decides) |
+| UI | Compose + Material 3; TV focus with plain `focusable`/`clickable` modifiers | One toolkit for phone and TV. `androidx.tv:tv-material` isn't used (#187, ARCHITECTURE A51) |
 | HTTP / JSON | OkHttp + kotlinx.serialization, hand-written models | Small API surface; no codegen step. A unit test parses the OpenAPI examples, so the models can't drift silently |
 | Images | Coil (OkHttp-backed) | The server returns signed, resized image URLs; no auth header needed |
 | Storage | DataStore (app-private): server URL, token, device id | `allowBackup=false`, so the token isn't copied into cloud backups |
