@@ -304,5 +304,5 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 4. IPTV VOD playback check on the provider (#3, owner); live HLS quality ladder.
 5. OMDb key for IMDb/RT scores.
 6. Trickplay thumbnails (the scrubber already has the slot), intro/credits skip.
-7. Android TV / phone app (needs the Android SDK), iOS later.
+7. Android TV / phone app: epic #29 with #185–#196 (milestone M5). The skeleton and CI job are in review (#185); next is sign-in (#186) and the app shell (#187). iOS later.
 8. Per-episode offsets for multi-episode files.
