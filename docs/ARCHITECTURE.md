@@ -86,7 +86,10 @@ sequenceDiagram
 
 - **Decide.** The server picks the mode from the codecs and container, the subtitle type, HDR, and the bitrate
   cap, which is the minimum of the client's bandwidth hint, the user's limit and the profile. Above the cap it
-  uses the ladder: 1080p at 8 Mbps, 720p at 4 Mbps, 480p at 2 Mbps.
+  uses the ladder: 1080p at 8 Mbps, 720p at 4 Mbps, 480p at 2 Mbps. Browsers (MSE players) downmix multichannel
+  AAC and Opus themselves, so a copy isn't limited by the channel count they report, except that AAC above 5.1 is
+  never copied to them: 7.1 AAC carries a program config element or channel config 12, which Chrome's MSE parser
+  rejects, so the stream never starts. It is re-encoded to 5.1 AAC with the video still copied.
 - **Keyframe plans.** For copy and remux, the segment boundaries in the playlist are the source's real keyframes,
   read from the MKV Cues or MP4 `stss` index. Only when the file has no index does Reel run a background
   ffprobe, at low priority, and cache the result.

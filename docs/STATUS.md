@@ -125,6 +125,13 @@ Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LA
     link faster than the file's average. Chrome over HTTP/3 on Tailscale wasn't reproduced (Playwright went
     through the dev proxy over TCP).
 
+- **7.1 AAC in the browser** (built, 🧪, not deployed): a file whose main audio is 7.1 AAC (Guardians of the Galaxy
+  Vol. 3, file 56) stopped at 0:00 with "mediaSourceRequiresReset" in Chrome, on the owner's Android phone and on
+  desktop. The server copied the 8-channel AAC into the remux, and Chrome's MSE AAC parser refuses 7.1 AAC (this file
+  signals it with a program config element; ffmpeg's own 7.1 AAC uses channel config 12, also refused). MSE players now
+  get 7.1 AAC as 5.1 AAC with the video copied; 5.1 AAC and 7.1 Opus are still copied (checked in Chrome with the
+  file's real audio track). Not caused by #111 ①: the same title fails the same way on the build before it.
+
 ## Playback baseline (2026-11-15, build `70d03eb`, #102)
 
 Measured read-only, with the admin's 6 Mbit/s cap in place. Full numbers, the comparison with YouTube and the
