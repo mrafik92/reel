@@ -16,6 +16,8 @@ import app.reel.android.BuildConfig
 import app.reel.android.LocalAppGraph
 import app.reel.android.data.Me
 import app.reel.android.ui.common.EmptyView
+import app.reel.android.ui.item.ItemLogic
+import app.reel.android.ui.shell.PlayerArgs
 import app.reel.android.ui.theme.ReelColors
 import app.reel.android.ui.tv.RestoreFocus
 import app.reel.android.ui.tv.focusMemory
@@ -32,13 +34,12 @@ fun SearchPlaceholder() = EmptyView("Search is coming in a later update.")
 @Composable
 fun LivePlaceholder() = EmptyView("Live TV is coming in a later update.")
 
-/** Replaced by #188 (libraries grid). */
+/** Replaced by #190 (VOD player). */
 @Composable
-fun LibraryPlaceholder() = EmptyView("Your libraries are coming in a later update.")
-
-/** Replaced by #188 (item detail). */
-@Composable
-fun ItemPlaceholder(id: Long) = EmptyView("Details for item $id are coming in a later update. Press Back to return.")
+fun PlayerPlaceholder(args: PlayerArgs) = EmptyView(
+    "The player is coming in a later update (file ${args.fileId}, item ${args.itemId}, from " +
+        "${ItemLogic.clock(args.startS)}). Press Back to return.",
+)
 
 /** Replaced by #194; keeps *Sign out* reachable meanwhile. */
 @Composable

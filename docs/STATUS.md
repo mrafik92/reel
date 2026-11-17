@@ -1,4 +1,4 @@
-# Status: 2026-11-17
+# Status: 2026-11-18
 
 Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
@@ -311,5 +311,5 @@ A three-reviewer council ran on 2026-11-03 (a general reviewer, plus Sonnet and 
 4. IPTV VOD playback check on the provider (#3, owner); live HLS quality ladder.
 5. OMDb key for IMDb/RT scores.
 6. Trickplay thumbnails (the scrubber already has the slot), intro/credits skip.
-7. Android TV / phone app: epic #29 with #185–#196 (milestone M5). The skeleton and CI job are merged (#185), and so are signed release APKs on an `android-v*` tag (#195); the owner still has to create the release key and set the four `ANDROID_*` Actions secrets before the first tag. Connect + sign-in is merged (#186). The app shell is in review (#187): checked on a phone emulator against a mock API; TV focus is covered by a Robolectric test, not yet tried on a TV emulator or device. Next: browse (#188) ∥ player (#190), then search (#189) and settings (#194). iOS later.
+7. Android TV / phone app: epic #29 with #185–#196 (milestone M5). The skeleton and CI job are merged (#185), and so are signed release APKs on an `android-v*` tag (#195); the owner still has to create the release key and set the four `ANDROID_*` Actions secrets before the first tag. Connect + sign-in is merged (#186). The app shell is merged (#187). Browse is in review (#188): Home, Library (paged grid, sort, filters) and item detail (play / resume / mark watched, seasons and episodes), checked on a phone and an Android TV emulator against a mock API (D-pad through rail, rows, grid paging and detail; focus restored on Back), not yet on the live server or a real device. The player (#190) is being built in parallel; play buttons open a placeholder until it lands. Next: search (#189) and settings (#194). iOS later.
 8. Per-episode offsets for multi-episode files.

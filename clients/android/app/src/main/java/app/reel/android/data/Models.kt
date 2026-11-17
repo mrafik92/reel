@@ -261,3 +261,7 @@ data class TuneResponse(
     @SerialName("channel_id") val channelId: Long,
     @SerialName("channel_name") val channelName: String,
 )
+
+/** `GET /genres?library_id=`: a genre and how many movies/shows carry it. */
+@Serializable
+data class GenreCount(val name: String, val count: Long = 0)

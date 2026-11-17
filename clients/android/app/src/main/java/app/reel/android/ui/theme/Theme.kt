@@ -23,6 +23,9 @@ object ReelColors {
     val AccentHi = Color(0xFFF26352)
     val AccentInk = Color(0xFFFFF6EA)
     val AccentWash = Color(0xFF2A1513)
+
+    /** Good news: ratings, *Direct play*. */
+    val Ok = Color(0xFF7FD4A0)
 }
 
 private val scheme = darkColorScheme(
