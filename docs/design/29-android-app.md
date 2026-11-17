@@ -100,7 +100,9 @@ Rules:
 
 - **CI:** an `android` job in `ci.yml`, run when `clients/android/**` changes. It uses JDK 17 and the Gradle
   wrapper to run `lint`, `testDebugUnitTest` and `assembleDebug`, and uploads the debug APK as an artifact.
-- **Release (#195):** on a `android-v*` tag, CI builds a signed release APK and attaches it to a GitHub release.
+- **Release (#195):** on an `android-vX.Y.Z` tag, `android-release.yml` builds a signed, R8-shrunk release APK
+  (versionCode `X*1_000_000 + Y*1_000 + Z`) and attaches it to a GitHub release. The PR `android` job also builds
+  an unsigned `assembleRelease`, so R8 failures show up before a tag.
   The keystore and its passwords live only in Actions secrets and the owner's password manager. Install it
   by sideloading (`adb install`, or the *Downloader* app on TV). No Play Store for now.
 - **Local:** JDK 21 + Android command-line tools (Homebrew). Use emulators for an Android TV (1080p) and a

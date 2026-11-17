@@ -1,0 +1,111 @@
+# Signed Android release (#195). Push a tag `android-vMAJOR.MINOR.PATCH` and this builds a signed,
+# R8-shrunk release APK and attaches it to a GitHub release of that tag. Version scheme:
+# clients/android/scripts/version-from-tag.sh. Secrets and the one-time key setup: clients/android/README.md
+# ("Release builds") and docs/OPERATIONS.md (credentials).
+name: android-release
+
+on:
+  push:
+    tags: ['android-v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: startsWith(github.ref, 'refs/tags/android-v')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/android
+    outputs:
+      name: ${{ steps.version.outputs.name }}
+      code: ${{ steps.version.outputs.code }}
+    steps:
+      - name: Check signing secrets are set
+        # Fails before any work if a secret is missing. Only names are printed, never values.
+        working-directory: .
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=0
+          for n in ANDROID_KEYSTORE_B64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!n}" ]; then echo "::error::Actions secret $n is not set (see clients/android/README.md, Release builds)"; missing=1; fi
+          done
+          exit "$missing"
+      - uses: actions/checkout@v4
+      - name: Version from tag
+        id: version
+        run: scripts/version-from-tag.sh "$GITHUB_REF_NAME" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Decode keystore
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/reel-release.jks"
+          test -s "$RUNNER_TEMP/reel-release.jks" || { echo "::error::ANDROID_KEYSTORE_B64 decoded to an empty file"; exit 1; }
+      - name: Build signed release APK
+        env:
+          REEL_VERSION_NAME: ${{ steps.version.outputs.name }}
+          REEL_VERSION_CODE: ${{ steps.version.outputs.code }}
+          REEL_KEYSTORE_FILE: ${{ runner.temp }}/reel-release.jks
+          REEL_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          REEL_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          REEL_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon lint testDebugUnitTest assembleRelease
+      - name: Verify signature and version
+        run: |
+          apk=app/build/outputs/apk/release/app-release.apk
+          test -f "$apk" || { echo "::error::no signed APK (app-release.apk) was produced"; find app/build/outputs/apk/release -name "*.apk"; exit 1; }
+          bt=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$bt/apksigner" verify --print-certs "$apk" | grep -E 'Signer #1 certificate (DN|SHA-256 digest)'
+          badging=$("$bt/aapt2" dump badging "$apk" | head -1)
+          echo "$badging"
+          grep -q "versionCode='${{ steps.version.outputs.code }}'" <<<"$badging"
+          grep -q "versionName='${{ steps.version.outputs.name }}'" <<<"$badging"
+          mkdir -p dist
+          cp "$apk" "dist/reel-android-${{ steps.version.outputs.name }}.apk"
+          (cd dist && sha256sum ./*.apk > SHA256SUMS)
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/reel-release.jks"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reel-android-release
+          path: clients/android/dist/
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: reel-android-release
+          path: dist
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ needs.build.outputs.name }}
+          CODE: ${{ needs.build.outputs.code }}
+        run: |
+          notes="Reel for Android $NAME (versionCode $CODE). One APK for phones and Android TV.
+          Sideload: see clients/android/README.md (Install a release). SHA-256 in SHA256SUMS."
+          gh release create "$GITHUB_REF_NAME" dist/* -R "$GITHUB_REPOSITORY" \
+            --title "Android $NAME" --notes "$notes" --verify-tag

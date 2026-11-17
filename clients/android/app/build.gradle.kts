@@ -7,12 +7,19 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// Optional release signing: clients/android/keystore.properties (git-ignored) with
-// storeFile, storePassword, keyAlias, keyPassword. Without it, release builds are unsigned.
+// Optional release signing, from either
+//  - clients/android/keystore.properties (git-ignored; local builds) with storeFile, storePassword,
+//    keyAlias, keyPassword, or
+//  - env REEL_KEYSTORE_FILE, REEL_KEYSTORE_PASSWORD, REEL_KEY_ALIAS, REEL_KEY_PASSWORD (the
+//    android-release workflow, #195; keeps the passwords off disk).
+// Without either, release builds are unsigned.
 val keystoreProps = Properties().apply {
     val f = rootProject.file("keystore.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
+fun signingValue(prop: String, env: String): String? =
+    System.getenv(env)?.takeIf { it.isNotEmpty() } ?: keystoreProps.getProperty(prop)
+val releaseStoreFile = signingValue("storeFile", "REEL_KEYSTORE_FILE")
 
 android {
     namespace = "app.reel.android"
@@ -29,12 +36,12 @@ android {
     }
 
     signingConfigs {
-        if (keystoreProps.isNotEmpty()) {
+        if (releaseStoreFile != null) {
             create("release") {
-                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
-                storePassword = keystoreProps.getProperty("storePassword")
-                keyAlias = keystoreProps.getProperty("keyAlias")
-                keyPassword = keystoreProps.getProperty("keyPassword")
+                storeFile = rootProject.file(releaseStoreFile)
+                storePassword = signingValue("storePassword", "REEL_KEYSTORE_PASSWORD")
+                keyAlias = signingValue("keyAlias", "REEL_KEY_ALIAS")
+                keyPassword = signingValue("keyPassword", "REEL_KEY_PASSWORD")
             }
         }
     }
