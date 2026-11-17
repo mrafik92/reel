@@ -138,12 +138,17 @@ pub const ALIGNED_GOP: u32 = 100_000;
 /// session restarts ffmpeg from there.
 pub const MAX_FORCED_LIST_BYTES: usize = 100_000;
 
-/// `-force_key_frames` list for an aligned rung restarted at plan segment `start`: only times from
-/// `start` on (ffmpeg forces one keyframe for every listed time already in the past), each 1 ms
-/// early so the frame exactly at the boundary is the one chosen.
+/// `-force_key_frames` list for an encode (re)started at plan segment `start`: the boundaries
+/// *after* it, each 1 ms early so the frame exactly at the boundary is the one chosen.
+///
+/// - Never a time before the run's first frame: ffmpeg forces one keyframe for every listed time
+///   already in the past (1-frame segments).
+/// - Not `start` itself: the encoder's first frame is always an IDR, and ffmpeg ≤ 6's accurate
+///   seek starts on the frame *covering* the seek time (79.997 s for `-ss 80` at 23.976 fps), so
+///   listing the boundary would force the next frame too (measured on CT 113, ffmpeg 5.1).
 pub fn forced_keyframe_list(plan: &crate::plan::SegmentPlan, start: u32) -> String {
     let mut out = String::new();
-    for i in start..plan.len() {
+    for i in start + 1..plan.len() {
         let ms = ((plan.start(i) * 1000.0).round() as i64 - 1).max(0);
         let item = format!("{}.{:03}", ms / 1000, ms % 1000);
         if out.len() + item.len() + 1 > MAX_FORCED_LIST_BYTES {
@@ -397,10 +402,13 @@ fn build_inner(p: &BuildParams<'_>, plan: Option<&crate::plan::SegmentPlan>) -> 
             // run and every variant lands on the same frames; an expression's `t` counts from the
             // run's first frame instead
             match aligned {
-                Some(pl) => push(&[
-                    "-force_key_frames",
-                    &forced_keyframe_list(pl, p.start_segment),
-                ]),
+                Some(pl) => {
+                    // empty when the run starts on the last segment: its first frame is the IDR
+                    let list = forced_keyframe_list(pl, p.start_segment);
+                    if !list.is_empty() {
+                        push(&["-force_key_frames", &list]);
+                    }
+                }
                 None => push(&[
                     "-force_key_frames",
                     &RELATIVE_GRID.replace("{}", &p.segment_secs.to_string()),
@@ -849,7 +857,7 @@ mod tests {
         ));
         assert!(!got.contains("-ss "), "{got}");
         assert!(
-            got.contains("-g 100000 -force_key_frames 0.000,7.916,12.499,20.999,25.332 "),
+            got.contains("-g 100000 -force_key_frames 7.916,12.499,20.999,25.332 "),
             "{got}"
         );
         assert!(got.contains("-hls_time 0.001"), "{got}");
@@ -871,11 +879,8 @@ mod tests {
         ));
         // accurate seek to the boundary itself (no keyframe margin for encodes)
         assert!(got.contains("-ss 12.500 -copyts"), "{got}");
-        // a past time would force an extra 1-frame segment per entry (measured, #111)
-        assert!(
-            got.contains("-force_key_frames 12.499,20.999,25.332 "),
-            "{got}"
-        );
+        // a past time (or the restart boundary itself) would force an extra 1-frame segment
+        assert!(got.contains("-force_key_frames 20.999,25.332 "), "{got}");
         assert!(got.contains("-start_number 2 /tmp/o/ffmpeg.m3u8"), "{got}");
     }
 
@@ -906,7 +911,7 @@ mod tests {
         assert!(got.contains("-ss 100.000 -copyts"), "{got}");
         assert!(
             got.contains(
-                "-force_key_frames 99.999,103.999,107.999,111.999,115.999,119.999,123.999,127.999 "
+                "-force_key_frames 103.999,107.999,111.999,115.999,119.999,123.999,127.999 "
             ),
             "{got}"
         );
@@ -921,12 +926,24 @@ mod tests {
     }
 
     #[test]
+    fn restart_on_the_last_segment_forces_nothing() {
+        let plan = irregular_plan();
+        let d = dec(enc(false), aac());
+        let got = s(build_args_with_plan(
+            &params(&d, &HwAccel::Software, plan.len() - 1),
+            &plan,
+        ));
+        assert!(!got.contains("-force_key_frames"), "{got}");
+        assert!(got.contains("-g 100000 "), "{got}");
+    }
+
+    #[test]
     fn forced_list_is_capped() {
         // ~12 h of 4 s segments would exceed one argv string
         let plan = crate::plan::SegmentPlan::fixed(12.0 * 3600.0, 4);
         let l = forced_keyframe_list(&plan, 0);
         assert!(l.len() <= MAX_FORCED_LIST_BYTES);
-        assert!(l.starts_with("0.000,3.999,7.999,"), "{}", &l[..40]);
+        assert!(l.starts_with("3.999,7.999,11.999,"), "{}", &l[..40]);
         assert!(!l.ends_with(','));
         assert!(l.split(',').count() < plan.len() as usize);
     }

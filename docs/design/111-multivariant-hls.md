@@ -136,7 +136,7 @@ file at every keyframe:
 
 ```
 -ss {plan.start(n)}                         # accurate seek (decoding), no margin needed for encodes
--force_key_frames {start(n)-ε},{start(n+1)-ε},…   # only times ≥ the restart point, ε = 1 ms
+-force_key_frames {start(n+1)-ε},{start(n+2)-ε},…   # boundaries after the restart segment, ε = 1 ms
 -g 1000000 -keyint_min 1000000 -sc_threshold 0    # no periodic or scene-cut keyframes (x264: also keyint/scenecut)
 -f hls -hls_time 0.001 -start_number n -hls_segment_filename seg_%05d.m4s
 ```
@@ -155,7 +155,15 @@ Measured locally (ffmpeg 9, libx264 standing in for VAAPI; 30 s source with keyf
 | restart at segment 2 (`-ss 12.5`), only future times passed | 8.500, 4.333, 4.667 | same |
 | restart at segment 2 with the **full** list | 0.042, 0.042, 8.417, … | broken: ffmpeg forces one keyframe per already-past time |
 
-So a restart must pass **only the times from the restart segment on**. The copy side assembled the
+So a restart must pass **only future times**. It also leaves out the restart boundary itself: the
+encoder's first frame is always an IDR, and ffmpeg ≤ 6's accurate seek starts on the frame *covering*
+the seek time (79.997 s for `-ss 80` at 23.976 fps), so listing 79.999 forced the next frame too and
+made a 1-frame segment (seen in CI on Ubuntu's ffmpeg and on CT 113's 5.1).
+
+**Checked on CT 113** (ffmpeg 5.1, iHD; 2026-11-17, nobody watching, scratch dir removed): with
+`-g 100000` and the list, `h264_vaapi -low_power 1`, `hevc_vaapi -low_power 1` and libx264 each wrote
+one file per plan segment with exactly one keyframe, on a source-keyframe plan (from 0 and restarted
+at segment 5) and on the fixed grid restarted at `-ss 80`. The copy side assembled the
 same window from GOPs 12.5–16.125 and 16.125–21, which is the same 8.5 s.
 
 **Fixed grid fix (also helps single-variant sessions):** today's

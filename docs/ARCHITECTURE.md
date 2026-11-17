@@ -91,7 +91,7 @@ sequenceDiagram
   read from the MKV Cues or MP4 `stss` index. Only when the file has no index does Reel run a background
   ffprobe, at low priority, and cache the result.
 - **Encoded keyframes.** A transcode forces IDR frames from an explicit list of the plan's segment starts
-  (absolute source times, only those from the restart point on) with no other keyframes (`-g 100000`), and
+  (absolute source times, only the boundaries after the restart segment: the encoder's first frame is the IDR) with no other keyframes (`-g 100000`), and
   ffmpeg cuts a file at each one. Restarts at any segment land on the same frames; the old expression relative
   to the previous keyframe drifted 4 ms per segment at 23.976 fps. A session can hold extra encoded variants
   on the same plan (`create_session_with_rungs`, #111 ①); each has its own ffmpeg, started on its first
