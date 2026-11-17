@@ -1,6 +1,6 @@
 # Design: native Android app for TV and phone (#29)
 
-> **Status: proposed 2026-11-17.** Built so far: the project skeleton (#185), connect + sign-in (#186), the app shell (#187) and browse (#188: home, library, item detail). When a part ships,
+> **Status: proposed 2026-11-17.** Built so far: the project skeleton (#185), connect + sign-in (#186), the app shell (#187) browse (#188: home, library, item detail) and search (#189). When a part ships,
 > FEATURES.md and ARCHITECTURE.md describe it and this note is trimmed to what's still open.
 
 Epic #29 · milestone **M5 – Mobile** · sub-issues #185–#196.

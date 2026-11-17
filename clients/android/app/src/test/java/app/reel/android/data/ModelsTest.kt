@@ -46,6 +46,8 @@ class ModelsTest {
         TuneBody.serializer() to "TuneBody",
         TuneResponse.serializer() to "TuneResponse",
         GenreCount.serializer() to "GenreCount",
+        PersonHit.serializer() to "PersonHit",
+        SearchAll.serializer() to "SearchAll",
     )
 
     private val openapi: JsonObject by lazy {

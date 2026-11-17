@@ -265,3 +265,27 @@ data class TuneResponse(
 /** `GET /genres?library_id=`: a genre and how many movies/shows carry it. */
 @Serializable
 data class GenreCount(val name: String, val count: Long = 0)
+
+/** A person in `GET /search/all`: library cast/crew merged with TMDB people. */
+@Serializable
+data class PersonHit(
+    @SerialName("tmdb_id") val tmdbId: Long,
+    val name: String,
+    @SerialName("known_for") val knownFor: List<String> = emptyList(),
+    @SerialName("in_library_count") val inLibraryCount: Long = 0,
+    @SerialName("known_for_department") val knownForDepartment: String? = null,
+    @SerialName("photo_url") val photoUrl: String? = null,
+)
+
+/**
+ * `GET /search/all?q=`: movies and shows (title matches, then cast/crew matches), episodes and
+ * people. The server also sends `discover` and `vod`; the app doesn't show those yet.
+ */
+@Serializable
+data class SearchAll(
+    val library: List<ItemSummary> = emptyList(),
+    val episodes: List<ItemSummary> = emptyList(),
+    val people: List<PersonHit> = emptyList(),
+) {
+    val isEmpty get() = library.isEmpty() && episodes.isEmpty() && people.isEmpty()
+}

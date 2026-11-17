@@ -183,7 +183,9 @@ app/src/main/java/app/reel/android/
   ui/library/           Library tab: LibraryViewModel + ItemPager (keyset paging), grid + filters
   ui/item/              item detail (ItemLogic: resume point, next episode, meta, badges),
                         PlayLauncher (load an item, then open the player route)
-  ui/stubs/             placeholders for Search, Live TV, Settings and the player (#190)
+  ui/search/            Search: SearchViewModel (debounced, latest answer wins) + rows; voice
+                        through RecognizerIntent when the device has a recognizer
+  ui/stubs/             placeholders for Live TV, Settings and the player (#190)
 ```
 
 ### Adding a screen

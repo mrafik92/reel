@@ -26,10 +26,6 @@ import kotlinx.coroutines.launch
 
 // Stand-ins registered in ReelNavGraph until their tickets replace them. Keep them dumb.
 
-/** Replaced by #189. */
-@Composable
-fun SearchPlaceholder() = EmptyView("Search is coming in a later update.")
-
 /** Replaced by #191. */
 @Composable
 fun LivePlaceholder() = EmptyView("Live TV is coming in a later update.")

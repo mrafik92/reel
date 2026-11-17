@@ -8,9 +8,9 @@ import app.reel.android.data.Me
 import app.reel.android.ui.home.HomeScreen
 import app.reel.android.ui.item.ItemScreen
 import app.reel.android.ui.library.LibraryScreen
+import app.reel.android.ui.search.SearchScreen
 import app.reel.android.ui.stubs.LivePlaceholder
 import app.reel.android.ui.stubs.PlayerPlaceholder
-import app.reel.android.ui.stubs.SearchPlaceholder
 import app.reel.android.ui.stubs.SettingsPlaceholder
 
 /**
@@ -20,7 +20,7 @@ import app.reel.android.ui.stubs.SettingsPlaceholder
  */
 fun NavGraphBuilder.reelGraph(user: Me) {
     composable(TopLevel.Home.route) { HomeScreen() }
-    composable(TopLevel.Search.route) { SearchPlaceholder() }
+    composable(TopLevel.Search.route) { SearchScreen() }
     if (user.canWatchLive) composable(TopLevel.Live.route) { LivePlaceholder() }
     composable(TopLevel.Library.route) { LibraryScreen() }
     composable(TopLevel.Settings.route) { SettingsPlaceholder(user) }

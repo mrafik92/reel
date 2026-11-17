@@ -52,3 +52,6 @@ suspend fun ReelApi.children(id: Long): List<ItemSummary> = get("/items/$id/chil
 suspend fun ReelApi.setPlayed(id: Long, played: Boolean) {
     if (played) postEmpty("/items/$id/played") else delete("/items/$id/played")
 }
+
+/** Everything matching [q]: titles, episodes, people (`/search/all`). */
+suspend fun ReelApi.searchAll(q: String, limit: Int = 30): SearchAll = get("/search/all", mapOf("q" to q, "limit" to limit))
