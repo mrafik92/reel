@@ -25,6 +25,7 @@ import app.reel.android.ui.common.Loadable
 import app.reel.android.ui.common.rememberLoad
 import app.reel.android.ui.shell.LocalNavController
 import app.reel.android.ui.shell.Routes
+import app.reel.android.ui.vod.VodRoutes
 import app.reel.android.ui.common.EmptyView
 import app.reel.android.ui.theme.ReelColors
 import app.reel.android.ui.tv.RestoreFocus
@@ -42,9 +43,20 @@ fun SearchPlaceholder() = EmptyView("Search is coming in a later update.")
 @Composable
 fun LivePlaceholder() = EmptyView("Live TV is coming in a later update.")
 
-/** Replaced by #188 (libraries grid). */
+/** Replaced by #188 (libraries grid); keep the IPTV entry (#193) for users with VOD access. */
 @Composable
-fun LibraryPlaceholder() = EmptyView("Your libraries are coming in a later update.")
+fun LibraryPlaceholder(user: Me) {
+    if (!user.canWatchVod) return EmptyView("Your libraries are coming in a later update.")
+    val nav = LocalNavController.current
+    val focus = remember { FocusRequester() }
+    Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Your libraries are coming in a later update.", style = MaterialTheme.typography.bodyLarge, color = ReelColors.Ink2)
+        Button(onClick = { nav.navigate(VodRoutes.browse("movie")) }, modifier = Modifier.focusRequester(focus).testTag("open-vod")) {
+            Text("IPTV movies & series")
+        }
+        LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    }
+}
 
 /** Replaced by #188 (item detail). Until then it can start the player (#190). */
 @Composable

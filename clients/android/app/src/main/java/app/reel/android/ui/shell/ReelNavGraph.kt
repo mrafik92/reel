@@ -6,6 +6,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import app.reel.android.data.Me
 import app.reel.android.player.PlayerScreen
+import app.reel.android.ui.vod.vodGraph
 import app.reel.android.ui.home.HomeScreen
 import app.reel.android.ui.stubs.ItemPlaceholder
 import app.reel.android.ui.stubs.LibraryPlaceholder
@@ -22,7 +23,7 @@ fun NavGraphBuilder.reelGraph(user: Me) {
     composable(TopLevel.Home.route) { HomeScreen() }
     composable(TopLevel.Search.route) { SearchPlaceholder() }
     if (user.canWatchLive) composable(TopLevel.Live.route) { LivePlaceholder() }
-    composable(TopLevel.Library.route) { LibraryPlaceholder() }
+    composable(TopLevel.Library.route) { LibraryPlaceholder(user) }
     composable(TopLevel.Settings.route) { SettingsPlaceholder(user) }
 
     composable(Routes.ITEM, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
@@ -49,4 +50,6 @@ fun NavGraphBuilder.reelGraph(user: Me) {
             startS = (a?.getFloat("startS") ?: 0f).toDouble(),
         )
     }
+    // IPTV movies and series (#193), for users with VOD access; entered from the Library tab.
+    vodGraph(user)
 }

@@ -43,7 +43,7 @@ object Routes {
     fun player(fileId: Long, itemId: Long, startS: Double) = "player/$fileId?item=$itemId&start=$startS"
 
     /** Routes that take the whole screen. */
-    fun isFullScreen(route: String?) = route == PLAYER
+    fun isFullScreen(route: String?) = route == PLAYER || route == app.reel.android.ui.vod.VodRoutes.PLAYER
 }
 
 /** The shell's nav controller; screens navigate with `LocalNavController.current.navigate(Routes.item(id))`. */

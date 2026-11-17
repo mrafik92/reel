@@ -131,7 +131,16 @@ fun PlayerScreen(fileId: Long, itemId: Long, startS: Double) {
  */
 @OptIn(UnstableApi::class)
 @Composable
-fun VodPlayer(source: PlaySource, api: ReelApi, item: ItemDetail?, durationS: Double?, startS: Double, nextEnabled: Boolean = true) {
+fun VodPlayer(
+    source: PlaySource,
+    api: ReelApi,
+    item: ItemDetail?,
+    durationS: Double?,
+    startS: Double,
+    nextEnabled: Boolean = true,
+    /** The top line (a show's title) when [item] is a stand-in without a library parent. */
+    heading: String? = null,
+) {
     val graph = LocalAppGraph.current
     val context = LocalContext.current
     val nav = LocalNavController.current
@@ -344,7 +353,7 @@ fun VodPlayer(source: PlaySource, api: ReelApi, item: ItemDetail?, durationS: Do
             )
         }
 
-        val title = item?.let { i -> if (i.kind == "episode") series ?: i.title else i.title }.orEmpty()
+        val title = heading ?: item?.let { i -> if (i.kind == "episode") series ?: i.title else i.title }.orEmpty()
         val subtitle = item?.takeIf { it.kind == "episode" }?.let { i ->
             listOf(episodeCode(i.seasonNo, i.episodeNo), i.title).filter { it.isNotEmpty() }.joinToString(" · ")
         }
