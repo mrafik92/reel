@@ -2,6 +2,7 @@
 /// <reference path="./platform/tizen.d.ts" />
 import { parseVtt, type VttCue } from "./platform/vtt";
 import { RecoveryPolicy, failureKind, hlsConfig, recoveryReason, type FailureKind, type RecoveryAction } from "./recovery";
+import { abrConfig, fragmentKbps, planLevels, variantIdOf, type VariantOptions, type VariantSelect } from "./abr";
 
 /** Sidecar text track (WebVTT) to attach to the stream. */
 export interface ExternalTextTrack {
@@ -19,6 +20,11 @@ export interface LoadOptions {
   textTracks?: ExternalTextTrack[];
   /** A live stream: stay near the edge, and recover to the edge instead of the playhead. */
   live?: boolean;
+  /**
+   * A multi-variant HLS session (#111): start variant, estimate seed and pin/cap. hls.js only;
+   * other adapters and native HLS ignore it (they get single-variant sessions, Q6).
+   */
+  variants?: VariantOptions;
 }
 
 export interface PlayerTrack {
@@ -49,6 +55,13 @@ export interface PlayerEventMap {
   cue: { text: string | null };
   /** The adapter lost the stream and is getting it back by itself; `null` once it plays again. */
   recovering: { attempt: number; reason: string } | null;
+  /**
+   * The variant being played changed (multi-variant HLS, #111). `id` is the variant of the level
+   * hls.js switched to; `ids` are the variants it can play, ascending bandwidth.
+   */
+  variant: { id: string | undefined; ids: string[] };
+  /** A media download's measured throughput (hls.js fragments), for the app's bandwidth estimate. */
+  throughput: { kbps: number };
 }
 
 export type PlayerEventHandler<K extends keyof PlayerEventMap> = (data: PlayerEventMap[K]) => void;
@@ -66,6 +79,12 @@ export interface PlayerAdapter {
   selectAudioTrack?(id: string): void;
   /** `null` turns subtitles off. */
   selectTextTrack?(id: string | null): void;
+  /**
+   * Multi-variant HLS (#111): pin a variant or limit ABR to some, without reloading. Returns
+   * `false` when the current stream can't do it (single variant, the variant isn't there): the
+   * app re-decides instead.
+   */
+  selectVariant?(sel: VariantSelect): boolean;
 }
 
 export class Emitter {
@@ -165,6 +184,9 @@ export class HlsJsAdapter implements PlayerAdapter {
   /** A playlist request in flight, and when the current pipeline was built (stall diagnostics). */
   private playlistLoading?: { what: string; at: number };
   private attachedAt = 0;
+  /** Variant ids of the current `hls.levels` and the one playing (multi-variant sessions). */
+  private levelIds: (string | undefined)[] = [];
+  private levelId?: string;
 
   /** `maxAttempts`: recovery attempts before a fatal `error` (default 8). */
   constructor(private video: HTMLVideoElement, o: { maxAttempts?: number } = {}) {
@@ -219,6 +241,9 @@ export class HlsJsAdapter implements PlayerAdapter {
     this.live = !!opts.live;
     this.resumeAt = opts.startPositionSec ?? 0;
     this.wantPlay = !!opts.autoplay;
+    this.levelId = undefined;
+    // Own copy: `selectVariant` updates the selection a rebuild starts from.
+    if (opts.variants) this.opts = { ...opts, variants: { ...opts.variants } };
     await this.attach(opts.startPositionSec);
     if (opts.autoplay) await this.play();
   }
@@ -241,8 +266,11 @@ export class HlsJsAdapter implements PlayerAdapter {
     if (this.destroyed || url !== this.url) return;
     if (Hls && Hls.isSupported()) {
       const headers = this.opts.headers;
+      const variants = !this.live ? this.opts.variants : undefined;
+      this.levelIds = [];
       const hls = new Hls({
         ...(hlsConfig({ live: this.live, startPosition: start && start > 0 ? start : -1 }) as Partial<import("hls.js").HlsConfig>),
+        ...(variants ? (abrConfig(variants) as Partial<import("hls.js").HlsConfig>) : {}),
         xhrSetup: headers
           ? (xhr: XMLHttpRequest) => Object.entries(headers).forEach(([k, val]) => xhr.setRequestHeader(k, val))
           : undefined,
@@ -265,11 +293,33 @@ export class HlsJsAdapter implements PlayerAdapter {
       hls.on(Hls.Events.FRAG_LOADING, (_e, d) => {
         if (hls === this.hls) this.fragLoading = { sn: d.frag.sn, at: Date.now() };
       });
-      hls.on(Hls.Events.FRAG_LOADED, () => {
+      hls.on(Hls.Events.FRAG_LOADED, (_e, d) => {
         if (hls !== this.hls) return;
         this.fragLoading = undefined;
         this.fragLoadedAt = Date.now();
+        const kbps = d.frag.type === "main" ? fragmentKbps(d.frag.stats) : undefined;
+        if (kbps) this.ev.emit("throughput", { kbps });
       });
+      if (variants) {
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (hls !== this.hls) return;
+          this.levelIds = hls.levels.map((l) => variantIdOf(l.uri));
+          // A rebuild (recovery) resumes on the variant that was playing, not the first one.
+          const plan = planLevels(this.levelIds, { start: this.levelId ?? variants.start, select: variants.select })
+            ?? planLevels(this.levelIds, { start: this.levelId ?? variants.start });
+          if (plan) {
+            hls.autoLevelCapping = plan.cap;
+            hls.startLevel = plan.start;
+            if (plan.pin >= 0) hls.loadLevel = plan.pin;
+          }
+          hls.startLoad(hls.config.startPosition);
+        });
+        hls.on(Hls.Events.LEVEL_SWITCHED, (_e, d) => {
+          if (hls !== this.hls) return;
+          this.levelId = this.levelIds[d.level];
+          this.ev.emit("variant", { id: this.levelId, ids: this.levelIds.filter((x): x is string => !!x) });
+        });
+      }
       const playlist = (what: string | undefined) => () => {
         if (hls === this.hls) this.playlistLoading = what ? { what, at: Date.now() } : undefined;
       };
@@ -413,6 +463,31 @@ export class HlsJsAdapter implements PlayerAdapter {
     }
     if (!this.healthyFrom) this.healthyFrom = now;
     if (this.policy.used && now - this.healthyFrom > HEALTHY_MS) this.policy.healthy();
+  }
+
+  /**
+   * Pin a variant or cap ABR, on the stream that's playing. A pin switches at the next fragment
+   * boundary (the buffer ahead is replaced); a cap below the playing variant does the same, and
+   * anything else lets ABR carry on from what's buffered.
+   */
+  selectVariant(sel: VariantSelect): boolean {
+    const hls = this.hls;
+    const v = this.opts.variants;
+    if (!hls || !v || this.live) return false;
+    const plan = planLevels(this.levelIds, { select: sel });
+    if (!plan) return false;
+    v.select = sel;
+    hls.autoLevelCapping = plan.cap;
+    if (plan.pin >= 0) {
+      // Already loading that level (ABR picked it): just stop switching, keep the buffer.
+      if (hls.loadLevel === plan.pin) hls.loadLevel = plan.pin;
+      else hls.nextLevel = plan.pin;
+    } else if (plan.cap >= 0 && hls.loadLevel > plan.cap) {
+      hls.nextLevel = -1; // ABR again, and drop what's buffered above the cap
+    } else if (!hls.autoLevelEnabled) {
+      hls.loadLevel = -1; // ABR again, keeping the buffer
+    }
+    return true;
   }
 
   play(): Promise<void> {

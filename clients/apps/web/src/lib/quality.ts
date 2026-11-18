@@ -10,7 +10,8 @@ import { currentUser } from "./auth";
  * user's bitrate limit is lower; a rung = cap at that size (never upscales).
  *
  * Per device, like the Live TV delivery choice: the right answer depends on the connection.
- * #111 (multi-variant HLS) will read the same default as the hls.js start/max level.
+ * Multi-variant sessions (#111, hls.js players) list every variant whatever the choice; the player
+ * applies it locally (`lib/abr.ts`): Auto = ABR, Original = pin, a rung = ABR capped at that size.
  */
 
 export const QUALITIES: Quality[] = ["auto", "original", "1080p", "720p", "480p"];
@@ -89,11 +90,21 @@ export function whyTranscode(d: DecideResponse): string {
   return "This device can't play the original video as it is.";
 }
 
+/** Multi-variant session (#111): hls.js switches between the listed variants. */
+const multiVariant = (d: DecideResponse | undefined) => !!d?.start_variant && (d.variants?.length ?? 0) > 1;
+
 /**
  * One line for stream info: what happened and why (direct play / remux / transcode). `asked` is the
- * quality this play requested.
+ * quality this play requested. Multi-variant sessions describe their best version, then the switching.
  */
 export function explainStream(d: DecideResponse, asked: Quality): string {
+  const base = explainTop(d, asked);
+  if (!multiVariant(d)) return base;
+  const n = d.variants!.length;
+  return `${base} The player switches between ${n} versions as the connection changes.`;
+}
+
+function explainTop(d: DecideResponse, asked: Quality): string {
   switch (d.mode) {
     case "direct_play":
       return "Playing the original file as it is.";
@@ -111,9 +122,17 @@ export function explainStream(d: DecideResponse, asked: Quality): string {
   return `${to}. ${whyTranscode(d)}`;
 }
 
-/** Detail line for one quality option in the player's picker. */
-export function optionDetail(o: QualityOption | undefined, q: Quality, d: DecideResponse | undefined): string {
+/**
+ * Detail line for one quality option in the player's picker. `playing`: what plays now (the
+ * variant hls.js picked, for a multi-variant session).
+ */
+export function optionDetail(o: QualityOption | undefined, q: Quality, d: DecideResponse | undefined, playing?: Quality): string {
   const limit = userLimitKbps();
+  if (q === "auto" && multiVariant(d)) {
+    const v = playing ? d!.variants!.find((x) => x.id === playing) : undefined;
+    const now = v ? ` · now ${v.label}, ${fmtMbps(v.average_kbps)}` : "";
+    return `Switches between ${d!.variants!.length} versions as your connection changes${now}`;
+  }
   if (q === "auto") {
     const now = d?.quality ? ` · now ${QUALITY_NAME[d.quality]}${d.bitrate_kbps ? `, ${fmtMbps(d.bitrate_kbps)}` : ""}` : "";
     return `Original when it fits${limit ? ` your ${fmtMbps(limit)} limit` : ""}, else the best size that does${now}`;

@@ -2,10 +2,10 @@ import { createEffect, createResource, createSignal, For, onCleanup, onMount, Sh
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
   Icon, Sheet, audioLabel, codecShort, createPlayerAdapter, episodeCode, focusElement, iso1, isSdh,
-  AvPlayAdapter, mediaUrl, onBack, onRemoteKey, subtitleLabel,
+  AvPlayAdapter, mediaUrl, onBack, onRemoteKey, playsHlsWithHlsJs, subtitleLabel,
   type IconName, type ItemDetail, type MediaFile, type PlayerAdapter, type PlayerTracks,
 } from "@reel/ui";
-import { api, ApiError, invalidate, type DecideResponse, type Quality, type SubtitleOption } from "../api";
+import { api, ApiError, invalidate, type DecideResponse, type Quality, type SubtitleOption, type VariantOption } from "../api";
 import { casting, type CastPlayBody } from "../api/casting";
 import { selectedOf, type Selected } from "../api/prefs";
 import { creditItem, decide, MODE_LABEL } from "../lib/playback";
@@ -13,6 +13,9 @@ import {
   QUALITIES, QUALITY_NAME, deviceQuality, explainStream, fmtMbps, optionDetail, qualityOptions, userLimitKbps, videoTranscoded,
   whyTranscode,
 } from "../lib/quality";
+import {
+  StallCounter, bandwidthEstimate, capEstimate, isAdaptive, probeDue, probeThroughput, recordThroughput, variantOf, variantSelect,
+} from "../lib/abr";
 import { audioQuickSave, previewSelection, subtitleQuickSave, type QuickSave } from "../lib/tracks";
 import { loadPrefs, playbackPrefs, prefsSupported, updatePrefs } from "../lib/prefs";
 import {
@@ -145,6 +148,17 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   const [qualitySheet, setQualitySheet] = createSignal(false);
   /** The server offers quality choices (sticky, so the button keeps focus while a switch reopens the session). */
   const [qualityOk, setQualityOk] = createSignal(false);
+  /**
+   * Multi-variant sessions (#111): the variant hls.js is playing. Quality choices switch it locally
+   * (pin / cap); only a choice the master can't meet re-decides, as a single-variant session at that
+   * quality (`singleFor`), which is what #87 did.
+   */
+  const [variantId, setVariantId] = createSignal<string>();
+  let singleFor: Quality | undefined;
+  /** Direct play under Auto: stalls that switch to an adaptive session (#1), once per play. */
+  const stalls = new StallCounter();
+  let directFallback = false;
+  let probed = false;
   /** Sanitised HTML of the active subtitle cue(s); we render all subtitles ourselves. */
   const [cueHtml, setCueHtml] = createSignal("");
   /** Px from the bottom that clears the control bar while it's visible. */
@@ -257,9 +271,12 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   const openSession = (o: CastOpen, forCast?: "chromecast" | "airplay"): Promise<DecideResponse> => {
     // Cast receivers get the server's Auto for their own profile.
     const q = forCast ? undefined : quality();
+    // Multi-variant only where hls.js plays it (not TVs, Safari or casts: Q6) and for library
+    // files (IPTV VOD stays single-variant: Q5).
+    const adaptive = !forCast && !props.source && playsHlsWithHlsJs(video) && singleFor !== quality();
     return props.source
       ? props.source.decide({ audio: o.audio, subtitle: o.subtitle ?? -1, subtitleIndex: o.subtitle, start: o.start, forCast, quality: q })
-      : decide(file!.id, { itemId: creditItem(file!, props.item.id), audio: o.audio, subtitle: o.subtitle, start: o.start, forCast, quality: q });
+      : decide(file!.id, { itemId: creditItem(file!, props.item.id), audio: o.audio, subtitle: o.subtitle, start: o.start, forCast, quality: q, adaptive });
   };
 
   /** (Re)start playback: decide → load. Used on open and when audio/burn-in subs change. */
@@ -270,6 +287,8 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     setPos(at);
     setBuffering(true);
     gone = false;
+    probed = false;
+    stalls.settle();
     endSession();
     let d: DecideResponse;
     try {
@@ -304,7 +323,16 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       });
       return;
     }
+    // A rung the master doesn't list (left out for room, or too close to the original): play that
+    // rung on its own, as #87 did.
+    const select = isAdaptive(d) ? variantSelect(quality(), d.variants) : undefined;
+    if (!forCast && select === null) {
+      singleFor = quality();
+      api.stopPlayback(d.session_id).catch(() => undefined);
+      return start(at, forCast);
+    }
     setSession(d);
+    setVariantId(undefined);
     if (qualityOptions(d).length) setQualityOk(true);
     const sel = selectedOf(d);
     if (sel) {
@@ -331,7 +359,11 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       .map((s) => ({ id: String(s.index), url: mediaUrl(s.url)!, label: subLabel(s).short, language: s.language ?? undefined }));
     try {
       // Paused by the viewer (a reopened session, a track change): load it, but stay paused (#100).
-      await a.load(mediaUrl(d.url)!, { startPositionSec: at || undefined, autoplay: !held, textTracks });
+      const est = bandwidthEstimate();
+      const variants = isAdaptive(d)
+        ? { start: d.start_variant, estimateBps: est ? est * 1000 : undefined, select: select ?? undefined }
+        : undefined;
+      await a.load(mediaUrl(d.url)!, { startPositionSec: at || undefined, autoplay: !held, textTracks, variants });
       if (held) {
         setPlaying(false);
         setBuffering(false);
@@ -361,6 +393,12 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
         }
         // An automatic restart is over once the picture moves.
         if (recovering() && t.positionSec > startAt + 0.2 && !video.paused) setRecovering(undefined);
+        // Direct play: hls.js isn't there to measure, so refresh a stale estimate with a short probe.
+        const s = session();
+        if (!probed && s?.mode === "direct_play" && t.positionSec > startAt + 8 && playsHlsWithHlsJs(video) && probeDue()) {
+          probed = true;
+          void probeThroughput(mediaUrl(s.url)!);
+        }
         setPos(t.positionSec);
         if (t.durationSec && isFinite(t.durationSec)) setDur(t.durationSec);
       }),
@@ -383,7 +421,12 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
         if (!pausedAt) pausedAt = Date.now();
         report(true);
       }),
-      a.on("buffering", (b) => setBuffering(b)),
+      a.on("buffering", (b) => {
+        setBuffering(b);
+        if (b) directStall();
+      }),
+      a.on("variant", (v) => setVariantId(v.id)),
+      a.on("throughput", (t) => recordThroughput(t.kbps)),
       a.on("ended", () => {
         setPlaying(false);
         setVisible(true);
@@ -413,6 +456,22 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
         }
       }),
     );
+  }
+
+  /**
+   * Direct play under Auto stalled (#1): two waits in 30 s mean the link can't carry the file.
+   * Hold the estimate below the file's bitrate and re-decide from the playhead: the server then
+   * remuxes it with rungs (Q1) and hls.js adapts. Once per play.
+   */
+  function directStall(): void {
+    const s = session();
+    if (!s || s.mode !== "direct_play" || directFallback || quality() !== "auto" || cast() || props.source) return;
+    if (held || video.paused || !playing() || !playsHlsWithHlsJs(video)) return;
+    if (!stalls.stall()) return;
+    directFallback = true;
+    capEstimate(s.bitrate_kbps ?? (file?.size && file.duration_s ? (file.size * 8) / file.duration_s / 1000 : 0));
+    flash({ icon: "quality", text: "Switching to adaptive quality" });
+    void start(pos());
   }
 
   // ---- subtitles -----------------------------------------------------------
@@ -599,16 +658,32 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   };
 
   // ---- quality (#87) -----------------------------------------------------------
-  /** Per-play pick: re-decide from the playhead (same device id → the server replaces the session). */
+  /**
+   * Per-play pick. A multi-variant session switches locally (#111): Auto = ABR, Original = pin,
+   * a rung = ABR capped at that size. Otherwise re-decide from the playhead (same device id → the
+   * server replaces the session).
+   */
   const chooseQuality = (q: Quality) => {
     if (q === quality() && !error()) return;
     setQuality(q);
     if (cast()) return;
+    const d = session();
+    if (!error() && isAdaptive(d)) {
+      const sel = variantSelect(q, d!.variants);
+      if (sel && adapter?.selectVariant?.(sel)) return;
+      if (!sel) singleFor = q;
+    }
     void start(pos() || resumeAt());
+  };
+  /** What is playing now: the variant hls.js plays, or the session's single rendition. */
+  const playingQuality = (): Quality | undefined => {
+    const s = session();
+    if (!isAdaptive(s)) return s?.quality;
+    return variantOf(s, variantId())?.id;
   };
   /** Compact value next to the icon: what is playing now. */
   const qualityValue = () => {
-    const q = session()?.quality;
+    const q = playingQuality();
     return q ? (q === "original" ? "Orig" : QUALITY_NAME[q]) : QUALITY_NAME[quality()];
   };
   const qualityDesc = () => {
@@ -784,6 +859,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   };
   const seekTo = (t: number) => {
     if (adapter) {
+      stalls.settle();
       adapter.seek(t);
       setPos(t);
     }
@@ -1299,7 +1375,17 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       </Show>
 
       <Show when={info() && session()}>
-        {(s) => <StreamInfo session={s()} file={file} selection={selection()} asked={quality()} onClose={() => setInfo(false)} />}
+        {(s) => (
+          <StreamInfo
+            session={s()}
+            file={file}
+            selection={selection()}
+            asked={quality()}
+            playing={variantOf(s(), variantId())}
+            estimate={bandwidthEstimate()}
+            onClose={() => setInfo(false)}
+          />
+        )}
       </Show>
 
       <Show when={castBusy()}>
@@ -1407,7 +1493,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
                 <CtlButton
                   class="pc__quality"
                   icon="quality"
-                  label={`Quality · ${QUALITY_NAME[quality()]}${session()?.quality ? `, playing ${QUALITY_NAME[session()!.quality!]}` : ""}`}
+                  label={`Quality · ${QUALITY_NAME[quality()]}${playingQuality() ? `, playing ${QUALITY_NAME[playingQuality()!]}` : ""}`}
                   value={qualityValue()}
                   tag={quality() === "auto" ? "Auto" : undefined}
                   onClick={() => session() && setQualitySheet(true)}
@@ -1447,9 +1533,9 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
             return {
               value: q,
               title: q === "original" ? "Original — no re-encoding" : QUALITY_NAME[q],
-              detail: optionDetail(o, q, session()),
+              detail: optionDetail(o, q, session(), playingQuality()),
               disabled: q !== "auto" && (!o || !o.available) && q !== quality(),
-              tag: q !== "auto" && session()?.quality === q ? "Now" : undefined,
+              tag: q !== "auto" && playingQuality() === q ? "Now" : undefined,
             };
           })}
           onSelect={chooseQuality}
@@ -1632,9 +1718,20 @@ function actionText(a: { type: string; codec?: string; channels?: number; width?
 }
 
 /** Debug overlay: how the server decided to deliver this stream, and why. */
-function StreamInfo(props: { session: DecideResponse; file?: MediaFile; selection?: Selected; asked: Quality; onClose: () => void }): JSX.Element {
+function StreamInfo(props: {
+  session: DecideResponse;
+  file?: MediaFile;
+  selection?: Selected;
+  asked: Quality;
+  /** Multi-variant sessions: the variant being played. */
+  playing?: VariantOption;
+  /** This device's bandwidth estimate (kbit/s). */
+  estimate?: number;
+  onClose: () => void;
+}): JSX.Element {
   const d = () => props.session.decision;
   const q = () => props.session.quality;
+  const adaptive = () => isAdaptive(props.session);
   return (
     <aside class="stream-info" aria-label="Stream info">
       <header>
@@ -1643,12 +1740,26 @@ function StreamInfo(props: { session: DecideResponse; file?: MediaFile; selectio
         <p class="stream-info__why">{explainStream(props.session, props.asked)}</p>
       </header>
       <dl>
+        <Show when={adaptive()}>
+          <dt>Playing</dt>
+          <dd>
+            {props.playing
+              ? `${props.playing.label} · ${props.playing.width}×${props.playing.height} · ${fmtMbps(props.playing.average_kbps)}${props.playing.transcode ? " · converted" : ""}`
+              : "Starting…"}
+          </dd>
+          <dt>Versions</dt>
+          <dd>{props.session.variants!.map((v) => v.label).join(" · ")}</dd>
+        </Show>
+        <Show when={props.estimate}>
+          <dt>Connection</dt>
+          <dd>~{fmtMbps(props.estimate)} (measured on this device)</dd>
+        </Show>
         <Show when={q()}>
-          <dt>Quality</dt>
+          <dt>{adaptive() ? "Best" : "Quality"}</dt>
           <dd>
             {QUALITY_NAME[q()!]}
             {props.session.bitrate_kbps ? ` · ${fmtMbps(props.session.bitrate_kbps)}` : ""}
-            {props.asked !== q() ? ` (asked for ${QUALITY_NAME[props.asked]})` : ""}
+            {props.asked !== q() && !adaptive() ? ` (asked for ${QUALITY_NAME[props.asked]})` : ""}
           </dd>
         </Show>
         <Show when={userLimitKbps()}>
