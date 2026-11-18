@@ -1,4 +1,5 @@
-import { createResource, Show, type JSX } from "solid-js";
+import { startupTiming } from "../lib/startupTiming";
+import { createEffect, createResource, onCleanup, Show, type JSX } from "solid-js";
 import { useParams, useSearchParams } from "@solidjs/router";
 import type { ItemDetail } from "@reel/ui";
 import { invalidateVod, vod, type VodId } from "../api/vod";
@@ -13,6 +14,8 @@ import { PlayerView, type PlaySource } from "./Player";
  * `POST /vod/play` instead of the library's decide. Progress and stop use the usual endpoints.
  */
 export default function VodPlayer(): JSX.Element {
+  let timing = startupTiming("vod");
+  onCleanup(() => timing?.finish("canceled"));
   const params = useParams<{ kind: string; id: string }>();
   const [search] = useSearchParams<{ series?: string }>();
   const kind = () => (params.kind === "episode" ? "episode" : "movie");
@@ -22,11 +25,13 @@ export default function VodPlayer(): JSX.Element {
     async ([k, id, seriesId]) => (k === "movie" ? movieTarget(id) : episodeTarget(id, seriesId)),
   );
 
+  createEffect(() => { if (target.error) timing?.finish("failed"); });
+
   return (
     <div class="player">
-      <Show when={!target.error} fallback={<ErrorState error={target.error} title="Couldn't open this IPTV title" onRetry={refetch} />}>
+      <Show when={!target.error} fallback={<ErrorState error={target.error} title="Couldn't open this IPTV title" onRetry={() => { timing = startupTiming("vod"); void refetch(); }} />}>
         <Show when={target()} keyed fallback={<div class="player__loading"><span class="spinner" /></div>}>
-          {(t) => <PlayerView item={t.item} source={t.source} />}
+          {(t) => <PlayerView item={t.item} source={t.source} startup={timing} />}
         </Show>
       </Show>
     </div>

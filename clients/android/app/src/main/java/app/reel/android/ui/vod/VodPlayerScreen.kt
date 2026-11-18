@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -21,6 +22,7 @@ import app.reel.android.data.ReelError
 import app.reel.android.data.VodMovieDetail
 import app.reel.android.data.VodSeriesDetail
 import app.reel.android.player.VodPlayer
+import app.reel.android.player.StartupTiming
 import app.reel.android.ui.common.ErrorView
 import app.reel.android.ui.theme.ReelColors
 import kotlinx.coroutines.flow.first
@@ -33,7 +35,7 @@ private data class VodTarget(val item: ItemDetail, val heading: String?, val run
  * connection: busy answers explain who holds it and offer *Stop the other stream* / *Take over*.
  */
 @Composable
-fun VodPlayerScreen(kind: String, id: Long, seriesId: Long?, startS: Double) {
+fun VodPlayerScreen(kind: String, id: Long, seriesId: Long?, startS: Double, tapMs: Long = 0) {
     val graph = LocalAppGraph.current
     val api = graph.session.api ?: return
     var target by remember { mutableStateOf<Result<VodTarget>?>(null) }
@@ -41,6 +43,10 @@ fun VodPlayerScreen(kind: String, id: Long, seriesId: Long?, startS: Double) {
     var me by remember { mutableStateOf<app.reel.android.data.Me?>(null) }
     var quality by remember { mutableStateOf("auto") }
     var attempt by remember { mutableIntStateOf(0) }
+    val timing = remember(attempt, tapMs) {
+        StartupTiming.begin(vod = true, tapMs = if (attempt == 0) tapMs else 0)?.apply { mark(StartupTiming.Stage.route) }
+    }
+    DisposableEffect(timing) { onDispose { timing?.finish(StartupTiming.Outcome.canceled) } }
     LaunchedEffect(attempt) {
         me = (graph.session.state.value as? AuthState.SignedIn)?.user
         quality = runCatching { graph.devicePrefs.quality.first() }.getOrNull() ?: "auto"
@@ -66,6 +72,8 @@ fun VodPlayerScreen(kind: String, id: Long, seriesId: Long?, startS: Double) {
                     ep.runtimeS,
                 )
             }
+        }.onFailure {
+            if (it !is kotlinx.coroutines.CancellationException) timing?.finish(StartupTiming.Outcome.failed)
         }
     }
     val t = target
@@ -89,6 +97,7 @@ fun VodPlayerScreen(kind: String, id: Long, seriesId: Long?, startS: Double) {
                     nextEnabled = false,
                     heading = v.heading,
                     initialQuality = quality,
+                    startup = timing,
                 )
             }
         }

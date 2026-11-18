@@ -2,6 +2,13 @@ package app.reel.android.player
 
 import android.content.Context
 import android.net.Uri
+import app.reel.android.BuildConfig
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.source.LoadEventInfo
+import androidx.media3.exoplayer.source.MediaLoadData
+import androidx.media3.exoplayer.DecoderReuseEvaluation
+import androidx.media3.common.Format
+import androidx.media3.common.Timeline
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -39,6 +46,8 @@ class ReelPlayer(context: Context, http: OkHttpClient, userAgent: String) : Play
     private var wantedAudio: Int? = null
     private var reportedDuration = false
 
+    private var timing: StartupTiming? = null
+
     init {
         val network = OkHttpDataSource.Factory(http).setUserAgent(userAgent)
         val renderers = DefaultRenderersFactory(context)
@@ -55,9 +64,12 @@ class ReelPlayer(context: Context, http: OkHttpClient, userAgent: String) : Play
             .setSeekForwardIncrementMs(30_000)
             .build()
         exo.addListener(Events())
+        if (BuildConfig.DEBUG) exo.addAnalyticsListener(StartupEvents())
     }
 
     override fun load(item: PlayItem) {
+        timing = item.startup
+        timing?.mark(StartupTiming.Stage.load)
         reportedDuration = false
         wantedAudio = null
         wantedText = TextChoice.Off
@@ -71,6 +83,7 @@ class ReelPlayer(context: Context, http: OkHttpClient, userAgent: String) : Play
         }
         val media = MediaItem.Builder()
             .setUri(item.url)
+            .apply { item.startup?.let { setMediaId(it.id.toString()) } }
             .apply { item.mimeType?.let { setMimeType(it) } }
             .setSubtitleConfigurations(subs)
             .build()
@@ -88,9 +101,13 @@ class ReelPlayer(context: Context, http: OkHttpClient, userAgent: String) : Play
 
     override fun seekTo(positionMs: Long) = exo.seekTo(positionMs.coerceAtLeast(0))
 
-    override fun stop() = exo.stop()
+    override fun stop() {
+        timing = null
+        exo.stop()
+    }
 
     fun release() {
+        timing = null
         listener = null
         exo.release()
     }
@@ -148,6 +165,42 @@ class ReelPlayer(context: Context, http: OkHttpClient, userAgent: String) : Play
         }
         val next = b.build()
         if (next != exo.trackSelectionParameters) exo.trackSelectionParameters = next
+    }
+
+    private inner class StartupEvents : AnalyticsListener {
+        private val window = Timeline.Window()
+
+        private fun attempt(event: AnalyticsListener.EventTime): StartupTiming? {
+            val active = timing ?: return null
+            if (event.mediaPeriodId == null || event.windowIndex !in 0 until event.timeline.windowCount) return null
+            val media = event.timeline.getWindow(event.windowIndex, window).mediaItem
+            return active.takeIf { media.mediaId == it.id.toString() }
+        }
+
+        override fun onLoadCompleted(eventTime: AnalyticsListener.EventTime, loadEventInfo: LoadEventInfo, mediaLoadData: MediaLoadData) {
+            if (mediaLoadData.dataType == C.DATA_TYPE_MEDIA || mediaLoadData.dataType == C.DATA_TYPE_MANIFEST) {
+                attempt(eventTime)?.mark(StartupTiming.Stage.response, loadEventInfo.elapsedRealtimeMs)
+            }
+        }
+
+        override fun onVideoInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format, decoderReuseEvaluation: DecoderReuseEvaluation?) {
+            attempt(eventTime)?.mark(StartupTiming.Stage.videoFormat, eventTime.realtimeMs)
+        }
+
+        override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
+            attempt(eventTime)?.mark(StartupTiming.Stage.decoder, initializedTimestampMs)
+        }
+
+        override fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime, output: Any, renderTimeMs: Long) {
+            attempt(eventTime)?.apply {
+                mark(StartupTiming.Stage.frame, renderTimeMs)
+                finish(StartupTiming.Outcome.rendered)
+            }
+        }
+
+        override fun onPlayerError(eventTime: AnalyticsListener.EventTime, error: PlaybackException) {
+            attempt(eventTime)?.finish(StartupTiming.Outcome.failed)
+        }
     }
 
     private inner class Events : Player.Listener {

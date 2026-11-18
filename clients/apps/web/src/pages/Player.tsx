@@ -1,3 +1,4 @@
+import { startupTiming, type StartupTiming } from "../lib/startupTiming";
 import { createEffect, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
@@ -31,13 +32,16 @@ import { getServerUrl } from "@reel/ui";
 
 export default function Player(): JSX.Element {
   const params = useParams<{ id: string }>();
+  let timing = startupTiming("library");
+  onCleanup(() => timing?.finish("canceled"));
   const [item, { refetch }] = createResource(() => Number(params.id), (id) => api.item(id));
+  createEffect(() => { if (item.error) timing?.finish("failed"); });
   return (
     <div class="player">
-      <Show when={!item.error} fallback={<ErrorState error={item.error} onRetry={refetch} />}>
+      <Show when={!item.error} fallback={<ErrorState error={item.error} onRetry={() => { timing = startupTiming("library"); void refetch(); }} />}>
         {/* keyed: "Next episode" swaps the item under the same route → fresh player */}
         <Show when={item()} keyed fallback={<div class="player__loading"><span class="spinner" /></div>}>
-          {(it) => <PlayerView item={it} />}
+          {(it) => <PlayerView item={it} startup={timing} />}
         </Show>
       </Show>
     </div>
@@ -101,7 +105,7 @@ export interface PlaySource {
   onClose?: () => void;
 }
 
-export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JSX.Element {
+export function PlayerView(props: { item: ItemDetail; source?: PlaySource; startup?: StartupTiming }): JSX.Element {
   const navigate = useNavigate();
   const [search, setSearch] = useSearchParams<{ file?: string; start?: string; t?: string; audio?: string; sub?: string; cast?: string }>();
   const file: MediaFile | undefined =
@@ -181,6 +185,9 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   let adapter: PlayerAdapter | undefined;
   let offs: (() => void)[] = [];
   let closed = false;
+  let timing = props.startup;
+  let initialTiming = true;
+  let timingCleanup: (() => void) | undefined;
 
   const poke = () => {
     setVisible(true);
@@ -265,6 +272,15 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
   /** (Re)start playback: decide → load. Used on open and when audio/burn-in subs change. */
   const start = async (at: number, forCast?: "airplay") => {
     if (!file) return;
+    timingCleanup?.();
+    timingCleanup = undefined;
+    if (!initialTiming) {
+      timing?.finish("superseded");
+      timing = startupTiming(props.source ? "vod" : "library");
+    }
+    initialTiming = false;
+    const trace = timing;
+    trace?.mark("decide");
     setError(undefined);
     // The clock shows the start point until the first timeupdate (slow starts, remote seek).
     setPos(at);
@@ -280,6 +296,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
         d = { ...d, url: c.url };
       }
     } catch (e) {
+      if (trace === timing) trace?.finish("failed");
       setBuffering(false);
       setRecovering(undefined);
       setError(props.source?.error?.(e) ?? decideError(e));
@@ -289,10 +306,12 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       api.stopPlayback(d.session_id).catch(() => undefined);
       return;
     }
+    if (trace === timing) trace?.decided(d.decision.mode || d.mode);
     // "Original" means no video re-encode (#87). When the server can't avoid one (codec, HDR,
     // picture subtitles, the user's bitrate limit), say why and offer the transcode instead.
     if (!forCast && quality() === "original" && videoTranscoded(d)) {
       api.stopPlayback(d.session_id).catch(() => undefined);
+      trace?.finish("canceled");
       adapter?.pause();
       setBuffering(false);
       setRecovering(undefined);
@@ -331,6 +350,27 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       .map((s) => ({ id: String(s.index), url: mediaUrl(s.url)!, label: subLabel(s).short, language: s.language ?? undefined }));
     try {
       // Paused by the viewer (a reopened session, a track change): load it, but stay paused (#100).
+      if (trace && trace === timing) {
+        trace.mark("load");
+        let frame: number | undefined;
+        const usable = () => {
+          if (trace !== timing) return;
+          trace.mark("usable");
+          if (typeof video.requestVideoFrameCallback === "function") {
+            frame = video.requestVideoFrameCallback(() => {
+              if (trace === timing) {
+                trace.mark("frame");
+                trace.finish("rendered");
+              }
+            });
+          }
+        };
+        video.addEventListener("loadeddata", usable, { once: true });
+        timingCleanup = () => {
+          video.removeEventListener("loadeddata", usable);
+          if (frame !== undefined) video.cancelVideoFrameCallback(frame);
+        };
+      }
       await a.load(mediaUrl(d.url)!, { startPositionSec: at || undefined, autoplay: !held, textTracks });
       if (held) {
         setPlaying(false);
@@ -395,6 +435,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
       a.on("recovering", (r) => setRecovering(r ? r.reason : undefined)),
       a.on("error", (e) => {
         if (e.fatal) {
+          if (a === adapter) timing?.finish("failed");
           setRecovering(undefined);
           // The player's own retries are spent. The server session may be gone too (reaped while
           // the stream was stuck): open a fresh one at the same spot, once a minute at most.
@@ -1150,6 +1191,8 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource }): JS
     window.addEventListener("pagehide", onUnload);
 
     onCleanup(() => {
+      timingCleanup?.();
+      timing?.finish("canceled");
       closed = true;
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("pagehide", onUnload);

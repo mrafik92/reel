@@ -80,6 +80,7 @@ data class PlayItem(
     val autoplay: Boolean = true,
     val subtitles: List<SidecarText> = emptyList(),
     val title: String? = null,
+    val startup: StartupTiming? = null,
 ) {
     companion object {
         const val MIME_HLS = "application/x-mpegURL"

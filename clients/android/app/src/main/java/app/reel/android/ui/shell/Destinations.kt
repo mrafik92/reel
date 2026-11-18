@@ -10,6 +10,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavHostController
 import app.reel.android.data.Me
+import app.reel.android.player.StartupTiming
 
 /**
  * The app's top-level destinations, in rail / bottom-bar order. [Live] only shows for users with
@@ -46,9 +47,10 @@ object Routes {
      * [startS] seconds. The contract between the browse screens (#188) and the player; see
      * [PlayerArgs].
      */
-    const val PLAYER = "player/{fileId}/{itemId}/{startS}"
+    const val PLAYER = "player/{fileId}/{itemId}/{startS}?tap={tap}"
 
-    fun player(fileId: Long, itemId: Long, startS: Double) = "player/$fileId/$itemId/$startS"
+    fun player(fileId: Long, itemId: Long, startS: Double, tap: Long = StartupTiming.tap()) =
+        "player/$fileId/$itemId/$startS" + if (tap > 0) "?tap=$tap" else ""
 
     /** Routes that take the whole screen (no rail or bottom bar). */
     fun isFullScreen(route: String?) = route == PLAYER || route == app.reel.android.ui.vod.VodRoutes.PLAYER

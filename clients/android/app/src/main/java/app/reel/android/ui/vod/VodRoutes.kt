@@ -6,6 +6,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import app.reel.android.data.Me
+import app.reel.android.player.StartupTiming
 
 /** IPTV VOD routes (#193). Registered by [vodGraph] for users with VOD access. */
 object VodRoutes {
@@ -13,7 +14,7 @@ object VodRoutes {
     const val GRID = "vod/grid?type={type}&query={query}"
     const val MOVIE = "vod/movie/{id}"
     const val SERIES = "vod/series/{id}"
-    const val PLAYER = "vod/play/{kind}/{id}?series={series}&start={start}"
+    const val PLAYER = "vod/play/{kind}/{id}?series={series}&start={start}&tap={tap}"
 
     /** [type] `movie` | `series`. */
     fun browse(type: String = "movie") = "vod?type=$type"
@@ -27,7 +28,7 @@ object VodRoutes {
 
     /** [kind] `movie` | `episode`; episodes need their [seriesId]. */
     fun player(kind: String, id: Long, seriesId: Long? = null, startS: Double = 0.0) =
-        "vod/play/$kind/$id?series=${seriesId ?: 0}&start=$startS"
+        "vod/play/$kind/$id?series=${seriesId ?: 0}&start=$startS" + StartupTiming.tap().let { if (it > 0) "&tap=$it" else "" }
 }
 
 fun NavGraphBuilder.vodGraph(user: Me) {
@@ -56,6 +57,7 @@ fun NavGraphBuilder.vodGraph(user: Me) {
                 type = NavType.LongType
                 defaultValue = 0L
             },
+            navArgument("tap") { type = NavType.LongType; defaultValue = 0L },
             navArgument("start") {
                 type = NavType.FloatType
                 defaultValue = 0f
@@ -68,6 +70,7 @@ fun NavGraphBuilder.vodGraph(user: Me) {
             id = a?.getLong("id") ?: 0,
             seriesId = a?.getLong("series")?.takeIf { it != 0L },
             startS = (a?.getFloat("start") ?: 0f).toDouble(),
+            tapMs = a?.getLong("tap") ?: 0L,
         )
     }
 }
