@@ -63,7 +63,6 @@ import app.reel.android.ui.theme.ReelColors
 import app.reel.android.ui.tv.FocusCard
 import app.reel.android.ui.tv.FocusMemory
 import app.reel.android.ui.tv.KeepInView
-import app.reel.android.ui.tv.ROW_FOCUS_SCALE
 import app.reel.android.ui.tv.RestoreFocus
 import app.reel.android.ui.tv.focusMemory
 import app.reel.android.ui.tv.rememberFocusMemory
@@ -342,7 +341,6 @@ private fun SettingRow(
     FocusCard(
         onClick = { onClick?.invoke() },
         shape = RoundedCornerShape(10.dp),
-        focusScale = ROW_FOCUS_SCALE,
         modifier = Modifier.fillMaxWidth().widthIn(max = 900.dp).focusMemory(memory, key).testTag("row-$key"),
     ) { focused ->
         Row(

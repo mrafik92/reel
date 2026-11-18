@@ -83,7 +83,6 @@ import app.reel.android.ui.theme.ReelColors
 import app.reel.android.ui.tv.FocusCard
 import app.reel.android.ui.tv.FocusMemory
 import app.reel.android.ui.tv.KeepInView
-import app.reel.android.ui.tv.ROW_FOCUS_SCALE
 import app.reel.android.ui.tv.RestoreFocus
 import app.reel.android.ui.tv.focusMemory
 import app.reel.android.ui.tv.rememberFocusMemory
@@ -487,7 +486,6 @@ private fun EpisodeRow(e: ItemSummary, memory: FocusMemory, edge: Dp, tv: Boolea
     FocusCard(
         onClick = { nav.navigate(Routes.item(e.id)) },
         shape = RoundedCornerShape(10.dp),
-        focusScale = ROW_FOCUS_SCALE,
         modifier = Modifier.padding(horizontal = edge - 8.dp).fillMaxWidth().focusMemory(memory, "ep/${e.id}").testTag("ep-${e.id}"),
     ) { focused ->
         Row(

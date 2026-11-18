@@ -1,3 +1,4 @@
+import "./lib/startupTiming";
 import { render } from "solid-js/web";
 import { lazy } from "solid-js";
 import { HashRouter, Route, Router } from "@solidjs/router";

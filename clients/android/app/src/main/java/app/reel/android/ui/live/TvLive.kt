@@ -68,7 +68,6 @@ import app.reel.android.ui.shell.LocalShellChrome
 import app.reel.android.ui.theme.ReelColors
 import app.reel.android.ui.tv.FocusCard
 import app.reel.android.ui.tv.FocusMemory
-import app.reel.android.ui.tv.ROW_FOCUS_SCALE
 import app.reel.android.ui.tv.RestoreFocus
 import app.reel.android.ui.tv.focusMemory
 import app.reel.android.ui.tv.rememberFocusMemory
@@ -144,7 +143,6 @@ private fun TvBrowse(s: LiveScreenState, memory: FocusMemory, listState: LazyLis
                 FocusCard(
                     onClick = { open(c) },
                     onLongClick = { s.vm.toggleFavorite(c.id) },
-                    focusScale = ROW_FOCUS_SCALE,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth().focusMemory(memory, "ch/${c.id}").testTag("channel-${c.id}"),
                 ) { focused ->

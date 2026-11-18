@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -49,17 +51,18 @@ import app.reel.android.LocalDeviceKind
 import app.reel.android.data.Home
 import app.reel.android.data.ItemDetail
 import app.reel.android.data.ItemSummary
-import app.reel.android.data.home
 import app.reel.android.data.item
 import app.reel.android.ui.common.CardSize
 import app.reel.android.ui.common.LandscapeCard
 import app.reel.android.ui.common.Load
-import app.reel.android.ui.common.Loadable
+import app.reel.android.ui.common.LoadingView
+import app.reel.android.ui.common.ErrorView
+import app.reel.android.ui.common.EmptyView
 import app.reel.android.ui.common.OnResume
 import app.reel.android.ui.common.Pill
 import app.reel.android.ui.common.PosterCard
 import app.reel.android.ui.common.ReelImage
-import app.reel.android.ui.common.rememberLoad
+import androidx.lifecycle.viewmodel.compose.viewModel
 import app.reel.android.ui.item.ItemLogic
 import app.reel.android.ui.item.rememberPlayLauncher
 import app.reel.android.ui.live.LiveNowRow
@@ -116,12 +119,20 @@ private const val EMPTY_HOME = "Nothing here yet. Add a library in Reel on the w
  */
 @Composable
 fun HomeScreen(live: Boolean) {
-    val home = rememberLoad { home() }
+    val api = LocalAppGraph.current.session.api ?: return
+    val home: HomeViewModel = viewModel { HomeViewModel(api) }
+    val state by home.state.collectAsState()
     OnResume { home.refresh() }
     val memory = rememberFocusMemory()
-    RestoreFocus(memory, ready = home.state is Load.Ready)
-    Loadable(home, isEmpty = { !live && lanes(it).isEmpty() }, emptyText = EMPTY_HOME) { h ->
-        if (LocalDeviceKind.current == DeviceKind.Tv) TvHome(h, memory, live) else PhoneHome(h, memory, live)
+    RestoreFocus(memory, ready = state is Load.Ready)
+    when (val current = state) {
+        Load.Loading -> LoadingView()
+        is Load.Failed -> ErrorView(current.message, onRetry = home::refresh)
+        is Load.Ready -> {
+            val h = current.value
+            if (!live && lanes(h).isEmpty()) EmptyView(EMPTY_HOME)
+            else if (LocalDeviceKind.current == DeviceKind.Tv) TvHome(h, memory, live) else PhoneHome(h, memory, live)
+        }
     }
 }
 
@@ -132,8 +143,9 @@ private fun PhoneHome(h: Home, memory: FocusMemory, live: Boolean) {
     val feature = featured(h)
     LazyColumn(
         Modifier.fillMaxSize().testTag("home"),
+        state = rememberLazyListState(),
         contentPadding = PaddingValues(bottom = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         if (feature != null) item(key = "featured") { PhoneFeatured(feature) }
         val all = lanes(h)
@@ -143,58 +155,48 @@ private fun PhoneHome(h: Home, memory: FocusMemory, live: Boolean) {
     }
 }
 
-/** ~430dp featured title fading into the page, with cream *Resume* and *Details*. */
+/** Portrait artwork and an action block that can grow with the user's font size. */
 @Composable
 private fun PhoneFeatured(i: ItemSummary) {
     val nav = LocalNavController.current
     val player = rememberPlayLauncher()
     val resuming = !i.played && (i.progress ?: 0.0) >= ItemLogic.STARTED
-    Box(Modifier.fillMaxWidth().height(430.dp).testTag("featured")) {
-        ReelImage(i.backdropUrl ?: i.posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    0f to ReelColors.Bg.copy(alpha = 0.6f),
-                    0.38f to Color.Transparent,
-                    0.62f to ReelColors.Bg.copy(alpha = 0.55f),
-                    1f to ReelColors.Bg,
-                ),
-            ),
-        )
-        Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
+    Column(Modifier.fillMaxWidth().testTag("featured"), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.fillMaxWidth().height(290.dp)) {
+            ReelImage(i.posterUrl, fallbackUrl = i.backdropUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                0f to ReelColors.Bg.copy(alpha = 0.15f),
+                0.55f to Color.Transparent,
+                1f to ReelColors.Bg,
+            )))
             Text(
                 i.title,
-                style = MaterialTheme.typography.displaySmall.copy(fontSize = 40.sp, lineHeight = 40.sp, fontWeight = FontWeight.ExtraBold),
-                color = ReelColors.Ink,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.displaySmall.copy(fontSize = 32.sp, lineHeight = 36.sp, fontWeight = FontWeight.ExtraBold),
+                color = ReelColors.Ink, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 20.dp),
             )
-            cardMeta(i, withGenres = true)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = ReelColors.Ink2) }
-            val p = i.progress?.toFloat()?.coerceIn(0f, 1f)
+        }
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            cardMeta(i, withGenres = true)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = ReelColors.Ink2, textAlign = TextAlign.Center) }
+            val p = i.progress?.toFloat()?.takeIf { it.isFinite() }?.coerceIn(0f, 1f)
             if (resuming && p != null) {
                 Box(Modifier.width(160.dp).height(3.dp).background(ReelColors.Ink.copy(alpha = 0.2f), RoundedCornerShape(2.dp))) {
                     Box(Modifier.fillMaxWidth(p).fillMaxHeight().background(ReelColors.AccentHi, RoundedCornerShape(2.dp)))
                 }
             }
-            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Pill(
-                    if (resuming) "Resume" else "Play",
-                    icon = Icons.Outlined.PlayArrow,
-                    primary = true,
-                    enabled = i.kind == "movie" || i.kind == "episode",
-                    onClick = { player.play(i.id) },
-                    modifier = Modifier.width(150.dp).testTag("featured-play"),
+                    if (resuming) "Resume" else "Play", icon = Icons.Outlined.PlayArrow, primary = true,
+                    enabled = i.kind == "movie" || i.kind == "episode", onClick = { player.play(i.id) },
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("featured-play"),
                 )
                 Pill(
-                    "Details",
-                    icon = Icons.Outlined.Info,
-                    onClick = { nav.navigate(Routes.item(i.id)) },
-                    modifier = Modifier.width(150.dp).testTag("featured-details"),
+                    "Details", icon = Icons.Outlined.Info, onClick = { nav.navigate(Routes.item(i.id)) },
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("featured-details"),
                 )
             }
             player.error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = ReelColors.AccentHi) }

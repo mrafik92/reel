@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.reel.android.DeviceKind
 
@@ -28,6 +29,14 @@ object ReelColors {
     val Ok = Color(0xFF7FD4A0)
     /** Caution: *Transcode*. */
     val Warn = Color(0xFFFFD23F)
+}
+
+/** Shared control geometry for artwork, the shell, and screen actions. */
+object ReelDimensions {
+    val TouchTarget = 48.dp
+    val CardRadius = 8.dp
+    val FocusOutline = 2.dp
+    val ProgressHeight = 4.dp
 }
 
 private val scheme = darkColorScheme(

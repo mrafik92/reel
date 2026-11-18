@@ -138,9 +138,8 @@ fun LibraryContent(
     val tv = LocalDeviceKind.current == DeviceKind.Tv
     val edge = if (tv) 48.dp else 16.dp
     val memory = rememberFocusMemory()
-    RestoreFocus(memory, ready = paged.items.isNotEmpty() || paged.end || paged.error != null)
-
     var dialog by rememberSaveable { mutableStateOf<String?>(null) }
+    RestoreFocus(memory, ready = dialog == null)
 
     // Load the next page as the grid (scrolled by touch or by D-pad focus) nears its end.
     val total by rememberUpdatedState(paged.items.size)
