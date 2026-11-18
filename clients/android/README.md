@@ -25,16 +25,15 @@ AGP 8.7 needs JDK 17–21. A newer default JDK (e.g. 27) fails, so set `JAVA_HOM
 
 ```sh
 cd clients/android
-./gradlew lint testDebugUnitTest assembleDebug assembleRelease     # what CI runs
+./gradlew lint testDebugUnitTest assembleDebug assembleRelease     # what CI ran; run it locally before a PR
 # → app/build/outputs/apk/debug/app-debug.apk  (package app.reel.android.debug)
 ```
 
 `REEL_URL=https://reel.example` at build time presets the server address (the same idea as `VITE_REEL_URL` for
 the TV apps). `REEL_VERSION_NAME` / `REEL_VERSION_CODE` set the version.
 
-CI (`ci.yml`, job `android`) runs the same command plus an unsigned `assembleRelease` (so R8 problems show up
-before a release tag) when `clients/android/**` changes, and uploads the debug APK as the `reel-android-debug`
-artifact.
+CI (`ci.yml`, job `android`) runs the same command when `clients/android/**` changes and uploads the debug APK as
+the `reel-android-debug` artifact. GitHub Actions is unavailable for now, so run it locally; PRs get no CI.
 
 ## Emulators
 
@@ -55,39 +54,70 @@ next to the release app.
 - **Android TV:** *Settings → Device Preferences → About*, then press *Build* 7 times. Enable *Developer
   options → USB/Network debugging*. Then run `adb connect <tv-ip>:5555` and `adb install -r app-debug.apk`.
 
-## Release builds (#195)
+## Release builds (#232)
 
-Push a tag `android-vMAJOR.MINOR.PATCH` and `.github/workflows/android-release.yml` builds a signed, R8-shrunk
-release APK, checks its signature and version, and attaches `reel-android-<version>.apk` plus `SHA256SUMS` to a
-GitHub release of that tag.
+GitHub Actions is unavailable for now (account billing), so release APKs are built on the Mac with
+`scripts/android-release.sh`, the same script as Reel Web (`clients/android-web/README.md`). From the repo root:
 
 ```sh
-git tag android-v0.2.0 && git push origin android-v0.2.0
+scripts/android-release.sh compose --taildrop                    # next patch after the newest android-v* tag
+scripts/android-release.sh compose --version 0.4.0 --taildrop    # or a chosen version
+scripts/android-release.sh compose --taildrop --github-release   # also tag and publish a GitHub release
 ```
+
+It runs `lint testDebugUnitTest assembleRelease`, checks that `apksigner` shows the release certificate and that
+the package, versionCode and versionName are right, and writes `dist/Reel-X.Y.Z.apk` plus `.sha256`
+(git-ignored). `--taildrop` sends it to `rafiiiki` (`--taildrop-target NAME` for another device) and says plainly
+when the phone is offline (exit 3, with the command to send it later). `--github-release` tags HEAD
+`android-vX.Y.Z`, pushes the tag and creates the release "Android X.Y.Z" with `gh release create`; it needs a clean
+tree on `origin/main` and a tag that doesn't exist yet. `--dry-run` builds but only prints the Taildrop and GitHub
+commands. `--help` lists every option. The script's unit tests: `scripts/tests/android-release-test.sh`.
 
 **Version scheme** (`scripts/version-from-tag.sh`): `android-vMAJOR.MINOR.PATCH` gives versionName
 `MAJOR.MINOR.PATCH` and versionCode `MAJOR*1_000_000 + MINOR*1_000 + PATCH`. For example `android-v0.2.0` →
 0.2.0 / 2000 and `android-v1.10.3` → 1.10.3 / 1010003. MINOR and PATCH must be 0–999, with no leading zeros
 or suffixes (`-rc1` is rejected), so every higher tag gets a higher versionCode and installs over the previous
-APK. Local and debug builds default to versionCode 1.
+APK. Reel Web uses the same scheme with `android-web-v` tags. Local and debug builds default to versionCode 1.
 
 **Signing.** Every release must be signed with the **same key**, or Android refuses to install it over the
-previous one (you'd have to uninstall and lose the app's data). The workflow reads four Actions secrets and
-fails with a clear error if any is missing:
+previous one (you'd have to uninstall and lose the app's data). The key is `~/.reel-android/reel-release.jks`
+(PKCS12, alias `reel`, certificate SHA-256 `a48654758e7b9b85a5825e7f7a55bfebc8b2d5370691d7d056124ee4c9a58ecb`);
+the keystore and its password are backed up in the owner's password manager. The script takes the password from
+`REEL_KEYSTORE_PASSWORD` (and `REEL_KEY_PASSWORD`, which defaults to it), else the macOS Keychain, else a hidden
+prompt, and passes it to `keytool` and Gradle only as environment variables (`REEL_KEYSTORE_FILE`,
+`REEL_KEYSTORE_PASSWORD`, `REEL_KEY_ALIAS`, `REEL_KEY_PASSWORD`, read by `app/build.gradle.kts`), never as a file
+or an argument. Without a password it stops before building. To keep the password in the Keychain (once; `-w`
+last makes `security` prompt for it):
 
-| Secret | Contents |
-|---|---|
-| `ANDROID_KEYSTORE_B64` | the release keystore (`.jks`, PKCS12), base64 on one line |
-| `ANDROID_KEYSTORE_PASSWORD` | the keystore password |
-| `ANDROID_KEY_ALIAS` | the key alias (`reel`) |
-| `ANDROID_KEY_PASSWORD` | the key password (same as the keystore password for PKCS12) |
+```sh
+security add-generic-password -s reel-android-keystore -a reel -w
+```
 
-The keystore is decoded into the runner's temp dir and deleted after the build. The passwords reach Gradle
-only as environment variables (`REEL_KEYSTORE_FILE`, `REEL_KEYSTORE_PASSWORD`, `REEL_KEY_ALIAS`,
-`REEL_KEY_PASSWORD`, read by `app/build.gradle.kts`), never as a file.
+**Obtainium.** Reel Web's releases share this repo, so the Compose app's entry (repo `mrafik92/reel`, with a
+GitHub token because the repo is private) needs filters, or it would pick up a Reel Web release:
 
-**One-time key setup (owner).** Run on the Mac, outside the repo. Keep the keystore and the password in your
-password manager: if the key is lost, no future release can update installed apps.
+- *Filter release titles by regular expression*: `^Android `
+- *Filter APKs by regular expression*: `^(Reel|reel-android)-[0-9].*\.apk$` (releases up to 0.3.0 named the APK
+  `reel-android-X.Y.Z.apk`; the script names it `Reel-X.Y.Z.apk`)
+
+**The Actions workflow (#195), not in use.** `.github/workflows/android-release.yml` built `android-v0.1.0`
+to `0.3.0` on a pushed tag. It stays in the repo but doesn't run while Actions is unavailable. If Actions comes
+back, a tag pushed by `--github-release` would also start it, and its release step would fail because the
+release already exists; disable it (`gh workflow disable android-release -R mrafik92/reel`) or stop using the
+script's `--github-release`. It reads four Actions secrets (`ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`), set once with:
+
+```sh
+base64 -i ~/.reel-android/reel-release.jks | tr -d '\n' | gh secret set ANDROID_KEYSTORE_B64 -R mrafik92/reel
+read -rs "PW?Keystore password: " && echo          # zsh; in bash: read -rsp 'Keystore password: ' PW
+printf '%s' "$PW" | gh secret set ANDROID_KEYSTORE_PASSWORD -R mrafik92/reel
+printf '%s' "$PW" | gh secret set ANDROID_KEY_PASSWORD -R mrafik92/reel
+printf '%s' reel  | gh secret set ANDROID_KEY_ALIAS -R mrafik92/reel
+unset PW
+```
+
+**Creating the key** (done once, in 2026-11; only needed again if it's lost, and then every installed app has to
+be uninstalled). Run outside the repo:
 
 ```sh
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
@@ -98,48 +128,34 @@ KS_PW="$PW" "$JAVA_HOME/bin/keytool" -genkeypair -v -keystore reel-release.jks -
   -alias reel -keyalg RSA -keysize 4096 -validity 10000 \
   -storepass:env KS_PW -keypass:env KS_PW -dname "CN=Reel, O=Reel"
 chmod 600 reel-release.jks
-# Save reel-release.jks and the password in the password manager now.
-
-base64 -i reel-release.jks | tr -d '\n' | gh secret set ANDROID_KEYSTORE_B64 -R mrafik92/reel
-printf '%s' "$PW" | gh secret set ANDROID_KEYSTORE_PASSWORD -R mrafik92/reel
-printf '%s' "$PW" | gh secret set ANDROID_KEY_PASSWORD -R mrafik92/reel
-printf '%s' reel  | gh secret set ANDROID_KEY_ALIAS -R mrafik92/reel
 unset PW
-gh secret list -R mrafik92/reel        # names only; the four ANDROID_* entries should be listed
+# Save reel-release.jks and the password in the password manager now.
 ```
 
-**Local signed build.** Create `clients/android/keystore.properties` (git-ignored, like `*.jks`/`*.keystore`):
-
-```properties
-storeFile=/Users/<you>/.reel-android/reel-release.jks
-storePassword=…
-keyAlias=reel
-keyPassword=…
-```
-
-Then `REEL_VERSION_NAME=0.2.0 REEL_VERSION_CODE=2000 ./gradlew assembleRelease` →
-`app/build/outputs/apk/release/app-release.apk`. Without signing config the output is
-`app-release-unsigned.apk`, which can't be installed. Check a build with
-`$ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs app-release.apk`.
+**Plain Gradle.** A git-ignored `clients/android/keystore.properties` (`storeFile`, `storePassword`, `keyAlias`,
+`keyPassword`) also signs `./gradlew assembleRelease`, but it puts the password on disk; prefer the script.
+Without any signing config the output is `app-release-unsigned.apk`, which can't be installed.
 
 ## Install a release (sideload)
 
-Download `reel-android-<version>.apk` from the GitHub release (the repo is private, so sign in, or use
-`gh release download android-v0.2.0 -R mrafik92/reel -p '*.apk'`). A newer release installs over the older
+The usual way is `scripts/android-release.sh compose --taildrop` (above), which builds the APK and sends it to the
+phone. Earlier releases are on GitHub: download `Reel-<version>.apk` (`reel-android-<version>.apk` up to 0.3.0)
+from the release (the repo is private, so sign in, or use
+`gh release download android-v0.3.0 -R mrafik92/reel -p '*.apk'`). A newer release installs over the older
 one and keeps sign-in and settings.
 
 **Phone or tablet**
 - *Without a computer:* send the APK to the phone with Taildrop (Tailscale → *Send file*) or any file share,
   and open it from *Files*/*Downloads*. The first time, Android asks you to allow *Install unknown apps* for
   that app (Files, Chrome, Tailscale…). Allow it, go back and tap *Install*.
-- *With adb:* enable USB debugging (see above), then `adb install -r reel-android-<version>.apk`.
+- *With adb:* enable USB debugging (see above), then `adb install -r Reel-<version>.apk`.
 
 **Android TV / Google TV**
 - *With adb:* enable *Network debugging* (see above), then `adb connect <tv-ip>:5555`, accept the prompt on the
-  TV, and run `adb install -r reel-android-<version>.apk`. Reel shows up in the TV's apps row.
+  TV, and run `adb install -r Reel-<version>.apk`. Reel shows up in the TV's apps row.
 - *With the Downloader app* (by AFTVnews, from the Play Store): the TV can't sign in to GitHub, so put the APK
   somewhere it can fetch on the LAN, e.g. run `python3 -m http.server 8000` in the APK's folder on the Mac and
-  enter `http://<mac-ip>:8000/reel-android-<version>.apk` in Downloader. Allow *Install unknown apps* for
+  enter `http://<mac-ip>:8000/Reel-<version>.apk` in Downloader. Allow *Install unknown apps* for
   Downloader when asked (*Settings → Apps → Security & restrictions*), install, then stop the server.
 - *Taildrop* also works on Android TV if the Tailscale app is installed there.
 

@@ -61,17 +61,40 @@
                 android:textColor="@color/muted"
                 android:textSize="16sp" />
 
-            <Button
-                android:id="@+id/retry"
+            <!-- The raw error (net::ERR_…, HTTP 502) for whoever debugs it; the message above is the plain one. -->
+            <TextView
+                android:id="@+id/error_detail"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="28dp"
-                android:minWidth="160dp"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:textColor="@color/muted"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+            <!-- Automatic retry: "Trying again in 4 s", "Waiting for a network connection". -->
+            <TextView
+                android:id="@+id/error_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:accessibilityLiveRegion="polite"
+                android:gravity="center"
+                android:textColor="@color/ink"
+                android:textSize="14sp"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/retry"
+                style="@style/Widget.ReelWeb.Button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
                 android:text="@string/retry" />
 
             <Button
                 android:id="@+id/change_server"
-                style="@android:style/Widget.Material.Button.Borderless.Colored"
+                style="@style/Widget.ReelWeb.Button.Text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"

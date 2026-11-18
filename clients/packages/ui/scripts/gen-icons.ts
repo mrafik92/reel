@@ -1,7 +1,7 @@
 // Generates every Reel icon from the one source SVG (#142), so the sizes can't drift:
 //   web favicon (SVG + ICO), apple-touch-icon, PWA manifest icons (any + maskable),
 //   webOS icon / largeIcon / splash, the Tizen package icon, the Android launcher icons + TV banner, and
-//   the Reel Web for Android launcher icons (#226: a "WEB" variant on the dark background).
+//   the Reel Web for Android launcher icons and TV banner (#226/#231: a "WEB" variant on the dark background).
 // Run from clients/: `bun run icons`. The outputs are committed; CI doesn't run this.
 import { Resvg } from "@resvg/resvg-js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -84,7 +84,20 @@ function androidWebIcons(): Record<string, Buffer> {
     out[`${ANDROID_WEB_RES}/mipmap-${d}/ic_launcher_foreground.png`] = pngText(webMark(512, 196, 118, 384, 60), 108 * n);
   }
   out[`${ANDROID_WEB_RES}/drawable-nodpi/logo.png`] = tile(384);
+  out[`${ANDROID_WEB_RES}/drawable-xhdpi/tv_banner.png`] = webBanner();
   return out;
+}
+
+/**
+ * Reel Web's Android TV banner (#231, 320×180 xhdpi). The Compose app's banner is crimson, so this one
+ * is the dark app background with the tile, "Reel" and the same cream "WEB" label as the launcher icon.
+ */
+function webBanner(): Buffer {
+  const mark = logo.replace("<svg ", `<svg x="26" y="38" width="104" height="104" `);
+  const name = `<text x="150" y="98" font-family="Helvetica, Arial, sans-serif" font-size="60" font-weight="700" fill="#f2e6d3">Reel</text>`;
+  const label = `<text x="153" y="136" font-family="Helvetica, Arial, sans-serif" font-size="26" font-weight="700" letter-spacing="5" fill="${TILE}">WEB</text>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180"><rect width="320" height="180" fill="${BG}"/>${mark}${name}${label}</svg>`;
+  return pngText(svg, 320);
 }
 
 /** ICO with PNG-encoded entries (supported by every current browser). */

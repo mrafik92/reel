@@ -130,6 +130,17 @@ describe("normalizeKey", () => {
     expect(normalizeKey({ keyCode: 403 })?.key).toBe("red");
     expect(normalizeKey({ keyCode: 406 })?.key).toBe("blue");
   });
+  test("Android WebView media keys (#231)", () => {
+    // What Reel Web on the Android TV emulator delivered (WebView 113): Play and Pause share keyCode 179.
+    expect(normalizeKey({ key: "MediaPlayPause", keyCode: 179 })?.key).toBe("playpause");
+    expect(normalizeKey({ key: "MediaPlay", keyCode: 179 })?.key).toBe("play");
+    expect(normalizeKey({ key: "MediaPause", keyCode: 179 })?.key).toBe("pause");
+    expect(normalizeKey({ key: "MediaFastForward", keyCode: 228 })?.key).toBe("ff");
+    expect(normalizeKey({ key: "MediaRewind", keyCode: 227 })?.key).toBe("rw");
+    expect(normalizeKey({ key: "MediaStop", keyCode: 178 })?.key).toBe("stop");
+    expect(normalizeKey({ key: "ChannelUp", keyCode: 33 })?.key).toBe("channelUp");
+    expect(normalizeKey({ key: "Enter", keyCode: 13 })?.key).toBe("enter");
+  });
   test("digits and unknown", () => {
     expect(normalizeKey({ keyCode: 53 })).toEqual({ key: "digit", digit: 5 });
     expect(normalizeKey({ key: "7" })).toEqual({ key: "digit", digit: 7 });
@@ -144,12 +155,19 @@ describe("exit / key registration", () => {
     expect(called).toBe("webOS");
     exitApp({ PalmSystem: { platformBack: () => (called = "palm") } }, "webos");
     expect(called).toBe("palm");
-    exitApp({ close: () => (called = "close") }, "webos");
+    expect(exitApp({ close: () => (called = "close") }, "webos")).toBe(true);
     expect(called).toBe("close");
+  });
+  test("reports when the page can't exit by itself", () => {
+    // Back on the root screen stays unhandled there, so the Reel Web Android shell can leave (#231).
+    expect(exitApp({ close: () => undefined }, "android-tv")).toBe(false);
+    expect(exitApp({ close: () => undefined }, "web")).toBe(false);
+    expect(exitApp({}, "tizen")).toBe(false);
+    expect(exitApp({}, "webos")).toBe(false);
   });
   test("Tizen exits via application", () => {
     let exited = false;
-    exitApp({ tizen: { application: { getCurrentApplication: () => ({ exit: () => (exited = true) }) } } }, "tizen");
+    expect(exitApp({ tizen: { application: { getCurrentApplication: () => ({ exit: () => (exited = true) }) } } }, "tizen")).toBe(true);
     expect(exited).toBe(true);
   });
   test("registerKeyBatch gets supported keys only", () => {

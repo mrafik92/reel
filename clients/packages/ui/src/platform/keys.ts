@@ -43,6 +43,9 @@ export function normalizeKey(e: { keyCode?: number; key?: string; code?: string 
   const kc = e.keyCode ?? 0;
   if (kc >= 48 && kc <= 57) return { key: "digit", digit: kc - 48 };
   if (kc >= 96 && kc <= 105) return { key: "digit", digit: kc - 96 };
+  // Android WebView (Reel Web on Android TV, #231) sends MediaPlay and MediaPause with keyCode 179, the
+  // play/pause toggle code: trust `key` for those, or a Play press would pause.
+  if (kc === 179 && (k === "MediaPlay" || k === "MediaPause")) return { key: KEYS[k]! };
   // Prefer keyCode: TV remotes often report meaningless `key` values ("Unidentified").
   const byCode = CODES[kc];
   if (byCode) return { key: byCode };
@@ -111,17 +114,27 @@ export function onRemoteKey(handler: RemoteKeyHandler): () => void {
   };
 }
 
-/** Exit/close the app (used for Back on the root screen). Browser: no-op. */
-export function exitApp(g: any = globalThis, p = platform): void {
+/**
+ * Exit/close the app (used for Back on the root screen). Returns false where the page can't do that
+ * itself (a browser, or the Reel Web Android shell, which leaves when Back stays unhandled, #227/#231).
+ */
+export function exitApp(g: any = globalThis, p = platform): boolean {
   try {
     if (p === "webos") {
       if (typeof g.webOS?.platformBack === "function") g.webOS.platformBack();
       else if (typeof g.PalmSystem?.platformBack === "function") g.PalmSystem.platformBack();
-      else g.close?.();
-    } else if (p === "tizen") {
-      g.tizen?.application?.getCurrentApplication?.().exit();
+      else if (typeof g.close === "function") g.close();
+      else return false;
+      return true;
+    }
+    if (p === "tizen") {
+      const app = g.tizen?.application?.getCurrentApplication?.();
+      if (!app) return false;
+      app.exit();
+      return true;
     }
   } catch {
     /* ignore */
   }
+  return false;
 }
