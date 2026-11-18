@@ -131,6 +131,7 @@ export type SearchAllVod = SearchAll & { vod?: VodCard[] | null };
 
 export interface VodApi {
   categories(type: VodKind): Promise<VodCategory[]>;
+  genres(type: VodKind): Promise<string[]>;
   list(type: VodKind, q: VodQuery): Promise<Page<VodCard>>;
   movie(id: VodId): Promise<VodMovie>;
   series(id: VodId): Promise<VodSeries>;
@@ -144,6 +145,7 @@ const plural = (t: VodKind) => (t === "movie" ? "movies" : "series");
 
 const httpVod: VodApi = {
   categories: (type) => http.get("/vod/categories", { type }),
+  genres: (type) => http.get("/vod/genres", { type }),
   list: (type, q) =>
     http.get(`/vod/${plural(type)}`, {
       category: q.category != null ? String(q.category) : undefined,
@@ -172,7 +174,7 @@ function backend(): Promise<VodApi> {
 
 // Short read cache so Back renders instantly (catalogues are big and change slowly).
 const cache = new Map<string, { at: number; p: Promise<unknown> }>();
-const TTL: Partial<Record<keyof VodApi, number>> = { categories: 10 * 60_000, list: 2 * 60_000, lanes: 5 * 60_000, movie: 60_000, series: 60_000 };
+const TTL: Partial<Record<keyof VodApi, number>> = { categories: 10 * 60_000, genres: 2 * 60_000, list: 2 * 60_000, lanes: 5 * 60_000, movie: 60_000, series: 60_000 };
 
 function wrap(): VodApi {
   const out: Record<string, unknown> = {};

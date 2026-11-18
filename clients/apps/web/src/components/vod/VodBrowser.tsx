@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, Show, type JSX } from "solid-js";
+import { createEffect, createResource, createSignal, For, on, onCleanup, Show, type JSX } from "solid-js";
 import { useLocation, useSearchParams } from "@solidjs/router";
 import { Icon, Row, Sheet, VirtualGrid, isTvMode } from "@reel/ui";
 import { vod, type VodCard as Card, type VodKind, type VodLane, type VodSort } from "../../api/vod";
@@ -56,14 +56,15 @@ export function VodBrowser(props: { kind: VodKind; switcher: JSX.Element; onRead
   const grid = () => params.view === "all" || !!catId() || !!q() || !!genre() || !!params.sort || lanesOff();
   const nActive = () => (catId() ? 1 : 0) + (q() ? 1 : 0) + (genre() ? 1 : 0);
 
-  // Genres as the provider spells them, from what's on screen (no genre endpoint for IPTV).
-  const genres = createMemo(() => {
-    const m = new Map<string, number>();
-    (lanes() ?? []).forEach((l) => l.items.forEach((it) => (it.genres ?? []).forEach((g) => m.set(g, (m.get(g) ?? 0) + 1))));
-    const out = Array.from(m.entries()).sort((a, b) => b[1] - a[1]).map(([g]) => g);
-    if (genre() && out.indexOf(genre()!) < 0) out.unshift(genre()!);
-    return out.slice(0, 24);
-  });
+  const [catalogGenres] = createResource(
+    () => props.kind,
+    (kind) => vod.genres(kind).catch(() => []),
+  );
+  const genres = () => {
+    const choices = catalogGenres() ?? [];
+    const selected = genre();
+    return selected && !choices.includes(selected) ? [selected, ...choices] : choices;
+  };
 
   // ---- Grid paging
   const [items, setItems] = createSignal<Card[]>([]);
