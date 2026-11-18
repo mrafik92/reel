@@ -1,6 +1,7 @@
 // Generates every Reel icon from the one source SVG (#142), so the sizes can't drift:
 //   web favicon (SVG + ICO), apple-touch-icon, PWA manifest icons (any + maskable),
-//   webOS icon / largeIcon / splash, the Tizen package icon and the Android launcher icons + TV banner.
+//   webOS icon / largeIcon / splash, the Tizen package icon, the Android launcher icons + TV banner, and
+//   the Reel Web for Android launcher icons (#226: a "WEB" variant on the dark background).
 // Run from clients/: `bun run icons`. The outputs are committed; CI doesn't run this.
 import { Resvg } from "@resvg/resvg-js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -57,6 +58,35 @@ function androidIcons(): Record<string, Buffer> {
   return out;
 }
 
+const ANDROID_WEB_RES = "android-web/app/src/main/res";
+
+/**
+ * Reel Web for Android (#226): installed next to the Compose app, so its icon must read differently
+ * at a glance: the reel tile, smaller, on the dark app background with a cream "WEB" label under it.
+ */
+function webMark(w: number, tileSize: number, tileY: number, labelY: number, fontSize: number, bg?: string): string {
+  const x = (w - tileSize) / 2;
+  const placed = logo.replace("<svg ", `<svg x="${x}" y="${tileY}" width="${tileSize}" height="${tileSize}" `);
+  const fill = bg ? `<rect width="${w}" height="${w}" rx="${w * 0.22}" fill="${bg}"/>` : "";
+  const label = `<text x="${w / 2}" y="${labelY}" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="700" letter-spacing="${fontSize * 0.12}" fill="#f2e6d3">WEB</text>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${w}" viewBox="0 0 ${w} ${w}">${fill}${placed}${label}</svg>`;
+}
+function pngText(svg: string, w: number): Buffer {
+  return Buffer.from(new Resvg(svg, { fitTo: { mode: "width", value: w }, font: { loadSystemFonts: true } }).render().asPng());
+}
+
+function androidWebIcons(): Record<string, Buffer> {
+  const out: Record<string, Buffer> = {};
+  for (const [d, n] of Object.entries(DENSITIES)) {
+    // Legacy launcher icon (48 dp): dark rounded square, tile and label.
+    out[`${ANDROID_WEB_RES}/mipmap-${d}/ic_launcher.png`] = pngText(webMark(512, 300, 56, 452, 92, BG), 48 * n);
+    // Adaptive foreground (108 dp, safe zone 66 dp = 61%): tile and label inside it; background is @color/bg.
+    out[`${ANDROID_WEB_RES}/mipmap-${d}/ic_launcher_foreground.png`] = pngText(webMark(512, 196, 118, 384, 60), 108 * n);
+  }
+  out[`${ANDROID_WEB_RES}/drawable-nodpi/logo.png`] = tile(384);
+  return out;
+}
+
 /** ICO with PNG-encoded entries (supported by every current browser). */
 function ico(sizes: number[]): Buffer {
   const imgs = sizes.map(tile);
@@ -90,6 +120,7 @@ const out: Record<string, Buffer | string> = {
   "apps/webos/assets/splash.png": png(compose(1920, 1080, 360, BG), 1920),
   "apps/tizen/assets/icon.png": tile(512),
   ...androidIcons(),
+  ...androidWebIcons(),
 };
 
 for (const [rel, data] of Object.entries(out)) {

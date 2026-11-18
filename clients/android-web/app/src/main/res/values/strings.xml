@@ -1,0 +1,29 @@
+<resources>
+    <string name="app_name">Reel Web</string>
+
+    <string name="setup_title">Reel server</string>
+    <string name="setup_heading">Connect to your Reel server</string>
+    <string name="setup_hint_text">The address you open Reel at in a browser: a LAN address such as 192.168.1.20:8420, a Tailscale address, or https://reel.example.com.</string>
+    <string name="setup_input_hint">Server address</string>
+    <string name="setup_connect">Connect</string>
+    <string name="setup_save_anyway">Save anyway</string>
+    <string name="setup_invalid">That isn\'t a web address. Try 192.168.1.20:8420 or https://reel.example.com.</string>
+    <string name="setup_checking">Checking %1$s…</string>
+    <string name="setup_not_reel">%1$s answered, but it doesn\'t look like a Reel server.</string>
+    <string name="setup_unknown_host">Can\'t find %1$s. Check the name, or connect to the network or Tailscale it\'s on.</string>
+    <string name="setup_tls">%1$s has a certificate this phone doesn\'t trust. Reel Web doesn\'t open servers with certificate errors.</string>
+    <string name="setup_unreachable">Can\'t reach %1$s. If the server is only on your home network or Tailscale, connect to it and try again, or save the address anyway.</string>
+
+    <string name="error_unreachable_title">Can\'t reach Reel</string>
+    <string name="error_unreachable">%1$s isn\'t answering (%2$s). Check that you\'re on your home network or Tailscale.</string>
+    <string name="error_server_title">Reel had a problem</string>
+    <string name="error_server">%1$s returned an error (HTTP %2$d). Try again in a moment.</string>
+    <string name="error_tls_title">Certificate not trusted</string>
+    <string name="error_tls">The certificate of %1$s isn\'t valid for this phone, so Reel Web won\'t open it.</string>
+    <string name="error_crash_title">The page stopped</string>
+    <string name="error_crash">The web view closed unexpectedly. Reload to continue.</string>
+    <string name="retry">Retry</string>
+    <string name="change_server">Change server</string>
+    <string name="no_app_for_link">No app can open this link.</string>
+    <string name="shortcut_change_server">Change server</string>
+</resources>
