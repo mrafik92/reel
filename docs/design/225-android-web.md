@@ -1,8 +1,8 @@
 # Design: Reel Web for Android, a WebView client (#225)
 
 > **Status (2026-11-18).** The shell (#226) is built: server setup, an origin-scoped WebView, the TLS and
-> unreachable-server screens, and CI. Back, insets and full screen (#227) are built. Recovery (#228), the
-> web-side identity (#229), the playback check (#230), the TV check (#231) and releases (#232) are open. When a part
+> unreachable-server screens, and CI. Back, insets and full screen (#227) and the web-side identity (#229) are
+> built. Recovery (#228), the playback check (#230), the TV check (#231) and releases (#232) are open. When a part
 > ships, FEATURES.md and ARCHITECTURE.md describe it and this note keeps what's still open.
 
 Epic #225 · milestone **M5 – Mobile** · sub-issues #226–#232.
@@ -146,9 +146,12 @@ network returns; error classification tests.
 
 ## 7. Identity in the web app (#229)
 
-The user agent ends in `ReelAndroidWeb/<versionName>`, plus ` (TV)` when the UI mode is television. Until
-#229 the web app sees a normal Chrome on Android: Active sessions says "Chrome on Android" and decide uses
-`web_chrome`. Note that `detectPlatform` already treats an Android UA containing `TV` as `android-tv`.
+The user agent ends in `ReelAndroidWeb/<versionName>`, plus ` (TV)` when the UI mode is television. Built
+(#229, ARCHITECTURE A61): with the token, the web app signs in as client `android-web` named "Reel Web on
+<model>" (or "Reel Web on Android" / "Android TV"), decide keeps `web_chrome`, TV mode turns on exactly when the
+token ends in ` (TV)` (a phone whose model contains "TV" doesn't get it), and the Chromecast row says it isn't
+available (WebView has no Cast sender). Plain Android TV, Fire TV, webOS and Tizen browsers are detected as before.
+Not yet seen through the real APK; needs a CT 113 deploy.
 
 ## 8. Playback in WebView (#230)
 
