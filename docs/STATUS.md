@@ -6,6 +6,8 @@ Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LA
 
 Android shared visuals and TV focus (#209), and portrait phone Home (#212), are built and checked on emulators with mock data. Physical-device verification remains pending.
 
+Android detail hierarchy (#213) is built for library movies, shows, seasons and episodes and IPTV movies and series. Phone and 1920×1080 TV emulator checks use a local mock for artwork, playback targets, season switching and Back. Physical-device verification remains pending.
+
 Reel Web for Android (epic #225), a WebView client next to the Compose app, has its shell built (#226) and Back, full screen and insets (#227): checked on an Android 15 phone emulator against the live server (setup, sign-in kept across a force stop, Search → title → Back, external links, TLS refusal, error screens) and a dev build of the web app (full screen, Back order, rotation, keyboard). The web half of #227 (Search scroll and focus on return, Back on the sign-in page) reaches the live server with the next deploy. Not on a real phone yet, no release, and playback in WebView is only smoke-tested (#230).
 
 ## What's verified on real hardware and data
