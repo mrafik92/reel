@@ -2,11 +2,13 @@
 
 Live TV channel browsing (#254) is built around a vertical channel list and a group picker. Playback opens on selection and returns to the list. Playwright checks covered desktop, phone and 1920×1080 navigation in mock mode, plus desktop and 1920×1080 browsing against the live API without tuning. Real-device playback verification remains pending.
 
+The webOS direct-play audio selection fix (#255) is built: the player applies the selected audio after native tracks appear. Unit tests cover selection and incomplete track lists; verification on the LG TV and reported title remains pending.
+
 Library poster transitions and the title entrance (#252) are built for the web app. Desktop and 1920×1080 TV mode checks cover opening and returning to the selected poster, including reduced motion and the fallback without the browser animation API. Real TV verification remains pending.
 
 Android startup diagnostics (#210) are built for debug measurement. A synthetic MP4 resume run completed 20 warm attempts per client on local loopback, with Android emulator p50/p95 543/598 ms and desktop Chrome 131/148 ms, zero recorded failures. These different environments are a harness check. Cold, LAN, Tailscale, physical phone, real remux/transcode and controlled IPTV VOD remain unmeasured.
 
-Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
+Live build: **`3a64eeb`** (2026-11-19) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
 Android shared visuals and TV focus (#209), and portrait phone Home (#212), are built and checked on emulators with mock data. Physical-device verification remains pending.
 
