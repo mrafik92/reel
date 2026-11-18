@@ -1,5 +1,6 @@
 package app.reel.android.ui.live
 
+import androidx.lifecycle.viewModelScope
 import app.reel.android.data.IptvChannel
 import app.reel.android.data.Me
 import app.reel.android.data.NowNext
@@ -11,6 +12,7 @@ import app.reel.android.data.ServerAddress
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -34,6 +36,7 @@ import org.junit.Test
 class LiveViewModelTest {
     private lateinit var server: MockWebServer
     private lateinit var api: ReelApi
+    private var viewModel: LiveViewModel? = null
 
     @Before
     fun setUp() {
@@ -44,9 +47,17 @@ class LiveViewModelTest {
 
     @After
     fun tearDown() {
-        server.shutdown()
-        Dispatchers.resetMain()
+        try {
+            // Keep the test Main dispatcher until in-flight ReelApi continuations have finished.
+            runBlocking { viewModel?.viewModelScope?.coroutineContext?.get(Job)?.cancelAndJoin() }
+            server.shutdown()
+        } finally {
+            Dispatchers.resetMain()
+        }
     }
+
+    private fun createViewModel(clock: () -> Long = { 90 }) =
+        LiveViewModel(api, clock).also { viewModel = it }
 
     private fun respond(body: String, status: Int = 200) {
         server.enqueue(MockResponse().setResponseCode(status).setHeader("Content-Type", "application/json").setBody(body))
@@ -59,7 +70,7 @@ class LiveViewModelTest {
         respond("""[{"id":1,"name":"News 24","group":"News","favorite":true},{"id":501,"name":"Arena One","group":"Sport"}]""")
         respond("""[{"name":"News","count":1},{"name":"Sport","count":1}]""")
         respond("""[{"channel_id":501,"now":{"start":60,"stop":120,"title":"Match"},"next":{"start":120,"stop":180,"title":"Review"}}]""")
-        val vm = LiveViewModel(api, clock = { 90 })
+        val vm = createViewModel()
         val loaded = withTimeout(5_000) { vm.ui.first { it.chips.size == 4 } }
         assertEquals(listOf("Favourites", "All", "News", "Sport"), loaded.chips.map { it.label })
         assertEquals(listOf(1L), loaded.visible.map { it.id })
@@ -81,7 +92,7 @@ class LiveViewModelTest {
         respond("""[{"id":1,"name":"News 24"}]""")
         respond("""[{"name":"News","count":1}]""")
         respond("""{"error":"Favourite unavailable"}""", 403)
-        val vm = LiveViewModel(api)
+        val vm = createViewModel()
         withTimeout(5_000) { vm.ui.first { it.chips.size == 3 } }
         vm.toggleFavorite(1)
         val failed = withTimeout(5_000) { vm.ui.first { it.notice != null } }
