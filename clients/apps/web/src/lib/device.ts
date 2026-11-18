@@ -2,11 +2,12 @@
  * Device identity sent with login/setup and playback decisions.
  *
  * TV builds set the client with `VITE_CLIENT=webos|tizen` at build time, or the
- * platform layer can call `setClientInfo()` before the app renders.
+ * platform layer can call `setClientInfo()` before the app renders. Inside the Reel Web
+ * Android shell (#226) the user-agent token makes the client `android-web` (#229).
  */
-import { clientName } from "@reel/ui";
+import { clientName, deviceNameFor, presetFor, type ClientName } from "@reel/ui";
 
-export type ClientKind = "web" | "webos" | "tizen" | (string & {});
+export type ClientKind = ClientName | (string & {});
 
 interface ClientInfo {
   client: ClientKind;
@@ -20,26 +21,8 @@ function detectClient(): ClientKind {
   return import.meta.env.VITE_CLIENT || clientName;
 }
 
-function detectName(client: ClientKind): string {
-  if (client === "webos") return "LG TV";
-  if (client === "tizen") return "Samsung TV";
-  const ua = navigator.userAgent;
-  const browser = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox"
-    : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Browser";
-  const os = /Mac OS X/.test(ua) ? "macOS" : /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android"
-    : /iPhone|iPad/.test(ua) ? "iOS" : /Linux/.test(ua) ? "Linux" : "";
-  return os ? `${browser} on ${os}` : browser;
-}
-
-function presetFor(client: ClientKind): string {
-  if (client === "webos") return "webos";
-  if (client === "tizen") return "tizen";
-  const ua = navigator.userAgent;
-  return /Safari\//.test(ua) && !/Chrome\/|Chromium\//.test(ua) ? "web_safari" : "web_chrome";
-}
-
 const initial = detectClient();
-let info: ClientInfo = { client: initial, deviceName: detectName(initial), preset: presetFor(initial) };
+let info: ClientInfo = { client: initial, deviceName: deviceNameFor(initial), preset: presetFor(initial) };
 
 /** Hook for platform code (webOS/Tizen shells) to override what we report. */
 export function setClientInfo(p: Partial<ClientInfo>): void {

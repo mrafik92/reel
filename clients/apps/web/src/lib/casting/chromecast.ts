@@ -1,10 +1,12 @@
 import { createSignal } from "solid-js";
+import { inReelShell } from "@reel/ui";
 import { TV } from "../mode";
 
 /**
  * Google Cast Web Sender, loaded lazily (only when a cast menu opens) from gstatic.
  * Works in Chrome / Edge on desktop and Android; everywhere else the SDK reports
- * "unavailable" and the menu says so.
+ * "unavailable" and the menu says so. The Android WebView has no Cast sender, so inside the
+ * Reel Web shell (#229) it isn't loaded at all.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -42,6 +44,7 @@ export function loadCastSdk(): Promise<boolean> {
       resolve(false);
     };
     if (typeof window === "undefined" || TV) return fail("Not available on this device");
+    if (inReelShell) return fail("Not available in the Reel Web app. Open Reel in Chrome to cast");
     if (!window.isSecureContext) return fail("Needs a secure (https) connection");
     if (window.cast?.framework) {
       init();

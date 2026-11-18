@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { detectPlatform, clientNameFor } from "../src/platform/detect";
+import {
+  androidModel,
+  clientNameFor,
+  detectClientName,
+  detectPlatform,
+  deviceNameFor,
+  presetFor,
+  reelShell,
+  shellDeviceName,
+} from "../src/platform/detect";
+import { isTvUserAgent } from "../src/navigation";
+import { UA } from "./ua-fixtures";
 import { normalizeKey, exitApp, registerTizenKeys } from "../src/platform/keys";
 import { normalizeServerUrl } from "../src/platform/server";
 import { parseVtt } from "../src/platform/vtt";
@@ -20,6 +31,84 @@ describe("detectPlatform", () => {
     expect(detectPlatform({ navigator: { userAgent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) Mobile" } })).toBe("web");
     expect(detectPlatform({ navigator: { userAgent: "Mozilla/5.0 (Macintosh) Chrome/120" } })).toBe("web");
     expect(clientNameFor("android-tv")).toBe("web");
+  });
+});
+
+describe("Reel Web Android shell (#229)", () => {
+  const nav = (userAgent: string) => ({ navigator: { userAgent } });
+  test("reads the user-agent token", () => {
+    expect(reelShell(UA.shellPhone)).toEqual({ version: "0.1.0", tv: false });
+    expect(reelShell(UA.shellEmulator)).toEqual({ version: "0.1.0-debug", tv: false });
+    expect(reelShell(UA.shellTv)).toEqual({ version: "0.1.0", tv: true });
+    for (const ua of [UA.chromeAndroid, UA.androidTvBrowser, UA.webos, UA.tizen, UA.desktopChrome, ""]) expect(reelShell(ua)).toBeNull();
+  });
+  test("phone shell: web platform, android-web client, not TV", () => {
+    for (const ua of [UA.shellPhone, UA.shellEmulator, UA.shellPhoneTvModel]) {
+      expect(detectPlatform(nav(ua))).toBe("web");
+      expect(detectClientName(nav(ua))).toBe("android-web");
+      expect(isTvUserAgent(ua)).toBe(false);
+    }
+  });
+  test("TV shell: android-tv platform, android-web client, TV mode", () => {
+    for (const ua of [UA.shellTv, UA.shellTvNoModel]) {
+      expect(detectPlatform(nav(ua))).toBe("android-tv");
+      expect(detectClientName(nav(ua))).toBe("android-web");
+      expect(isTvUserAgent(ua)).toBe(true);
+    }
+  });
+  test("plain Chrome on Android stays a web browser", () => {
+    expect(detectPlatform(nav(UA.chromeAndroid))).toBe("web");
+    expect(detectClientName(nav(UA.chromeAndroid))).toBe("web");
+    expect(isTvUserAgent(UA.chromeAndroid)).toBe(false);
+  });
+  test("plain Android TV browsers, webOS and Tizen behave as before", () => {
+    expect(detectPlatform(nav(UA.androidTvBrowser))).toBe("android-tv");
+    expect(detectClientName(nav(UA.androidTvBrowser))).toBe("web");
+    expect(isTvUserAgent(UA.androidTvBrowser)).toBe(false);
+    expect(isTvUserAgent(UA.fireTv)).toBe(true);
+    expect(detectPlatform(nav(UA.webos))).toBe("webos");
+    expect(detectClientName(nav(UA.webos))).toBe("webos");
+    expect(isTvUserAgent(UA.webos)).toBe(true);
+    expect(detectPlatform(nav(UA.tizen))).toBe("tizen");
+    expect(detectClientName(nav(UA.tizen))).toBe("tizen");
+    expect(isTvUserAgent(UA.tizen)).toBe(true);
+    expect(isTvUserAgent(UA.desktopChrome)).toBe(false);
+  });
+  test("device model and name", () => {
+    expect(androidModel(UA.shellPhone)).toBe("Pixel 8");
+    expect(androidModel(UA.shellTv)).toBe("BRAVIA 4K VH2");
+    expect(androidModel(UA.chromeAndroid)).toBeNull();
+    expect(androidModel(UA.shellTvNoModel)).toBeNull();
+    expect(androidModel("Mozilla/5.0 (Linux; U; Android 4.0.3; ko-kr; LG-L160L Build/IML74K) Safari")).toBeNull();
+    expect(androidModel(UA.desktopChrome)).toBeNull();
+    expect(shellDeviceName(UA.shellPhone)).toBe("Reel Web on Pixel 8");
+    expect(shellDeviceName(UA.shellEmulator)).toBe("Reel Web on sdk_gphone64_arm64");
+    expect(shellDeviceName(UA.shellTvNoModel)).toBe("Reel Web on Android TV");
+    expect(shellDeviceName("Mozilla/5.0 (Linux; Android 14; wv) Chrome/124 ReelAndroidWeb/0.1.0")).toBe("Reel Web on Android");
+  });
+});
+
+describe("device name and decide preset (#229)", () => {
+  test("Reel Web shell: named after the model, Chrome preset", () => {
+    expect(deviceNameFor("android-web", UA.shellPhone)).toBe("Reel Web on Pixel 8");
+    expect(deviceNameFor("android-web", UA.shellTv)).toBe("Reel Web on BRAVIA 4K VH2");
+    expect(deviceNameFor("android-web", UA.shellTvNoModel)).toBe("Reel Web on Android TV");
+    expect(presetFor("android-web", UA.shellPhone)).toBe("web_chrome");
+    expect(presetFor("android-web", UA.shellTv)).toBe("web_chrome");
+  });
+  test("browsers keep their names and presets", () => {
+    expect(deviceNameFor("web", UA.chromeAndroid)).toBe("Chrome on Android");
+    expect(presetFor("web", UA.chromeAndroid)).toBe("web_chrome");
+    expect(deviceNameFor("web", UA.androidTvBrowser)).toBe("Chrome on Android");
+    expect(deviceNameFor("web", UA.desktopChrome)).toBe("Chrome on macOS");
+    expect(deviceNameFor("web", UA.desktopSafari)).toBe("Safari on macOS");
+    expect(presetFor("web", UA.desktopSafari)).toBe("web_safari");
+  });
+  test("TV apps", () => {
+    expect(deviceNameFor("webos", UA.webos)).toBe("LG TV");
+    expect(presetFor("webos", UA.webos)).toBe("webos");
+    expect(deviceNameFor("tizen", UA.tizen)).toBe("Samsung TV");
+    expect(presetFor("tizen", UA.tizen)).toBe("tizen");
   });
 });
 
