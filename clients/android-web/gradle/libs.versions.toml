@@ -1,4 +1,4 @@
-# Same pins as clients/android (the Compose app), so both projects share one Gradle cache.
+# AGP 8.7 needs JDK 17–21 (see README.md → Build).
 [versions]
 agp = "8.7.3"
 kotlin = "2.1.0"
