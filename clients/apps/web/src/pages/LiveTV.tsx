@@ -111,13 +111,13 @@ function Watch(): JSX.Element {
     if (osdTimer) clearTimeout(osdTimer);
     osdTimer = setTimeout(() => setOsd(false), ms);
   };
-  const tuneNow = (c: IptvChannel) => {
+  const tuneNow = (c: IptvChannel, o?: { resume?: boolean }) => {
     rememberChannel(c);
     noteWatched(c.group);
     setTunedCh(c);
     setPending(undefined);
     showOsd();
-    void tuner.tune(c);
+    void tuner.tune(c, o);
   };
 
   let zapTimer: ReturnType<typeof setTimeout> | undefined;
@@ -370,7 +370,7 @@ function Watch(): JSX.Element {
       hiddenTimer = undefined;
       const c = parked;
       parked = undefined;
-      if (c && tuner.phase() === "idle") tuneNow(c);
+      if (c && tuner.phase() === "idle") tuneNow(c, { resume: true });
     };
     const onHide = () => park();
     const onShow = (e: PageTransitionEvent) => e.persisted && unpark();
