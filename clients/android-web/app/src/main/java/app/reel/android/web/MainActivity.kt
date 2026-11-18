@@ -160,6 +160,18 @@ class MainActivity : ComponentActivity() {
         if (hasFocus && ::fullScreen.isInitialized) fullScreen.reapply()
     }
 
+    /**
+     * The wired-headset button reaches the page as play/pause ([MediaKeys]). It goes the normal way to the
+     * focused view: the WebView, or WebView's own view while full screen. Other keys are untouched.
+     * (`Activity.dispatchKeyEvent` is public; androidx core marks its own override `@RestrictTo`, which lint
+     * then reports for every subclass.)
+     */
+    @SuppressLint("RestrictedApi")
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val code = MediaKeys.forPage(event.keyCode) ?: return super.dispatchKeyEvent(event)
+        return super.dispatchKeyEvent(KeyEvent(event.downTime, event.eventTime, event.action, code, event.repeatCount))
+    }
+
     override fun onPause() {
         web?.onPause()
         super.onPause()

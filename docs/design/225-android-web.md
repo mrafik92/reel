@@ -3,9 +3,9 @@
 > **Status (2026-11-18).** The shell (#226) is built: server setup, an origin-scoped WebView, the TLS and
 > unreachable-server screens, and CI. Back, insets and full screen (#227), the web-side identity (#229),
 > recovery (#228: load timeout, plain error messages, automatic retry) and the Android TV check (#231, emulator
-> only) are built. Release builds (#232) are built locally with `scripts/android-release.sh`, but none is
-> published yet. The playback check (#230) is open. When a part ships, FEATURES.md and ARCHITECTURE.md describe
-> it and this note keeps what's still open.
+> only) are built. Release builds (#232) are built locally with `scripts/android-release.sh`. The playback
+> matrix (#230, §8) is recorded on the emulator and waits for the owner's phone. When a part ships, FEATURES.md
+> and ARCHITECTURE.md describe it and this note keeps what's still open.
 
 Epic #225 · milestone **M5 – Mobile** · sub-issues #226–#232.
 
@@ -32,6 +32,7 @@ clients/android-web/                 standalone Gradle project (no Compose, no b
     ├── ServerStore        the origin in app-private SharedPreferences (no backup)
     ├── ServerCheck        the setup screen's health check (OkHttp)
     ├── LinkPolicy         in-app / external / blocked for every navigation
+    ├── MediaKeys          the headset button → play/pause for the page (#230)
     └── UserAgent          the `ReelAndroidWeb/<version>` token
 ```
 
@@ -139,6 +140,13 @@ The "bottom half stays black after hiding the keyboard" report didn't reproduce 
 **Rotation**: `configChanges` keeps the activity, so rotating during playback keeps the page and the
 position. Checked: playback kept advancing across three rotations.
 
+**Media keys** (#230, A68): WebView turns Android's media keys (play, pause, play/pause, fast-forward,
+rewind) into the DOM keys the web player already handles, except the wired-headset button
+(`KEYCODE_HEADSETHOOK`), which it maps to no DOM key. `MediaKeys` sends that one to the page as play/pause
+through the normal key path, so it reaches the WebView inline and WebView's own view in full screen. The keys
+work only while the app is in the foreground. There's no Android MediaSession, so there are no lock-screen
+controls.
+
 Still open: the setup screen's keyboard (native, unchanged) on a small phone, and a real phone.
 
 ## 6. Recovery (#228)
@@ -242,11 +250,119 @@ Not yet seen through the real APK; needs a CT 113 deploy.
 
 ## 8. Playback in WebView (#230)
 
-First smoke check (2026-11-18, Android 15 emulator, WebView 124, live server): Resume on a library title
-opens the web player, which loads 1920×1040 metadata at the resume point and then buffers; the emulator's
-software decoders are slow, so this says nothing about phones yet. The full matrix (direct play, MKV remux,
-HEVC 8/10-bit, AC3/EAC3, transcode, resume, text and image subtitles, IPTV VOD, Live TV server and direct
-delivery, full-screen exit, background) is #230's job, recorded here with the exact failing cases.
+Checked on 2026-11-18 on the **Android 15 phone emulator** (`sdk_gphone64_arm64`, WebView 124.0.6367.219, software
+decoders), with the debug APK and the current web app from `main`. The web app ran from a dev build that proxied
+`/api` to the live server, since CT 113 still serves an older web build. The background rows used a production
+build (`vite preview`), because Vite's dev client reloads the page when it reconnects. All media came from the
+live server's library and IPTV provider.
+
+**How to read the times.** *First frame* is the web player's development-only `[ReelStartup]` mark (A58): the
+time from the tap to the first painted frame. Live TV has no such mark, so those rows were timed by polling the
+`<video>` until it played. The emulator decodes in software, so slow startup on 1080p and HEVC is **not a
+phone result**. Every playing row needs a repeat on the phone (checklist at the end).
+
+### Library and IPTV VOD
+
+| Case | Asset (title, file id) | Container · video · audio | Play method (decide) | Result | First frame | Error or console |
+|---|---|---|---|---|---|---|
+| H.264/AAC MP4 direct play | Alpha (item 7, file 7) | MP4 · H.264 8-bit 1920×800 · AAC 2.0, external SRT | `direct_play`, subtitle as sidecar VTT | ✅ plays | 8.1 s | – |
+| MKV remux to HLS | After Impact (item 1, file 1) | MKV · H.264 8-bit 1920×816 · AAC 2.0, 6 SRT | `remux` (video and audio copied): "container mkv not supported" | ✅ plays, multi-variant HLS through hls.js | 3.8 s | – |
+| Resume from a saved position | After Impact (item 1, file 1), saved at 2 % | as above | `remux` | ✅ starts at the saved position (about 2:00) | 3.8 s | – |
+| Text subtitles | After Impact (item 1, file 1), English SDH | embedded SRT | sidecar VTT, drawn by the player | ✅ cues on screen, also in full screen | – | – |
+| HEVC 8-bit | Guardians of the Galaxy Vol. 2 (item 55, file 55) | MKV · HEVC Main 8-bit 1920×808 · AAC 5.1 | `remux` | ✅ plays | 16.7 s, 42 of the first 160 frames dropped | – |
+| HEVC 10-bit with AC3 | Ant-Man and the Wasp (item 8, file 8) | MKV · HEVC Main 10 1920×804 · AC3 5.1 | `audio_transcode` (video copied, AC3 → AAC 5.1): "audio codec ac3 not supported" | ❌ **never starts**: endless spinner, the server reaps the session after about 60 s | – | `[player] stalled at 0.0 s: no segment arrived since the player was (re)started 26 s ago`. The master lists only `hvc1.2.4.*` (Main 10) rungs, the transcoded 480p/720p/1080p ones included, and this WebView's `MediaSource.isTypeSupported` rejects them (`hvc1.1.6.*` Main is accepted). The VOD profile sends `max_bit_depth: 10` for HEVC without probing it → **#245** |
+| E-AC3 track | The Avengers (item 119, file 119) | MKV · H.264 8-bit 1920×1080 · E-AC3 5.1 | `audio_transcode` (E-AC3 → AAC 5.1 384 kbps) | ✅ plays (ABR starts on the 480p rung) | 12.5 s | WebView decodes neither AC3 nor E-AC3 (`ac-3` and `ec-3` are unsupported), so these tracks are always transcoded |
+| Image subtitles and a transcode | The Avengers (item 119), English PGS picked in the player | embedded PGS | `transcode`: H.264 1080p 8 Mbps with burn-in, AAC 5.1 | ✅ the picture comes back with burned-in subtitles, ⚠ then a request storm | 7.3 s after the switch | hls.js re-requested the 480p `init.mp4` and segment 12 about every 100 ms (~250 aborted requests in 30 s) until the server answered **429** → **#246** |
+| Quality switch | After Impact (item 1): Original → 480p, then 480p → 720p | as above | new decide, then a multi-variant session | ✅ both pins show within 10 s | – | – |
+| Quality pin after the storm | The Avengers (item 119): Auto → 1080p | as above | `transcode`, multi-variant | ❌ after 90 s still "Quality · 1080p, playing 480p" | – | → **#246** |
+| AV1 10-bit (extra) | Colony (item 29, file 29) | MKV · AV1 10-bit 1920×804 · TrueHD 7.1 | `audio_transcode` (TrueHD → AAC 5.1) | ✅ plays (dav1d software decoder) | 13.8 s | – |
+| IPTV VOD movie | Madden (2026) (VOD movie 1487252) | MKV · video copied · AAC 2.0 | `remux` | ✅ plays. Provider slot 1/1 while playing, 0/1 right after Back | 9.9 s | – |
+| IPTV VOD episode | The Remarried Empress S1 E2 (VOD episode 581, series 166172) | MKV · video copied · AAC 2.0 | `remux` | ✅ plays | 8.3 s | – |
+
+### Live TV
+
+Before each run the hub (`GET /api/v1/admin/iptv/hub`) showed 0 of 1 connections. Each run was short, and the hub was
+back at 0 afterwards.
+
+| Case | Channel | Delivery | Result | First frame | Error or console |
+|---|---|---|---|---|---|
+| Tune | Action 1 (11147) | server: HLS, video and audio copied | ✅ plays, hub 1/1 | about 3.5 s | – |
+| Zap | Action 1 → Action 2 (11148) | server | ❌ "This channel isn't sending any picture" | – | The tune returned **503** `the channel did not deliver a valid stream` after about 16 s. The provider's channel is down, not the WebView. |
+| Zap | Action 2 → Action 1 | server | ✅ plays | 3.2 s | – |
+| Direct delivery | Action 1 | `direct` (allowed for this account: `/me` → `direct_live`) | ⚠ falls back to the server by itself, with a toast | 11.1 s in total | The server hands out the provider's raw MPEG-TS stream, which neither `<video>` nor hls.js can play in a browser (`ERR_ABORTED`). After about 2 s the page retunes through the server ("Couldn't play directly from the provider on this device — using the server instead."). That's how every browser behaves, not a WebView bug |
+| Back | Action 1 | server | ✅ `DELETE /iptv/sessions/…` 204 right away, hub 0/1 | – | – |
+| App exit (swiped away in Recents) | Action 1 | server | ✅ hub 0/1 about 17 s after the process died | – | – |
+| Background (Home), then return | Action 1 | server | ✅ released, ⚠ return fails once | after Try again, 3.7 s | Android blocks the network of a cached app, so the page's own 30 s "park" `DELETE` fails, but the server reaps the session about 35 s after the app went to the background. On return the page retunes at once, gets `ERR_CONNECTION_TIMED_OUT` before the network is back and shows *Can't reach Reel*. **Try again** works → **#248** |
+
+### Full screen, keys and lifecycle
+
+| Case | Result |
+|---|---|
+| Enter with the player's button | ✅ landscape, bars hidden, keeps playing |
+| Exit with Back / with the player's button | ✅ both: portrait and bars return, playback continues |
+| Rotation while full screen (device turned 4 × 90°) | ✅ stays landscape and flips between the two landscape sides, playback continues |
+| End of a title in full screen | ✅ stays full screen with the end controls (the web player's design, §5) |
+| Next episode | The web player has **no autoplay**, only a *Next* button in the controls. Tapping it in full screen **leaves full screen** and the phone turns back to portrait: the Player remounts and its cleanup exits full screen → **#247** |
+| Media keys (play, pause, play/pause, fast-forward) | ✅ inline and full screen. WebView turns them into the DOM keys the web app handles |
+| Wired-headset button (`KEYCODE_HEADSETHOOK`) | ❌ before, because WebView maps it to no DOM key. **Fixed in the shell** (`MediaKeys`, A68): it reaches the page as play/pause, inline and in full screen |
+| Screen timeout | ✅ the window holds `KEEP_SCREEN_ON` while video plays, inline and in full screen |
+| Audio focus | Chromium takes `AUDIOFOCUS_GAIN` when playback starts. It still held it while paused in the background. Losing focus (a call, another player) not tested: phone checklist |
+| App to background mid-playback (library, production build) | ✅ Chromium pauses the video at once (`visibilityState` hidden). The server keeps the session (no pings, still there after 2 min). On return **playback resumes by itself** at the same position, and progress reports start again |
+| App exit (swiped away) during IPTV VOD | ✅ eventually: no stop is sent, and the server's idle reaper frees the provider slot about 60–70 s later. A library session is simply left to the reaper |
+
+### Shell changes and filed issues
+
+- Shell fix in this ticket: the headset button (above). No lifecycle, full-screen or audio-focus bug turned up in
+  the shell.
+- Web and server issues (milestone M5): **#245** HEVC 10-bit profile and silent stall · **#246** hls.js request storm
+  and an ignored pin · **#247** Next leaves full screen · **#248** Live retune after returning from the
+  background.
+- Test-environment notes (not product bugs): another thread's dev server held `127.0.0.1:5182`, which is what the
+  emulator's `10.0.2.2` reaches, so the shell pointed at the Mac's LAN address instead (it also answered "doesn't
+  look like a Reel server" during setup). `adb forward --remove-all` from parallel threads drops the WebView
+  DevTools forward, so re-forward before every CDP call.
+
+### Phone checklist (owner, #196-style)
+
+Repeat on the phone with the same titles. They're named by item id, so a library rescan doesn't change them:
+
+1. Alpha (7) direct play, After Impact (1) remux with resume and subtitles: note the first frame.
+2. Guardians Vol. 2 (55) HEVC 8-bit and **Ant-Man and the Wasp (8) HEVC 10-bit**. Most phones decode Main 10 in
+   hardware, so #245 may not show there. If it plays, note the first frame. If it spins, it's #245.
+3. The Avengers (119): pick the English PGS track with `chrome://inspect` open on the debug build, and watch the
+   Network tab for the same 480p segment repeating. Then pin 1080p (#246).
+4. Full screen: enter, rotate the phone, leave with Back and with the button. Play an episode to the end, then
+   *Next* (#247).
+5. A wired or Bluetooth headset: play/pause from its button. A phone call or another player during playback (audio focus).
+6. Home mid-playback, back after a minute: library and Live TV (#248). Swipe the app away during Live TV and check the
+   hub.
+7. Live TV tune and zap on two working channels.
+
+### Recommendation
+
+The matrix doesn't justify a Media3 handoff yet. Every failure on the emulator is a web-player or server bug
+with a small fix:
+
+- #245 is a one-line profile fix (use the probed `bitDepth`) plus an error when no variant is playable.
+- #246 is hls.js abandon and back-off tuning.
+- #247 keeps full screen across *Next*.
+- #248 retries the retune once.
+
+Server-delivered Live TV, IPTV VOD, remux, audio transcode, burn-in and AV1 all play in WebView.
+
+A handoff would be worth it only if the phone check shows one of these:
+
+- 1080p remux or HEVC playback that's too slow or drops frames on real hardware.
+- Something only a native player can do: background audio with lock-screen controls (an Android MediaSession),
+  picture-in-picture, AC3/E-AC3 passthrough instead of an AAC transcode, HDR or Dolby Vision output, or direct
+  Live delivery of the provider's raw MPEG-TS (WebView can't play it, so direct delivery always falls back to the
+  server).
+
+The handoff would be **large (L)**. The shell has no JavaScript bridge (§4), so the page would need a new path
+to say "play this item at this position" (a bridge or an app link). The native side would need decide, progress,
+resume, tracks, quality and the IPTV slot handling: in effect the Compose app's Media3 player (#190, #191) moved
+into this APK or launched from it. If one of those native-only needs is what's missing, launching the Compose
+app's player is the cheaper route.
 
 ## 9. Android TV (#231)
 
