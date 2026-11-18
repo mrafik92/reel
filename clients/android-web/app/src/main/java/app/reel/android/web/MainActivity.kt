@@ -209,6 +209,7 @@ class MainActivity : ComponentActivity() {
             setGeolocationEnabled(false)
             userAgentString = UserAgent.extend(userAgentString, BuildConfig.VERSION_NAME, isTelevision())
         }
+        AppFeel.apply(view)
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, false)
         view.webViewClient = ShellClient()
