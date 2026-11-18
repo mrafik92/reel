@@ -8,6 +8,7 @@ import { ErrorState } from "../components/States";
 import { vodPlayError } from "../components/vod/busy";
 import { vodHref } from "../components/vod/links";
 import { PlayerView, type PlaySource } from "./Player";
+import { FullscreenHost, leaveFullscreen } from "../lib/fullscreen";
 
 /**
  * IPTV movie / episode in the regular player: a stand-in item (title, runtime, progress) plus
@@ -27,13 +28,18 @@ export default function VodPlayer(): JSX.Element {
 
   createEffect(() => { if (target.error) timing?.finish("failed"); });
 
+  // Same full-screen host as the library player (#247): a title swap under this route keeps it.
+  let host: HTMLDivElement | undefined;
+  onCleanup(() => leaveFullscreen(document));
   return (
-    <div class="player">
-      <Show when={!target.error} fallback={<ErrorState error={target.error} title="Couldn't open this IPTV title" onRetry={() => { timing = startupTiming("vod"); void refetch(); }} />}>
-        <Show when={target()} keyed fallback={<div class="player__loading"><span class="spinner" /></div>}>
-          {(t) => <PlayerView item={t.item} source={t.source} startup={timing} />}
+    <div class="player" ref={host}>
+      <FullscreenHost.Provider value={() => host}>
+        <Show when={!target.error} fallback={<ErrorState error={target.error} title="Couldn't open this IPTV title" onRetry={() => { timing = startupTiming("vod"); void refetch(); }} />}>
+          <Show when={target()} keyed fallback={<div class="player__loading"><span class="spinner" /></div>}>
+            {(t) => <PlayerView item={t.item} source={t.source} startup={timing} />}
+          </Show>
         </Show>
-      </Show>
+      </FullscreenHost.Provider>
     </div>
   );
 }
