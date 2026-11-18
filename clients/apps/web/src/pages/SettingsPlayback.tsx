@@ -5,6 +5,7 @@ import { loadPrefs, playbackPrefs, prefsSupported, savePrefs } from "../lib/pref
 import { previewSelection } from "../lib/tracks";
 import { chooseLiveDelivery, directAllowed, liveDelivery, type LiveDelivery } from "../lib/liveDelivery";
 import { chooseDeviceQuality, deviceQuality, fmtMbps, userLimitKbps } from "../lib/quality";
+import { bandwidthEstimate, bandwidthMeasuredAt } from "../lib/abr";
 import type { Quality } from "../api";
 import { Panel, Toggle } from "../components/AdminKit";
 import "../styles/prefs.css";
@@ -47,7 +48,7 @@ const QUALITY_CHOICES: { id: Quality; title: string; body: string }[] = [
   {
     id: "auto",
     title: "Auto",
-    body: "The default. Plays the original whenever it can, and converts only when this device can't play it or it's over your account's limit.",
+    body: "The default. Plays the original whenever it can. In the browser it also switches to a smaller version while the connection is slow, and back when it recovers.",
   },
   {
     id: "original",
@@ -58,6 +59,16 @@ const QUALITY_CHOICES: { id: Quality; title: string; body: string }[] = [
   { id: "720p", title: "720p", body: "At most 720p, about 4 Mbps. Good for a slower connection away from home." },
   { id: "480p", title: "480p", body: "At most 480p, about 2 Mbps. For a weak or metered connection." },
 ];
+
+/** "just now", "5 min ago", "3 h ago", "2 days ago". */
+function ago(at: number, now = Date.now()): string {
+  const m = Math.round((now - at) / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
 
 const langLabel = (c: string) => (c === "original" ? "Original language" : languageName(c));
 
@@ -177,6 +188,19 @@ export default function SettingsPlayback(): JSX.Element {
                 )}
               </For>
             </div>
+            <p class="prefs__fine" data-testid="measured-speed">
+              <Show
+                when={bandwidthEstimate()}
+                fallback={<>Connection speed: not measured yet. Reel measures it while you watch.</>}
+              >
+                {(k) => (
+                  <>
+                    Connection speed on this device: about {fmtMbps(k())}
+                    <Show when={bandwidthMeasuredAt()}>{(at) => <>, measured {ago(at())}</>}</Show>. Auto starts from it.
+                  </>
+                )}
+              </Show>
+            </p>
           </Panel>
 
           <Show when={directAllowed()}>

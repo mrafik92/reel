@@ -1,9 +1,27 @@
 # Design: multi-variant HLS with lazy rungs (#111)
 
 > **Status: approved 2026-11-17 (PR #178); the owner accepted every proposal in §16. ① (segment plan +
-> keyframe alignment, #182) is merged; ② (master playlist, lazy rung lifecycle, API) is in review; ③–④
-> aren't built.** No client asks for a multi-variant session until ③ ships. Once it does, the stable parts
-> move into [ARCHITECTURE.md](../ARCHITECTURE.md) §3.1 and this note is trimmed to what's still useful.
+> keyframe alignment, #182) and ② (master playlist, lazy rung lifecycle, API, #198) are merged and deployed;
+> ③ (web client) is in review; ④ isn't built.** Once ④ ships, the stable parts move into
+> [ARCHITECTURE.md](../ARCHITECTURE.md) §3.1 and this note is trimmed to what's still useful.
+>
+> **Built differently from the text below (③):**
+> - The estimate is fed from each hls.js fragment's own throughput (bytes over the time from first byte to
+>   end, fragments ≥ 192 KB), not from `hls.bandwidthEstimate`: hls.js reports its seed (our estimate)
+>   until it has enough samples, and timing from the first byte keeps a lazily started rung's ffmpeg
+>   start-up from reading as a slow link.
+> - No custom `fragLoadPolicy.shouldRetry`: hls.js 1.7.4 already never retries a 4xx, so a 429 goes
+>   straight to its level switch. `preserveManualLevelOnError` keeps a pinned Original pinned when a
+>   fragment fails, instead of falling back to ABR and starting a rung.
+> - A rung choice counts as in the master only when a variant of exactly that size class exists (a rung
+>   with that id, or an original that fits that box). Otherwise the play re-decides **without**
+>   `adaptive`, i.e. a single-variant session at that rung, which is what #87 did. Capping at a smaller
+>   rung would quietly give less than was asked.
+> - The direct-play stall fallback caps the stored estimate at the file's bitrate before it re-decides,
+>   so Q1's 1.5× rule picks remux + rungs; it runs once per play. The ranged probe during direct play runs
+>   only when the estimate is older than 10 minutes.
+> - Mock mode (`?mock=1`) serves a generated 3-variant H.264 HLS (a different test pattern per variant),
+>   so switching can be checked in the browser without a server.
 >
 > **Built differently from the text below (②):**
 > - The original's `BANDWIDTH` is always 1.7× its average bitrate; peaks from the index's byte positions

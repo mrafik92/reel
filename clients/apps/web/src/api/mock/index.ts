@@ -12,7 +12,7 @@ import { castOfTmdb, createQueue, mockPerson, mockReviews } from "./extras";
 import type { DownloadItem } from "../types";
 import { enrichSummaries, genreCounts, lanes, libraryRecs, matches, searchAll, sortRecs } from "./browse";
 import { searchVod, vodIdsFor } from "./vod";
-import { mockQuality, mockSelected, mockUserCap } from "./select";
+import { mockAdaptive, mockQuality, mockSelected, mockUserCap } from "./select";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const latency = () => sleep(120 + Math.random() * 220);
@@ -383,8 +383,17 @@ export function createMockApi(): MockApi {
         forCast ? {} : body,
         res.decision,
       );
-      const mode = qd.mode;
+      let mode = qd.mode;
       Object.assign(res, { mode, decision: qd.decision, quality: qd.quality, bitrate_kbps: qd.bitrate_kbps, quality_options: qd.quality_options });
+      // Adaptive players (#111): a multi-variant master; `decision`/`quality` describe the top
+      // variant (Auto with no bandwidth hint), whatever quality was asked.
+      const top = mockQuality({ width: f.video?.width ?? 0, height: f.video?.height ?? 0, hdr: f.video?.hdr ?? "none", kbps }, {}, res.decision);
+      const ad = forCast ? undefined : mockAdaptive(body, top.mode, kbps);
+      if (ad) {
+        mode = ad.mode;
+        const decision = top.mode === "direct_play" ? { ...top.decision, mode, reasons: top.decision.reasons.concat("adaptive: remux with rungs (no fast estimate)") } : top.decision;
+        Object.assign(res, { url: ad.url, mode, decision, quality: top.quality, bitrate_kbps: top.bitrate_kbps, variants: ad.variants, start_variant: ad.start_variant });
+      }
       playback.set(sid, {
         // Multi-episode files: credit the episode the client says it's watching.
         id: sid, user_id: 1, username: "rafik", item_id: body.item_id ?? f.item_ids?.[0] ?? itemId,

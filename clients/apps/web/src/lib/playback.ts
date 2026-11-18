@@ -1,6 +1,7 @@
 import { detectDeviceProfile, type Id } from "@reel/ui";
 import { api, type DecideRequest, type DecideResponse, type DeviceProfileWire, type Quality } from "../api";
 import { clientInfo, deviceId } from "./device";
+import { estimateKbps } from "./abr";
 
 /**
  * Device profile for `POST /playback/{file_id}/decide`.
@@ -60,11 +61,21 @@ function fromBrowserProbe(r: Record<string, unknown>): DeviceProfileWire {
  * Tracks: `null` / omitted = let the server choose from the user's preferences (`selected` in the
  * response), `subtitle: -1` = explicitly off. `forCast`: the stream goes to a Chromecast / AirPlay
  * receiver (absolute, long-lived URLs; receiver profile instead of this browser's). `quality`: the
- * device default or the player's pick (#87); omitted = the server's Auto.
+ * device default or the player's pick (#87); omitted = the server's Auto. `adaptive`: this player
+ * switches variants itself (hls.js, #111): ask for a multi-variant session and send the bandwidth
+ * estimate, which picks the start variant (and direct play vs remux) but caps nothing.
  */
 export async function decide(
   fileId: Id,
-  o: { itemId?: Id | null; audio?: number | null; subtitle?: number | null; start?: number; forCast?: "chromecast" | "airplay"; quality?: Quality },
+  o: {
+    itemId?: Id | null;
+    audio?: number | null;
+    subtitle?: number | null;
+    start?: number;
+    forCast?: "chromecast" | "airplay";
+    quality?: Quality;
+    adaptive?: boolean;
+  },
 ): Promise<DecideResponse> {
   const body: DecideRequest = {
     ...(o.forCast ? { preset: o.forCast } : decideProfile()),
@@ -76,6 +87,11 @@ export async function decide(
   };
   if (o.forCast) body.for_cast = true;
   if (o.quality) body.quality = o.quality;
+  if (o.adaptive && !o.forCast) {
+    body.adaptive = true;
+    const bw = estimateKbps();
+    if (bw) body.bandwidth_kbps = bw;
+  }
   return api.decide(fileId, body);
 }
 
