@@ -69,7 +69,12 @@ cd clients && bun install && bun run typecheck && bun run build
 cd clients/android && ./gradlew lint testDebugUnitTest assembleDebug
 # Reel Web for Android (WebView client, #225): same toolchain
 cd clients/android-web && ./gradlew lint testDebugUnitTest assembleDebug
+# release script for both apps (#232): unit tests, no build or network
+scripts/tests/android-release-test.sh
 ```
+
+- **GitHub Actions is unavailable for now** (account billing): PRs get no CI, so the commands above, run
+  locally, are the gate. Paste their results into the PR.
 
 - **Security audit:** `cd server && cargo audit`. Exceptions go in `server/.cargo/audit.toml`, each with a reason; never ignore an advisory without one. Keep sqlx on the single workspace entry (SQLite only); CI fails if a MySQL/Postgres driver or `rsa` gets built.
 - **Always commit `server/Cargo.lock`** when dependencies change. The image build uses `--locked` and fails otherwise.
@@ -85,6 +90,11 @@ cd clients/android-web && ./gradlew lint testDebugUnitTest assembleDebug
 - Deploy: **Actions → deploy → Run workflow** (self-hosted runner CT 116, forced-command SSH key). Fallback:
   `deploy/ct113/deploy.py` from the Mac (`--dry-run` first). Both pull, restart, health-check and update tickets.
 - Never make the repo public while the self-hosted runner is attached.
+- **Android releases** (both apps) are built on the Mac, not by Actions (`android-release.yml` isn't in use):
+  `scripts/android-release.sh web|compose [--version X.Y.Z] [--taildrop] [--github-release]` builds a signed APK
+  into `dist/`, `--taildrop` sends it to the owner's phone, and `--github-release` publishes it (only when
+  asked). The keystore password is the owner's: never look for it, guess it or ask for it in chat; test with
+  `--dry-run` and a throwaway keystore. Details: `clients/android/README.md` → Release builds.
 - Live access for checks: `ssh minix-local` → `pct exec 113 -- …` (Reel runs in Docker there). Admin
   credentials for API smoke tests are in `/root/.reel-admin` on minix. Never print them.
 

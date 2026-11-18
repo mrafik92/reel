@@ -2,7 +2,8 @@
 
 > **Status (2026-11-18).** The shell (#226) is built: server setup, an origin-scoped WebView, the TLS and
 > unreachable-server screens, and CI. Back, insets and full screen (#227) and the web-side identity (#229) are
-> built. Recovery (#228), the playback check (#230), the TV check (#231) and releases (#232) are open. When a part
+> built. Release builds (#232) are built locally with `scripts/android-release.sh`, but none is published yet.
+> Recovery (#228), the playback check (#230) and the TV check (#231) are open. When a part
 > ships, FEATURES.md and ARCHITECTURE.md describe it and this note keeps what's still open.
 
 Epic #225 · milestone **M5 – Mobile** · sub-issues #226–#232.
@@ -168,5 +169,39 @@ says "phone" until then.
 
 ## 10. Releases (#232)
 
-Not built yet. Plan: tag `android-web-v*` (doesn't match the Compose app's `android-v*`), same signing
-secrets, an asset name Obtainium can filter on.
+GitHub Actions is unavailable for now (account billing), so release APKs for **both** Android apps are built
+on the owner's Mac with one script (ARCHITECTURE A65):
+
+```sh
+scripts/android-release.sh web     [--version X.Y.Z] [--taildrop] [--github-release] [--dry-run]
+scripts/android-release.sh compose [--version X.Y.Z] [--taildrop] [--github-release] [--dry-run]
+```
+
+- **Build.** `./gradlew --no-daemon lint testDebugUnitTest assembleRelease` with `REEL_VERSION_NAME`/`CODE`
+  and the signing env vars that `app/build.gradle.kts` already reads. Release builds are R8-shrunk and get no
+  baked-in server (`REEL_URL` is unset).
+- **Version.** `--version X.Y.Z`, or the next patch after the app's newest release tag (fetched from
+  origin). The code follows `clients/android/scripts/version-from-tag.sh`, which accepts both tag prefixes:
+  `X*1_000_000 + Y*1_000 + Z`. The two apps have different packages, so their versions are independent.
+- **Signing.** The Compose app's release key, `~/.reel-android/reel-release.jks` (alias `reel`), so a
+  release installs over the previous one. The passwords come from `REEL_KEYSTORE_PASSWORD`/`REEL_KEY_PASSWORD`,
+  the macOS Keychain (service `reel-android-keystore`, account `reel`) or a hidden prompt. They reach only
+  `keytool` (`-storepass:env`) and Gradle, never argv, a file or the log. Without them the script stops before
+  building. After the build, `apksigner` must show the keystore's certificate, and the package, versionCode
+  and versionName are checked. A key whose certificate isn't the release certificate
+  (`a48654…58ecb`, the one on `android-v0.1.0`–`0.3.0`) gets a warning, and `--github-release` refuses it.
+- **Output.** `dist/ReelWeb-X.Y.Z.apk` or `dist/Reel-X.Y.Z.apk` (git-ignored) with a `.sha256` next to it.
+- **Taildrop** (`--taildrop`, `--taildrop-target NAME`, default `rafiiiki`) runs the app bundle's CLI
+  (`/Applications/Tailscale.app/Contents/MacOS/Tailscale file cp`). When the phone is offline Tailscale says
+  "reportedly offline" and fails with 502; the script says so, prints the command to send it later, and
+  exits 3.
+- **GitHub release** (`--github-release`, opt-in) tags HEAD, pushes the tag and runs `gh release create`
+  (REST, no Actions) with the APK and its `.sha256`. It needs a clean tree, HEAD on `origin/main` and a new
+  tag. Tags: `android-web-vX.Y.Z` (title "Reel Web X.Y.Z") and `android-vX.Y.Z` (title "Android X.Y.Z", as
+  before). Neither glob matches the other's tags, so `android-release.yml` (`android-v*`) never sees Reel Web.
+- **Obtainium** (one app entry per APK, same repo; a private repo needs a GitHub token in Obtainium's
+  settings): Reel Web filters release titles by `^Reel Web ` and APKs by `^ReelWeb-.*\.apk$`; the Compose app
+  by `^Android ` and `^(Reel|reel-android)-[0-9].*\.apk$` (the workflow named its APKs `reel-android-X.Y.Z.apk`).
+- `.github/workflows/android-release.yml` stays in the repo but isn't in use while Actions is unavailable.
+- `--dry-run` builds for real but only prints the Taildrop and GitHub commands. Unit tests:
+  `scripts/tests/android-release-test.sh` (stubs, a throwaway keystore, no network or build).

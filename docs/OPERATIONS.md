@@ -28,7 +28,7 @@
 | IPTV provider login, qBittorrent password, Arr API keys | Reel DB (entered in Settings) |
 | `PROJECT_TOKEN` (classic PAT: `repo`, `project`) | GitHub repo secret, used by the `deploy` workflow to comment on tickets and move them to Deployed |
 | Cloudflare API token for Caddy DNS-01 (`CF_API_TOKEN`: zone rafikii.co, Zone Read + DNS Edit) | CT 107 `/etc/caddy/cloudflare.env` (root, 0600), loaded by the caddy unit's `override.conf`. Was written to the journal by `--environ` until 2026-11-15; **rotation pending** (owner deferred it), see Public edge → Token rotation |
-| Android release signing (#195): keystore `reel-release.jks` (alias `reel`) and its password | GitHub Actions secrets `ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` (used only by `android-release.yml`), plus the original keystore file and password in the owner's password manager (the only backup: losing the key means future APKs can't update installed apps). Locally, optionally `~/.reel-android/` (0700) and a git-ignored `clients/android/keystore.properties`. Setup commands: `clients/android/README.md` → Release builds |
+| Android release signing (#195, #232): keystore `reel-release.jks` (alias `reel`, certificate SHA-256 `a4865475…58ecb`) and its password, for both Android apps | Mac `~/.reel-android/reel-release.jks` (dir 0700, file 0600); the keystore file and its password are backed up in the owner's password manager (the only backup: losing the key means future APKs can't update installed apps). `scripts/android-release.sh` reads the password from `REEL_KEYSTORE_PASSWORD`, or the macOS Keychain item service `reel-android-keystore`, account `reel` (optional; add it once with `security add-generic-password -s reel-android-keystore -a reel -w`), or a hidden prompt; never from a file. Also the GitHub Actions secrets `ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, used only by `android-release.yml` (not in use while Actions is unavailable). A git-ignored `clients/android/keystore.properties` also works for plain Gradle but puts the password on disk. Setup: `clients/android/README.md` → Release builds |
 | OPNsense API key (firewall automation) | Mac `~/.config/opnsense-api` (0600). Revoke in OPNsense if no longer needed |
 
 ## Build & deploy pipeline
@@ -73,11 +73,22 @@ CT 113:  Actions → deploy → Run workflow  (runner CT 116 → ssh forced comm
   ```
 - **Preferred: GitHub.** After an image build, its run summary links to **Actions → deploy → Run workflow**. That click is the gate (web or the GitHub mobile app). The job runs `deploy/ct113/deploy.py --forced` on CT 116: it deploys, health-checks, moves tickets to Deployed and writes a run summary. Runs are serialized, and the job refuses to deploy while a newer image build is still running. Recovery: run it with **since = <old sha>** to (re)process tickets without deploying.
 - **Fallback from the Mac:** `deploy/ct113/deploy.py` (or `--dry-run`). It pulls the latest successful image, restarts, runs a health check, then finds tickets referenced in the commits since the previously deployed build. Each gets a comment "🚀 Deployed to CT 113 — build `abc1234`" and moves to **Deployed** on the project board.
-- **Android app releases** (#195) are separate from the server image: push a tag `android-vX.Y.Z` and
-  `android-release.yml` builds a signed, R8-shrunk APK (versionName `X.Y.Z`, versionCode
-  `X*1_000_000 + Y*1_000 + Z`) and attaches it and `SHA256SUMS` to a GitHub release. It needs the four
-  `ANDROID_*` secrets (see Credentials) and fails before building if one is missing. Sideloading:
-  `clients/android/README.md`.
+- **Android app releases** (#232) are separate from the server image and, while GitHub Actions is unavailable
+  (account billing), built on the Mac for both apps:
+  ```sh
+  scripts/android-release.sh web     --taildrop     # Reel Web  → dist/ReelWeb-X.Y.Z.apk (+ .sha256)
+  scripts/android-release.sh compose --taildrop     # Compose   → dist/Reel-X.Y.Z.apk    (+ .sha256)
+  ```
+  It runs lint and unit tests, builds a signed, R8-shrunk APK (versionName `X.Y.Z`, versionCode
+  `X*1_000_000 + Y*1_000 + Z`; default: the next patch after the app's newest tag), checks that it carries the
+  release certificate, and copies it to the git-ignored `dist/`. `--taildrop` sends it to the phone `rafiiiki`
+  with `/Applications/Tailscale.app/Contents/MacOS/Tailscale file cp` (the `tailscale` shell alias isn't
+  available in scripts). An offline phone ("reportedly offline", 502 Bad Gateway) is reported plainly, with the
+  command to send it later, and the script exits 3. `--github-release` (opt-in) tags HEAD (`android-web-vX.Y.Z`
+  or `android-vX.Y.Z`), pushes the tag and runs `gh release create`, which works without Actions; Obtainium
+  filters per app are in the two READMEs. `--dry-run` builds but only prints the Taildrop and GitHub commands.
+  Passwords: see Credentials. `android-release.yml` (#195, built `android-v0.1.0`–`0.3.0` on a pushed tag) stays
+  in the repo but isn't in use. Sideloading: `clients/android/README.md`.
 - Rollback: pin `image: ghcr.io/mrafik92/reel:sha-<previous>` in the compose file and run `up -d`.
 
 ### Ticket flow (GitHub Project #1)
