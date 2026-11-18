@@ -6,6 +6,10 @@ import androidx.compose.material.icons.outlined.LiveTv
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavHostController
@@ -68,3 +72,14 @@ data class PlayerArgs(val fileId: Long, val itemId: Long, val startS: Double) {
 
 /** The shell's nav controller; screens navigate with `LocalNavController.current.navigate(Routes.item(id))`. */
 val LocalNavController = staticCompositionLocalOf<NavHostController> { error("no NavController") }
+
+/**
+ * Screens that go full screen without a route change (Live TV keeps its player and session when
+ * the phone's docked player expands) set [hidden] to drop the rail / bottom bar.
+ */
+@Stable
+class ShellChrome {
+    var hidden by mutableStateOf(false)
+}
+
+val LocalShellChrome = staticCompositionLocalOf { ShellChrome() }

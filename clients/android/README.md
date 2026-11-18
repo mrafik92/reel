@@ -189,7 +189,8 @@ app/src/main/java/app/reel/android/
                         through RecognizerIntent when the device has a recognizer
   ui/settings/          Settings: SettingsViewModel (prefs saved on each change, devices, server
                         version) + SettingsLogic (languages, modes, last seen)
-  ui/stubs/             placeholder for Live TV
+  ui/live/              Live TV (#191): channel groups, favourites, visible-channel guide,
+                        docked/full-screen phone player, TV banner and channel list, Home Live now
   player/               the player (#190)
     ReelPlayer.kt       ExoPlayer + OkHttp (no token) behind PlayerPort; Live TV reuses it
     PlayerPort.kt       what controllers need from a player: load, tracks, events (tests use a fake)
@@ -198,6 +199,7 @@ app/src/main/java/app/reel/android/
     PlayerScreen.kt     the Routes.PLAYER screen (rail / bar hidden), Compose controls, menus, up next
     PlayerControls.kt   seek bar, pills, mode badge, menu sheet
     PlayerKeys.kt       remote / media key mapping
+    LiveController.kt   passthrough MPEG-TS, debounced zaps and session release
   ui/vod/               IPTV movies & series (#193), only for users with VOD access
     VodRoutes.kt        routes + vodGraph (registered from ReelNavGraph); entered from the Library tab
     VodScreens.kt       browse (lanes), paged grid, movie and series pages

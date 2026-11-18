@@ -61,6 +61,9 @@ class ModelsTest {
         VodSeason.serializer() to "VodSeason",
         VodSeriesDetail.serializer() to "VodSeriesDetail",
         VodPlayRequest.serializer() to "VodPlayRequest",
+        IptvGroup.serializer() to "IptvGroup",
+        EpgChannel.serializer() to "EpgChannel",
+        EpgGrid.serializer() to "EpgGrid",
     )
 
     private val openapi: JsonObject by lazy {

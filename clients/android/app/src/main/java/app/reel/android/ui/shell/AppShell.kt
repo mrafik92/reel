@@ -75,10 +75,11 @@ fun AppShell(user: Me) {
     val go: (TopLevel) -> Unit = { tab -> nav.navigateTopLevel(tab) }
     // The player takes the whole screen. The rail / bar are left out (not the layout swapped), so
     // the NavHost keeps its place in the tree and its screens' state.
-    val fullScreen = Routes.isFullScreen(entry?.destination?.route)
+    val chrome = remember { ShellChrome() }
+    val fullScreen = Routes.isFullScreen(entry?.destination?.route) || chrome.hidden
 
     val server = LocalAppGraph.current.session.api?.server
-    CompositionLocalProvider(LocalNavController provides nav, LocalServerAddress provides server) {
+    CompositionLocalProvider(LocalNavController provides nav, LocalServerAddress provides server, LocalShellChrome provides chrome) {
         if (LocalDeviceKind.current == DeviceKind.Tv) {
             // The rail sits over the content: icons only, widening with labels while it has focus.
             Box(Modifier.fillMaxSize().background(ReelColors.Bg)) {
