@@ -1,3 +1,6 @@
 .DS_Store
 # Playwright MCP screenshots and traces (local scratch)
 .playwright-mcp/
+
+# Local Android release APKs (scripts/android-release.sh, #232)
+/dist/

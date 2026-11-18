@@ -1,3 +1,8 @@
+# NOT IN USE (#232): GitHub Actions is unavailable for now (account billing). Android releases of both apps are
+# built locally with scripts/android-release.sh (clients/android/README.md, "Release builds"). Kept for when
+# Actions is back; if it is, disable this workflow or stop using the script's --github-release, since both
+# would try to create the same release for an android-v* tag.
+#
 # Signed Android release (#195). Push a tag `android-vMAJOR.MINOR.PATCH` and this builds a signed,
 # R8-shrunk release APK and attaches it to a GitHub release of that tag. Version scheme:
 # clients/android/scripts/version-from-tag.sh. Secrets and the one-time key setup: clients/android/README.md
