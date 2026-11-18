@@ -6,6 +6,8 @@ Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LA
 
 Android shared visuals and TV focus (#209), and portrait phone Home (#212), are built and checked on emulators with mock data. Physical-device verification remains pending.
 
+Android detail hierarchy (#213) is built for library movies, shows, seasons and episodes and IPTV movies and series. Phone and 1920×1080 TV emulator checks use a local mock for artwork, playback targets, season switching and Back. Physical-device verification remains pending.
+
 ## What's verified on real hardware and data
 
 - **Library:** 178 movies, 4 shows, 4 anime from NFS, with TMDB metadata. Rename detection, multi-episode files and targeted webhook rescans all work.

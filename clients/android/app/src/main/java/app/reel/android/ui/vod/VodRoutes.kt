@@ -6,6 +6,8 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import app.reel.android.data.Me
+import app.reel.android.data.VodEpisode
+import app.reel.android.player.RESUME_MAX_PROGRESS
 import app.reel.android.player.StartupTiming
 
 /** IPTV VOD routes (#193). Registered by [vodGraph] for users with VOD access. */
@@ -76,8 +78,14 @@ fun NavGraphBuilder.vodGraph(user: Me) {
 }
 
 /** Where to start: the saved position, or 0 when unwatched or (nearly) finished. */
-fun vodResumeS(progress: Double?, runtimeS: Long?): Double {
+fun vodResumeS(progress: Double?, runtimeS: Long?, played: Boolean? = null): Double {
+    if (played == true) return 0.0
     val p = progress ?: return 0.0
     val r = runtimeS ?: return 0.0
-    return if (p > 0 && p < app.reel.android.player.RESUME_MAX_PROGRESS) p * r else 0.0
+    return if (r > 0 && p > 0 && p < RESUME_MAX_PROGRESS) p * r else 0.0
 }
+
+internal fun vodNextEpisode(episodes: List<VodEpisode>): VodEpisode? =
+    episodes.firstOrNull { vodResumeS(it.progress, it.runtimeS, it.played) > 0 }
+        ?: episodes.firstOrNull { it.played != true && (it.progress ?: 0.0) < RESUME_MAX_PROGRESS }
+        ?: episodes.firstOrNull()
