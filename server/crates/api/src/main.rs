@@ -88,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
     state.spawn_vod_reaper();
     state.restart_watcher().await;
     bootstrap_libraries(&state).await;
+    state.spawn_library_reconciliation();
 
     let listener = tokio::net::TcpListener::bind(&config.bind).await?;
     tracing::info!("reel-server listening on {}", listener.local_addr()?);

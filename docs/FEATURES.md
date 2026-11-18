@@ -14,7 +14,7 @@ gaps are listed in [STATUS.md](STATUS.md).
 | TMDB metadata | ✅ | `crates/metadata`: matching, posters/backdrops, cast & crew, collections, TV seasons/episodes |
 | Local `.nfo` + artwork | ✅ | Works without a TMDB key; local files take precedence over TMDB; fields can be locked per item. Artwork symlinked outside the library roots, or not a real JPEG/PNG/WebP, is refused (🧪 fix for #10, pending deploy) |
 | Image cache & resizing | ✅ | Resized on demand (Lanczos3), cached on disk, ETag + long cache headers. Downloads of TMDB images, channel logos and VOD artwork are size- and time-capped while streaming, shared between concurrent requests, and the caches stay under a disk budget (4 GiB TMDB, 1 GiB IPTV by default; least recently used files go first) (🧪 #9, pending deploy) |
-| Radarr/Sonarr webhooks → targeted rescan | ✅ | When an import completes, Reel rescans just that path |
+| Radarr/Sonarr webhooks → targeted rescan | ✅ | When an import completes, Reel rescans just that path. 🧪 #237 adds follow-up scans at 2, 10 and 30 minutes and a six-hour library reconciliation for late subtitles; numbered language suffixes such as `.eng.0.srt` are recognised |
 
 ## Browsing & discovery
 

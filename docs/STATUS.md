@@ -32,6 +32,8 @@ Reel Web for Android (epic #225), a WebView client next to the Compose app, has 
 
 ## Built but not exercised for real (🧪)
 
+- **Late subtitles (#237):** follow-up import scans and six-hour reconciliation are built; pending deploy and verification. A manual Movies scan on 2026-11-18 registered Frida’s subtitle on the live server.
+
 - **Crimson + cream retheme** (#177): built and checked in mock mode (desktop + 1920×1080 TV); not yet deployed or checked live.
 - **YouTube-style click** (#183): a mouse click plays/pauses (double-click = full screen, undoing it); a touch tap shows the controls and a double-tap on a side seeks ±10 s, adding up. Checked with Playwright in mock mode (mouse 1280×800, touch 390×844, 1920×1080 TV with arrow keys); not yet deployed or checked on a real phone.
 - **Phone bottom bar** (#180): five tabs + More (sheet with the rest); the inverted rail focus is keyboard/TV only, so a tapped tab no longer stays dark. Checked with Playwright (touch emulation at 360/390/430 px, desktop, 1920×1080 TV with arrow keys) in mock mode and against the live API from a dev build; not yet deployed or checked on a real phone. `viewport-fit=cover` is new: iPhone landscape (player, Live TV) needs a look on the device.

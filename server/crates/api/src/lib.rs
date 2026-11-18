@@ -28,7 +28,7 @@ pub mod vod;
 pub mod vod_genres;
 pub mod ws;
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
@@ -92,6 +92,7 @@ pub struct AppState {
     pub omdb: Option<reel_requests::reviews::OmdbClient>,
     pub trakt: Option<reel_requests::reviews::TraktClient>,
     watcher: Arc<tokio::sync::Mutex<Option<LibraryWatcher>>>,
+    delayed_scans: Arc<tokio::sync::Mutex<HashSet<PathBuf>>>,
 }
 
 impl AppState {
@@ -173,6 +174,7 @@ impl AppState {
             config: Arc::new(config),
             events,
             watcher: Arc::default(),
+            delayed_scans: Arc::default(),
         }
     }
 
@@ -243,6 +245,51 @@ impl AppState {
             match scanner.scan_library(&db, library_id).await {
                 Ok(s) => tracing::info!(library_id, ?s, "scan finished"),
                 Err(e) => tracing::warn!(library_id, "scan failed: {e}"),
+            }
+        });
+    }
+
+    /// Revisit an imported file while subtitle managers complete their work.
+    pub async fn schedule_import_scans(&self, path: PathBuf) {
+        let mut pending = self.delayed_scans.lock().await;
+        if !pending.insert(path.clone()) {
+            return;
+        }
+        let (scanner, db, pending) = (
+            self.scanner.clone(),
+            self.db.clone(),
+            self.delayed_scans.clone(),
+        );
+        tokio::spawn(async move {
+            for delay in [120, 480, 1200] {
+                tokio::time::sleep(Duration::from_secs(delay)).await;
+                if let Err(e) = scanner.reconcile_path(&db, &path).await {
+                    tracing::warn!(path = %path.display(), "delayed import scan failed: {e}");
+                }
+            }
+            pending.lock().await.remove(&path);
+        });
+    }
+
+    /// Reconcile libraries periodically, including changes the watcher misses on network mounts.
+    pub fn spawn_library_reconciliation(&self) {
+        let (scanner, db) = (self.scanner.clone(), self.db.clone());
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(6 * 60 * 60)).await;
+                match sqlx::query_scalar::<_, i64>("SELECT id FROM libraries ORDER BY id")
+                    .fetch_all(&db)
+                    .await
+                {
+                    Ok(ids) => {
+                        for id in ids {
+                            if let Err(e) = scanner.reconcile_library(&db, id).await {
+                                tracing::warn!(library_id = id, "periodic scan failed: {e}");
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!("cannot list libraries for periodic scan: {e}"),
+                }
             }
         });
     }
