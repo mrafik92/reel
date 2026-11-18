@@ -1,10 +1,12 @@
 # Status: 2026-11-19
 
+Live TV channel browsing (#254) is built around a vertical channel list and a group picker. Playback opens on selection and returns to the list. Playwright checks covered desktop, phone and 1920×1080 navigation in mock mode, plus desktop and 1920×1080 browsing against the live API without tuning. Real-device playback verification remains pending.
+
 The webOS direct-play audio selection fix (#255) is built: the player applies the selected audio after native tracks appear. Unit tests cover selection and incomplete track lists; verification on the LG TV and reported title remains pending.
 
 Library poster transitions and the title entrance (#252) are built for the web app. Desktop and 1920×1080 TV mode checks cover opening and returning to the selected poster, including reduced motion and the fallback without the browser animation API. Real TV verification remains pending.
 
-The native Compose Android app (epic #29) was discarded by the owner on 2026-11-19 after comparing it with Reel Web on the phone, and removed in #260 (ARCHITECTURE A70); its tickets (#29, #185–#196, #209–#218) are closed as not planned and the code stays in git history. Reel Web for Android is the only Android client.
+The native Compose Android app (epic #29) was discarded by the owner on 2026-11-19 after comparing it with Reel Web on the phone, and removed in #260 (ARCHITECTURE A71); its tickets (#29, #185–#196, #209–#218) are closed as not planned and the code stays in git history. Reel Web for Android is the only Android client.
 
 Startup diagnostics (#210) are built for debug measurement in web development builds (the Compose app's Media3 instrumentation went with it). A synthetic MP4 resume run completed 20 warm attempts per client on local loopback, with the Compose app on an Android emulator at p50/p95 543/598 ms and desktop Chrome 131/148 ms, zero recorded failures. These different environments are a harness check. Cold, LAN, Tailscale, physical phone, real remux/transcode and controlled IPTV VOD remain unmeasured.
 

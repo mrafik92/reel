@@ -3,7 +3,7 @@
 > **Superseded by #225 (2026-11-19).** The owner compared this app with Reel Web for Android on their phone
 > and kept Reel Web, the WebView shell in `clients/android-web` ([design/225](225-android-web.md)). This
 > Compose app was removed from the repo in #260 and its tickets (#29, #185–#196, #209–#218) were closed as not
-> planned; the code is in git history. Why and the trade-off: ARCHITECTURE A70. The rest of this note is kept
+> planned; the code is in git history. Why and the trade-off: ARCHITECTURE A71. The rest of this note is kept
 > as the record of what was planned and built; it no longer describes the code.
 
 > **Status: proposed 2026-11-17.** Built so far: the project skeleton (#185), connect + sign-in (#186), the app shell (#187) browse (#188: home, library, item detail), search (#189) and settings (#194), and the VOD player (#190, in review). When a part ships,

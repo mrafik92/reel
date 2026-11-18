@@ -1,7 +1,7 @@
 # Design: Reel Web for Android, a WebView client (#225)
 
 > **Status (2026-11-19).** Reel Web is Reel's only Android client: the owner compared it with the Compose app
-> (#29) on their phone and kept it, and the Compose app was removed in #260 (ARCHITECTURE A70). The shell
+> (#29) on their phone and kept it, and the Compose app was removed in #260 (ARCHITECTURE A71). The shell
 > (#226) is built: server setup, an origin-scoped WebView, the TLS and unreachable-server screens, and CI.
 > Back, insets and full screen (#227), the web-side identity (#229), recovery (#228: load timeout, plain error
 > messages, automatic retry) and the Android TV check (#231, emulator only) are built. Release builds (#232)
@@ -16,7 +16,7 @@ Epic #225 · milestone **M5 – Mobile** · sub-issues #226–#232.
 Reel's Android client is **Reel Web** (`clients/android-web`, package `app.reel.android.web`). It's a small
 native shell around an Android `WebView` that loads the Reel web app **from the configured server**. It was
 built next to the native Compose app (#29, `app.reel.android`) so the owner could compare both on one phone;
-the owner kept Reel Web and the Compose app was removed (#260, ARCHITECTURE A70). The goal is one Reel UI
+the owner kept Reel Web and the Compose app was removed (#260, ARCHITECTURE A71). The goal is one Reel UI
 across web, webOS, Tizen and Android: browsing, global search, IPTV movies and series, Discover, requests and
 download status come from the SolidJS client, and a web deploy updates them on Android without an APK release.
 Playback uses the web player inside WebView. A Media3 handoff is decided later, from the failures the playback
@@ -372,7 +372,7 @@ The handoff would be **large (L)**. The shell has no JavaScript bridge (§4), so
 to say "play this item at this position" (a bridge or an app link). The native side would need decide, progress,
 resume, tracks, quality and the IPTV slot handling. The Compose app's Media3 player (#190, #191) did that, but
 it was removed with the app (#260), so a handoff would be new native code (git history has the old player to
-start from). These limits are the trade-off ARCHITECTURE A70 accepts.
+start from). These limits are the trade-off ARCHITECTURE A71 accepts.
 
 ## 9. Android TV (#231)
 
