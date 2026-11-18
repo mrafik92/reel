@@ -1,9 +1,9 @@
 # Design: Reel Web for Android, a WebView client (#225)
 
 > **Status (2026-11-18).** The shell (#226) is built: server setup, an origin-scoped WebView, the TLS and
-> unreachable-server screens, and CI. Back, insets and full screen (#227) and the web-side identity (#229) are
-> built. Recovery (#228), the playback check (#230), the TV check (#231) and releases (#232) are open. When a part
-> ships, FEATURES.md and ARCHITECTURE.md describe it and this note keeps what's still open.
+> unreachable-server screens, and CI. Back, insets and full screen (#227), the web-side identity (#229) and the
+> Android TV check (#231, emulator only) are built. Recovery (#228), the playback check (#230) and releases (#232)
+> are open. When a part ships, FEATURES.md and ARCHITECTURE.md describe it and this note keeps what's still open.
 
 Epic #225 · milestone **M5 – Mobile** · sub-issues #226–#232.
 
@@ -163,8 +163,73 @@ delivery, full-screen exit, background) is #230's job, recorded here with the ex
 
 ## 9. Android TV (#231)
 
-No Leanback launcher entry or banner until the D-pad check on the Android TV emulator passes. FEATURES.md
-says "phone" until then.
+**Result: passes on the emulator, with four fixes (below).** The APK is now listed on Android TV: the
+`LEANBACK_LAUNCHER` category, `android.software.leanback` `required=false` (one APK for phones and TV,
+ARCHITECTURE A65) and a 320×180 xhdpi banner from `gen-icons.ts` (dark, "Reel WEB"; the Compose app's banner
+is crimson). `TvManifestTest` keeps Leanback and the touchscreen optional.
+
+Checked 2026-11-18 on the `reel-tv` AVD (Android TV 14, 1920×1080 at xhdpi, WebView 113), with the shell
+pointed at a dev build of the web app (`main` + #231; `/api` proxied to the live server). D-pad and remote
+keys only, no taps. Recording (68 s, 720p): [reel-web-231-tv.mp4](https://github.com/mrafik92/reel/blob/231-recording/reel-web-231-tv.mp4)
+on the throwaway branch `231-recording`: Home → Spirited Away → Resume → playback → Back → Back, then Search
+typed on the on-screen keyboard → Alpha → Back → Back → Back leaves the app.
+
+**What WebView delivers.** The page runs at 960×540 CSS px (device pixel ratio 2). TV mode scales with the
+viewport (`html.tv` font size 1.25vw), so the 10-foot layout is the same as at 1920×1080. Every remote key
+reaches the page as a `keydown`, and the shell maps nothing:
+
+| Android key | `key` / `keyCode` in the page | Web app |
+|---|---|---|
+| DPAD arrows | `ArrowUp`… / 38… | spatial navigation |
+| DPAD_CENTER, ENTER | `Enter` / 13 | activate |
+| BACK | none: the shell sends `Escape` (§5) | Back order |
+| MEDIA_PLAY_PAUSE | `MediaPlayPause` / 179 | toggle |
+| MEDIA_PLAY, MEDIA_PAUSE | `MediaPlay`, `MediaPause` / **179** | play, pause (fixed, see below) |
+| MEDIA_FAST_FORWARD, MEDIA_REWIND | `MediaFastForward` / 228, `MediaRewind` / 227 | +30 s, −10 s |
+| MEDIA_STOP, NEXT, PREVIOUS | `MediaStop` / 178, `MediaTrackNext` / 176, `MediaTrackPrevious` / 177 | stop; next/previous unused |
+| CHANNEL_UP, INFO, PROG_RED, digits | `ChannelUp` / 33, `Info` / 0, `ColorF0Red` / 0, `5` / 53 | Live TV zapping, info |
+
+**Checked, passing.**
+- First focus: opening from the launcher banner, from `am start` and after a cold boot, the WebView has focus
+  and the page has a focused element (sign-in: Username; Home: the hero's Play), so the first arrow works
+  without a touch. Retry on the error panel hands focus back to the page.
+- Focus is visible on Home, Search, item detail, Library (Movies/Shows, genres, filters), IPTV VOD (series
+  rows and detail), Live TV (groups, channel cards, preview) and the player.
+- Search and Sign in with the Leanback on-screen keyboard: OK on a field opens it, keys type, its
+  *next*/*search* key moves on or submits (Search then focuses the first result), and Back closes it first.
+  On Sign in, moving focus into the next field with the D-pad opens the keyboard again; that's Android TV's
+  usual behaviour for a focused text field. Credentials were filled through DevTools, never typed with adb.
+- Back follows #227: player → item → Home; item → Search with the same query and focus on the opened card;
+  sheets and the keyboard close first; Back on `/` leaves the app (the page stays in memory).
+- Live TV with the hub idle: one channel tuned in the preview for about 10 s, Back left the page and the
+  hub showed 0 of 1 connections again.
+- The native setup screen and error panel work with the D-pad: input → Connect → *Save anyway*, Retry →
+  *Change server*, each with a visible focus ring.
+
+**Fixed in #231.**
+1. Native buttons showed focus only as a slightly lighter grey. They now use pill styles with the web
+   app's cream focus ring (`bg_button`, `bg_button_text`).
+2. Connect was disabled during the server check, which moved D-pad focus into the address field. It
+   stays enabled behind a guard flag, so focus stays on it.
+3. Back on Home did nothing: TV mode called `exitApp()`, which is a no-op outside webOS and Tizen, and
+   marked the key handled, so the shell never saw it come back unhandled. `exitApp()` now reports whether
+   it exited (web, `@reel/ui`).
+4. WebView sends MediaPlay and MediaPause with keyCode 179 (the toggle code), and `normalizeKey` trusts
+   keyCodes first, so pressing Pause twice resumed playback. Those two now go by `key`. Also, long track
+   labels ("AAC · 5.1", "EN SDH Auto") pushed the player's right-hand group over the transport buttons. In TV
+   mode the group keeps its width. That overlap isn't WebView-specific (webOS and Tizen get the fix too).
+
+Fixes 3 and 4 are web code, so they reach the APK with the next CT 113 deploy, as does TV mode itself
+(#229). The live build (`1a39b38`) doesn't recognise the shell's ` (TV)` token, so until that deploy the APK
+shows the pointer layout on a TV.
+
+**Open.**
+- #243: Live TV opens with focus still on the side rail, and switching Movies/Shows to the IPTV source
+  drops focus to the page body. In both cases the next arrow press recovers.
+- Playback on the emulator: H.264/AAC direct play works. An HEVC + E-AC3 title (Guardians of the Galaxy,
+  audio transcode) stalled with no segment after 25 s. That's #230's matrix; the emulator has only software
+  decoders.
+- No real Android TV device has been checked, and no physical remote (only `adb shell input keyevent`).
 
 ## 10. Releases (#232)
 
