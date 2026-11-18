@@ -1,8 +1,8 @@
 import { defineConfig, type Plugin } from "vite";
 import solid from "vite-plugin-solid";
-import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -30,6 +30,28 @@ function mockMedia(): Plugin {
     name: "reel-mock-media",
     apply: "serve",
     configureServer(server) {
+      // Multi-variant HLS (#111) for mock adaptive sessions: `master.m3u8` lists 480p / 720p /
+      // original, `master-transcode.m3u8` 480p / 720p / 1080p (a transcode-only title; 1080p
+      // serves the original's files). Each variant has its own test pattern, so a switch shows.
+      server.middlewares.use("/mock-media/abr/", (req, res) => {
+        const dir = resolve(here, "mock-media/abr");
+        if (!ensureAbr(dir)) {
+          res.statusCode = 404;
+          res.end("mock media unavailable (ffmpeg not found)");
+          return;
+        }
+        const path = (req.url ?? "").split("?")[0]!.replace(/^\/+/, "").replace(/^1080p\//, "original/");
+        const file = resolve(dir, path);
+        if (!file.startsWith(dir) || !existsSync(file) || !statSync(file).isFile()) {
+          res.statusCode = 404;
+          res.end("not found");
+          return;
+        }
+        const type: Record<string, string> = { ".m3u8": "application/vnd.apple.mpegurl", ".m4s": "video/iso.segment", ".mp4": "video/mp4" };
+        res.setHeader("Content-Type", type[extname(file)] ?? "application/octet-stream");
+        res.setHeader("Cache-Control", "no-store");
+        createReadStream(file).pipe(res);
+      });
       server.middlewares.use("/mock-media/subs.vtt", (req, res) => {
         const lang = /lang=([a-z]+)/.exec(req.url ?? "")?.[1] ?? "eng";
         const line = lang === "fre" ? "Les lumières du port s'allument une à une." : lang === "spa" ? "Las luces del puerto se encienden." : "The harbour lights come on, one by one.";
@@ -65,6 +87,42 @@ function mockMedia(): Plugin {
       });
     },
   };
+}
+
+/** Mock variants: id, test pattern, size, video kbit/s. */
+const ABR_VARIANTS = [
+  { id: "480p", src: "smptehdbars", w: 854, h: 480, kbps: 600 },
+  { id: "720p", src: "testsrc", w: 1280, h: 720, kbps: 1200 },
+  { id: "original", src: "testsrc2", w: 1920, h: 1080, kbps: 2500 },
+];
+
+/** Generate the mock multi-variant HLS once (90 s, 4 s segments, H.264/AAC fMP4). */
+function ensureAbr(dir: string): boolean {
+  if (existsSync(resolve(dir, "master-transcode.m3u8"))) return true;
+  for (const v of ABR_VARIANTS) {
+    const out = resolve(dir, v.id);
+    mkdirSync(out, { recursive: true });
+    const r = spawnSync("ffmpeg", [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", `${v.src}=size=${v.w}x${v.h}:rate=24:duration=90`,
+      "-f", "lavfi", "-i", "sine=frequency=330:duration=90",
+      "-c:v", "libx264", "-preset", "veryfast", "-profile:v", "main", "-pix_fmt", "yuv420p",
+      "-b:v", `${v.kbps}k`, "-maxrate", `${Math.round(v.kbps * 1.2)}k`, "-bufsize", `${v.kbps * 2}k`,
+      "-force_key_frames", "expr:gte(t,n_forced*4)", "-sc_threshold", "0",
+      "-c:a", "aac", "-b:a", "96k", "-ac", "2", "-shortest",
+      "-f", "hls", "-hls_time", "4", "-hls_playlist_type", "vod", "-hls_segment_type", "fmp4",
+      "-hls_fmp4_init_filename", "init.mp4", "-hls_segment_filename", resolve(out, "seg_%05d.m4s"),
+      resolve(out, "index.m3u8"),
+    ]);
+    if (r.status !== 0) return false;
+  }
+  const inf = (v: (typeof ABR_VARIANTS)[number], id: string) =>
+    `#EXT-X-STREAM-INF:BANDWIDTH=${(Math.round(v.kbps * 1.2) + 96) * 1000},AVERAGE-BANDWIDTH=${(v.kbps + 96) * 1000},` +
+    `RESOLUTION=${v.w}x${v.h},CODECS="avc1.4d4028,mp4a.40.2"\n${id}/index.m3u8\n`;
+  const head = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n";
+  writeFileSync(resolve(dir, "master.m3u8"), head + ABR_VARIANTS.map((v) => inf(v, v.id)).join(""));
+  writeFileSync(resolve(dir, "master-transcode.m3u8"), head + ABR_VARIANTS.map((v) => inf(v, v.id === "original" ? "1080p" : v.id)).join(""));
+  return readFileSync(resolve(dir, "master.m3u8"), "utf8").length > 0;
 }
 
 export default defineConfig({

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Reel is self-hosted and private: the server is usually a LAN or Tailscale address on plain
+     http://…:8420. The user types the address, so cleartext can't be limited to known hosts
+     (same as the Compose app). TLS, when used, is still validated against the system CAs. -->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -1,5 +1,5 @@
 /// <reference path="./platform/tizen.d.ts" />
-import { AvPlayAdapter, HlsJsAdapter, WebOsAdapter, type PlayerAdapter } from "./player";
+import { AvPlayAdapter, HlsJsAdapter, WebOsAdapter, prefersNativeHls, type PlayerAdapter } from "./player";
 import { detectPlatform, platform } from "./platform/detect";
 
 export type VideoCodec = "h264" | "hevc" | "av1" | "vp9";
@@ -195,6 +195,19 @@ export function detectDeviceProfile(): DeviceProfileRequest | DeviceProfile {
     return deviceProfileFromInfo(detectTvInfo(globalThis, platform), platform);
   }
   return detectWebProfile();
+}
+
+/**
+ * Will an HLS stream on this element be played by hls.js (MSE)? Only then can the player switch
+ * variants itself and honour a pinned quality, so only then does it ask for a multi-variant
+ * session (#111). TVs (webOS, Tizen AVPlay), Safari and browsers without MSE play HLS natively
+ * and stay single-variant (Q6).
+ */
+export function playsHlsWithHlsJs(el: HTMLVideoElement): boolean {
+  if (platform === "tizen" || platform === "webos") return false;
+  const g = globalThis as { MediaSource?: { isTypeSupported?: (t: string) => boolean } };
+  if (!g.MediaSource?.isTypeSupported) return false;
+  return !prefersNativeHls(el);
 }
 
 /** Choose the player for the current platform: AVPlay (Tizen), native <video> (webOS), hls.js otherwise. */

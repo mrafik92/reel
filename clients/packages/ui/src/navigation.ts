@@ -24,6 +24,7 @@
  */
 
 import { exitApp, onRemoteKey, type RemoteKeyEvent } from "./platform/keys";
+import { reelShell } from "./platform/detect";
 
 export type Direction = "up" | "down" | "left" | "right";
 export type MediaKey = "playpause" | "play" | "pause" | "stop" | "ff" | "rw" | "next" | "prev";
@@ -59,7 +60,13 @@ const mediaHandlers = new Set<(k: MediaKey, e: KeyboardEvent) => void>();
 // ---------------------------------------------------------------------------
 // Public API
 
+/**
+ * 10-foot user agents. Inside the Reel Web Android shell only its ` (TV)` token counts, so the Android TV
+ * build gets the TV UI and the phone build never does; plain Android TV browsers keep the vendor rules.
+ */
 export function isTvUserAgent(ua = typeof navigator !== "undefined" ? navigator.userAgent : ""): boolean {
+  const shell = reelShell(ua);
+  if (shell) return shell.tv;
   return /Web0S|webOS|Tizen|SMART-TV|SmartTV|NetCast|BRAVIA|HbbTV|AFT[A-Z]/i.test(ua);
 }
 

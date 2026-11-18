@@ -67,6 +67,8 @@ cd clients && bun install && bun run typecheck && bun run build
 ```sh
 # Android app (JDK 17–21 + Android SDK; setup in clients/android/README.md)
 cd clients/android && ./gradlew lint testDebugUnitTest assembleDebug
+# Reel Web for Android (WebView client, #225): same toolchain
+cd clients/android-web && ./gradlew lint testDebugUnitTest assembleDebug
 ```
 
 - **Security audit:** `cd server && cargo audit`. Exceptions go in `server/.cargo/audit.toml`, each with a reason; never ignore an advisory without one. Keep sqlx on the single workspace entry (SQLite only); CI fails if a MySQL/Postgres driver or `rsa` gets built.

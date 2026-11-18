@@ -1,7 +1,7 @@
 import type { MediaFile } from "@reel/ui";
 import { DEFAULT_PREFS, type PlaybackPrefs, type Selected } from "../prefs";
 import { previewSelection } from "../../lib/tracks";
-import type { DecideResponse, Quality, QualityOption } from "../types";
+import type { DecideResponse, Quality, QualityOption, VariantOption } from "../types";
 
 /** Mock of the server's automatic track choice (`selected`), from the mock-mode preferences. */
 export function mockSelected(f: MediaFile, audioReq: number | null | undefined, subReq: number | null | undefined, forCast = false): Selected {
@@ -122,4 +122,45 @@ export function mockQuality(
     ...RUNGS.map((r) => ({ id: r.q, label: `${r.q} (${mbps(total(r))})`, bitrate_kbps: total(r), available: ok(r) })),
   ];
   return { mode: decision.mode, decision, quality, bitrate_kbps: rate, quality_options: options };
+}
+
+/** The mock multi-variant HLS (`vite.config.ts`): ids, sizes and the master's bit rates (kbit/s). */
+const MOCK_VARIANTS: VariantOption[] = [
+  { id: "480p", label: "480p", width: 854, height: 480, bandwidth_kbps: 816, average_kbps: 696, codecs: "avc1.4d4028,mp4a.40.2", transcode: true },
+  { id: "720p", label: "720p", width: 1280, height: 720, bandwidth_kbps: 1536, average_kbps: 1296, codecs: "avc1.4d4028,mp4a.40.2", transcode: true },
+  { id: "original", label: "Original", width: 1920, height: 1080, bandwidth_kbps: 3096, average_kbps: 2596, codecs: "avc1.4d4028,mp4a.40.2", transcode: false },
+];
+
+/**
+ * Mock of the server's adaptive plan (#111, `playback/src/variants.rs`), simplified: an adaptive
+ * request gets the mock 3-variant master unless the file stays direct play (Q1: estimate ≥ 1.5×
+ * its bitrate, or a quality other than Auto). Transcode-only titles list 1080p instead of the
+ * original. Start: Auto → highest peak ≤ 0.8 × estimate (lowest with none), Original → original,
+ * a rung → the highest variant no taller than it.
+ */
+export function mockAdaptive(
+  req: { adaptive?: boolean | null; bandwidth_kbps?: number | null; quality?: Quality | null },
+  mode: Decision["mode"],
+  fileKbps: number | null,
+): { url: string; variants: VariantOption[]; start_variant: Quality; mode: Decision["mode"] } | undefined {
+  if (!req.adaptive) return undefined;
+  const q = req.quality ?? "auto";
+  const est = req.bandwidth_kbps && req.bandwidth_kbps > 0 ? req.bandwidth_kbps : null;
+  let m = mode;
+  if (mode === "direct_play") {
+    if (q !== "auto" || (est != null && fileKbps != null && est >= fileKbps * 1.5)) return undefined;
+    m = "remux";
+  }
+  const transcode = m === "transcode";
+  const variants = MOCK_VARIANTS.map((v) => (transcode && v.id === "original" ? { ...v, id: "1080p" as Quality, label: "1080p", transcode: true } : v));
+  let start = variants[0]!;
+  if (q === "auto") {
+    if (est != null) start = [...variants].reverse().find((v) => v.bandwidth_kbps <= est * 0.8) ?? variants[0]!;
+  } else if (q === "original") {
+    start = variants[variants.length - 1]!;
+  } else {
+    const h = q === "1080p" ? 1080 : q === "720p" ? 720 : 480;
+    start = [...variants].reverse().find((v) => v.height <= h) ?? variants[0]!;
+  }
+  return { url: transcode ? "/mock-media/abr/master-transcode.m3u8" : "/mock-media/abr/master.m3u8", variants, start_variant: start.id, mode: m };
 }

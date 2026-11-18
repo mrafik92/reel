@@ -420,6 +420,39 @@ pub async fn vod_categories(
     ))
 }
 
+#[utoipa::path(get, path = "/vod/genres", params(TypeQuery), responses((status = 200, body = Vec<String>), (status = 400, body = ErrorBody)))]
+pub async fn vod_genres(
+    State(st): State<AppState>,
+    _u: AuthUser,
+    Query(q): Query<TypeQuery>,
+) -> ApiResult<Json<Vec<String>>> {
+    let table = if parse_kind(q.kind.as_deref())? == "movie" {
+        "vod_movies"
+    } else {
+        "vod_series"
+    };
+    let values = sqlx::query_scalar::<_, String>(&format!(
+        "SELECT DISTINCT genres FROM {table} WHERE missing = 0 AND COALESCE(genres, '') <> ''"
+    ))
+    .fetch_all(&st.db)
+    .await?;
+    let mut genres = std::collections::BTreeMap::new();
+    for genre in values
+        .iter()
+        .flat_map(|value| value.split(',').map(str::trim))
+    {
+        if !genre.is_empty() {
+            genres
+                .entry(genre.to_ascii_lowercase())
+                .and_modify(|name: &mut &str| {
+                    *name = (*name).min(genre);
+                })
+                .or_insert(genre);
+        }
+    }
+    Ok(Json(genres.into_values().map(str::to_owned).collect()))
+}
+
 // ───────────────────────── lists ─────────────────────────
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -494,8 +527,8 @@ async fn list(
         .map(str::trim)
         .filter(|g| !g.is_empty())
     {
-        sql_where.push_str(" AND (',' || lower(COALESCE(m.genres, '')) || ',') LIKE ?");
-        binds.push(Bind::S(format!("%,{},%", g.to_lowercase())));
+        sql_where.push_str(" AND instr(',' || lower(COALESCE(m.genres, '')) || ',', ?) > 0");
+        binds.push(Bind::S(format!(",{},", g.to_ascii_lowercase())));
     }
     let (cmp, dir) = if desc { ("<", "DESC") } else { (">", "ASC") };
     let from = if kind == "movie" {
