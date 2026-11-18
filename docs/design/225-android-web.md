@@ -1,34 +1,37 @@
 # Design: Reel Web for Android, a WebView client (#225)
 
-> **Status (2026-11-18).** The shell (#226) is built: server setup, an origin-scoped WebView, the TLS and
-> unreachable-server screens, and CI. Back, insets and full screen (#227), the web-side identity (#229),
-> recovery (#228: load timeout, plain error messages, automatic retry) and the Android TV check (#231, emulator
-> only) are built. Release builds (#232) are built locally with `scripts/android-release.sh`. The playback
-> matrix (#230, §8) is recorded on the emulator and waits for the owner's phone. When a part ships, FEATURES.md
-> and ARCHITECTURE.md describe it and this note keeps what's still open.
+> **Status (2026-11-19).** Reel Web is Reel's only Android client: the owner compared it with the Compose app
+> (#29) on their phone and kept it, and the Compose app was removed in #260 (ARCHITECTURE A70). The shell
+> (#226) is built: server setup, an origin-scoped WebView, the TLS and unreachable-server screens, and CI.
+> Back, insets and full screen (#227), the web-side identity (#229), recovery (#228: load timeout, plain error
+> messages, automatic retry) and the Android TV check (#231, emulator only) are built. Release builds (#232)
+> are built locally with `scripts/android-release.sh`. The playback matrix (#230, §8) is recorded on the
+> emulator and waits for the owner's phone. When a part ships, FEATURES.md and ARCHITECTURE.md describe it and
+> this note keeps what's still open.
 
 Epic #225 · milestone **M5 – Mobile** · sub-issues #226–#232.
 
 ## 1. The decision in one paragraph
 
-Reel gets a second Android client, **Reel Web** (`clients/android-web`, package `app.reel.android.web`). It's
-a small native shell around an Android `WebView` that loads the Reel web app **from the configured server**.
-It installs next to the Compose app (#29, `app.reel.android`), so the owner can compare both on one phone.
-The goal is one Reel UI across web, webOS, Tizen and Android: browsing, global search, IPTV movies and series,
-Discover, requests and download status come from the SolidJS client, and a web deploy updates them on Android
-without an APK release. Playback uses the web player inside WebView. A Media3 handoff is decided later, from
-the failures the playback check (#230, §8) records.
+Reel's Android client is **Reel Web** (`clients/android-web`, package `app.reel.android.web`). It's a small
+native shell around an Android `WebView` that loads the Reel web app **from the configured server**. It was
+built next to the native Compose app (#29, `app.reel.android`) so the owner could compare both on one phone;
+the owner kept Reel Web and the Compose app was removed (#260, ARCHITECTURE A70). The goal is one Reel UI
+across web, webOS, Tizen and Android: browsing, global search, IPTV movies and series, Discover, requests and
+download status come from the SolidJS client, and a web deploy updates them on Android without an APK release.
+Playback uses the web player inside WebView. A Media3 handoff is decided later, from the failures the playback
+check (#230, §8) records.
 
 ## 2. Shape of the code
 
 ```
-clients/android-web/                 standalone Gradle project (no Compose, no bun workspace)
+clients/android-web/                 standalone Gradle project (Android Views, no bun workspace)
 └── app/src/main/java/app/reel/android/web/
     ├── SetupActivity      server address entry, `GET /api/v1/health` check, "Save anyway"
     ├── MainActivity       the WebView, Back, error panel, load timeout, renderer-crash recovery, launcher shortcut
     ├── Recovery           LoadErrors (error → plain message, the 20 s timeout) and RetryPolicy (backoff)
     ├── NetworkWatch       default-network callback, started and stopped with the activity
-    ├── ServerAddress      input → origin (same rules as the Compose app's ServerAddress)
+    ├── ServerAddress      input → origin (http for LAN-style input, https otherwise)
     ├── ServerStore        the origin in app-private SharedPreferences (no backup)
     ├── ServerCheck        the setup screen's health check (OkHttp)
     ├── LinkPolicy         in-app / external / blocked for every navigation
@@ -41,22 +44,22 @@ clients/android-web/                 standalone Gradle project (no Compose, no b
 | UI | Android Views (two layouts) | Two native screens don't justify Compose; the APK stays ~3 MB |
 | Web content | The server's own web app at `/` | No bundled copy of the UI to keep in sync (unlike webOS/Tizen, which package `apps/web`) |
 | Storage | SharedPreferences (server), WebView storage (session) | The web app keeps its token in localStorage, so sign-in persists like a browser tab |
-| Package id | `app.reel.android.web` (`.debug` suffix for debug) | Installs next to the Compose app's debug and release builds |
-| Min SDK | 24 | Same as the Compose app; WebView updates through the Play Store |
+| Package id | `app.reel.android.web` (`.debug` suffix for debug) | Chosen to install next to the Compose app's `app.reel.android`; it can't change now that releases are installed |
+| Min SDK | 24 | WebView updates through the Play Store |
 
 ## 3. Server and session
 
-- The setup screen parses the address like the Compose app: LAN-style input (an IP, a bare host, `.local`,
+- The setup screen parses the address: LAN-style input (an IP, a bare host, `.local`,
   `.lan` or any explicit port) gets `http://`, dotted names get `https://`. It checks `/api/v1/health` and
   expects JSON. If the phone is off the LAN or Tailscale the check fails; **Save anyway** keeps the address.
   A TLS failure can't be saved past.
-- `REEL_URL` at build time presets the address, as in the Compose app.
+- `REEL_URL` at build time presets the address.
 - The session is the web app's own: `reel.token` and `reel.device_id` in the origin's localStorage. It
   survives force stops and restarts. Each origin has its own storage, so a LAN address and a Tailscale address
   are separate sign-ins, and switching back to one keeps its session (checked in #228, §6).
 - **Change server**: long-press the launcher icon → *Change server* (a dynamic shortcut), or the button on
   the error screen. The page can't open native UI (no bridge).
-- Cleartext HTTP is allowed for any host, as in the Compose app: the user types the address, and private
+- Cleartext HTTP is allowed for any host: the user types the address, and private
   Reel servers are usually plain `http://…:8420`.
 
 ## 4. Security model
@@ -367,16 +370,15 @@ A handoff would be worth it only if the phone check shows one of these:
 
 The handoff would be **large (L)**. The shell has no JavaScript bridge (§4), so the page would need a new path
 to say "play this item at this position" (a bridge or an app link). The native side would need decide, progress,
-resume, tracks, quality and the IPTV slot handling: in effect the Compose app's Media3 player (#190, #191) moved
-into this APK or launched from it. If one of those native-only needs is what's missing, launching the Compose
-app's player is the cheaper route.
+resume, tracks, quality and the IPTV slot handling. The Compose app's Media3 player (#190, #191) did that, but
+it was removed with the app (#260), so a handoff would be new native code (git history has the old player to
+start from). These limits are the trade-off ARCHITECTURE A70 accepts.
 
 ## 9. Android TV (#231)
 
 **Result: passes on the emulator, with four fixes (below).** The APK is now listed on Android TV: the
 `LEANBACK_LAUNCHER` category, `android.software.leanback` `required=false` (one APK for phones and TV,
-ARCHITECTURE A67) and a 320×180 xhdpi banner from `gen-icons.ts` (dark, "Reel WEB"; the Compose app's banner
-is crimson). `TvManifestTest` keeps Leanback and the touchscreen optional.
+ARCHITECTURE A67) and a 320×180 xhdpi banner from `gen-icons.ts` (dark, "Reel WEB"). `TvManifestTest` keeps Leanback and the touchscreen optional.
 
 Checked 2026-11-18 on the `reel-tv` AVD (Android TV 14, 1920×1080 at xhdpi, WebView 113), with the shell
 pointed at a dev build of the web app (`main` + #231; `/api` proxied to the live server). D-pad and remote
@@ -443,39 +445,37 @@ shows the pointer layout on a TV.
 
 ## 10. Releases (#232)
 
-GitHub Actions is unavailable for now (account billing), so release APKs for **both** Android apps are built
-on the owner's Mac with one script (ARCHITECTURE A65):
+GitHub Actions is unavailable for now (account billing), so Reel Web release APKs are built on the owner's Mac
+with one script (ARCHITECTURE A65). It also built the Compose app (`compose`) until #260 removed it:
 
 ```sh
-scripts/android-release.sh web     [--version X.Y.Z] [--taildrop] [--github-release] [--dry-run]
-scripts/android-release.sh compose [--version X.Y.Z] [--taildrop] [--github-release] [--dry-run]
+scripts/android-release.sh web [--version X.Y.Z] [--taildrop] [--github-release] [--dry-run]
 ```
 
 - **Build.** `./gradlew --no-daemon lint testDebugUnitTest assembleRelease` with `REEL_VERSION_NAME`/`CODE`
   and the signing env vars that `app/build.gradle.kts` already reads. Release builds are R8-shrunk and get no
   baked-in server (`REEL_URL` is unset).
-- **Version.** `--version X.Y.Z`, or the next patch after the app's newest release tag (fetched from
-  origin). The code follows `clients/android/scripts/version-from-tag.sh`, which accepts both tag prefixes:
-  `X*1_000_000 + Y*1_000 + Z`. The two apps have different packages, so their versions are independent.
-- **Signing.** The Compose app's release key, `~/.reel-android/reel-release.jks` (alias `reel`), so a
-  release installs over the previous one. The passwords come from `REEL_KEYSTORE_PASSWORD`/`REEL_KEY_PASSWORD`,
-  the macOS Keychain (service `reel-android-keystore`, account `reel`) or a hidden prompt. They reach only
+- **Version.** `--version X.Y.Z`, or the next patch after the newest `android-web-v*` tag (fetched from
+  origin). The code follows `clients/android-web/scripts/version-from-tag.sh`: `X*1_000_000 + Y*1_000 + Z`.
+  It rejects the Compose app's old `android-v*` tags.
+- **Signing.** The Reel release key (it also signed the Compose app), `~/.reel-android/reel-release.jks`
+  (alias `reel`), so a release installs over the previous one. The passwords come from
+  `REEL_KEYSTORE_PASSWORD`/`REEL_KEY_PASSWORD`, the macOS Keychain (service `reel-android-keystore`, account `reel`) or a hidden prompt. They reach only
   `keytool` (`-storepass:env`) and Gradle, never argv, a file or the log. Without them the script stops before
   building. After the build, `apksigner` must show the keystore's certificate, and the package, versionCode
   and versionName are checked. A key whose certificate isn't the release certificate
   (`a48654…58ecb`, the one on `android-v0.1.0`–`0.3.0`) gets a warning, and `--github-release` refuses it.
-- **Output.** `dist/ReelWeb-X.Y.Z.apk` or `dist/Reel-X.Y.Z.apk` (git-ignored) with a `.sha256` next to it.
+- **Output.** `dist/ReelWeb-X.Y.Z.apk` (git-ignored) with a `.sha256` next to it.
 - **Taildrop** (`--taildrop`, `--taildrop-target NAME`, default `rafiiiki`) runs the app bundle's CLI
   (`/Applications/Tailscale.app/Contents/MacOS/Tailscale file cp`). When the phone is offline Tailscale says
   "reportedly offline" and fails with 502; the script says so, prints the command to send it later, and
   exits 3.
 - **GitHub release** (`--github-release`, opt-in) tags HEAD, pushes the tag and runs `gh release create`
   (REST, no Actions) with the APK and its `.sha256`. It needs a clean tree, HEAD on `origin/main` and a new
-  tag. Tags: `android-web-vX.Y.Z` (title "Reel Web X.Y.Z") and `android-vX.Y.Z` (title "Android X.Y.Z", as
-  before). Neither glob matches the other's tags, so `android-release.yml` (`android-v*`) never sees Reel Web.
-- **Obtainium** (one app entry per APK, same repo; a private repo needs a GitHub token in Obtainium's
-  settings): Reel Web filters release titles by `^Reel Web ` and APKs by `^ReelWeb-.*\.apk$`; the Compose app
-  by `^Android ` and `^(Reel|reel-android)-[0-9].*\.apk$` (the workflow named its APKs `reel-android-X.Y.Z.apk`).
-- `.github/workflows/android-release.yml` stays in the repo but isn't in use while Actions is unavailable.
+  tag. Tag `android-web-vX.Y.Z`, title "Reel Web X.Y.Z".
+- **Obtainium** (a private repo needs a GitHub token in Obtainium's settings): filter release titles by
+  `^Reel Web ` and APKs by `^ReelWeb-.*\.apk$`, because the Compose app's old releases (`android-v0.1.0`–`0.3.0`,
+  "Android X.Y.Z") are still on the same repo.
+- The Compose app's `.github/workflows/android-release.yml` was removed in #260.
 - `--dry-run` builds for real but only prints the Taildrop and GitHub commands. Unit tests:
   `scripts/tests/android-release-test.sh` (stubs, a throwaway keystore, no network or build).

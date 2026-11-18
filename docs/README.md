@@ -2,8 +2,8 @@
 
 Reel is a self-hosted media server, a Plex/Jellyfin alternative. It brings together your local library, Seerr-style
 requests to Radarr/Sonarr with live download progress, and an IPTV engine (live TV, guide, and the provider's
-movies and series), with clients for the web, LG webOS and Samsung Tizen. It runs as a single Rust binary
-with a SolidJS web app and needs no cloud account.
+movies and series), with clients for the web, LG webOS, Samsung Tizen and Android (Reel Web, a WebView shell
+around the web app). It runs as a single Rust binary with a SolidJS web app and needs no cloud account.
 
 | Document | What it covers |
 |---|---|
@@ -20,7 +20,8 @@ Quick orientation:
 ```
 reel/
 ├── server/      Rust workspace (axum, sqlx/SQLite, ffmpeg subprocesses). Binary: reel-server
-├── clients/     bun workspace: apps/web (SolidJS), apps/webos, apps/tizen, packages/ui, packages/sdk
+├── clients/     bun workspace: apps/web (SolidJS), apps/webos, apps/tizen, packages/ui, packages/sdk;
+│                android-web/ (Reel Web for Android, its own Gradle project)
 ├── deploy/      Dockerfile, compose files, Caddyfile, CT 113 helper scripts
 ├── docs/        you are here
 └── .github/     CI (fmt, clippy, tests, typecheck, build) + image build → ghcr.io/mrafik92/reel

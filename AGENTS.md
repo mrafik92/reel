@@ -65,11 +65,10 @@ cd clients && bun install && bun run typecheck && bun run build
 ```
 
 ```sh
-# Android app (JDK 17–21 + Android SDK; setup in clients/android/README.md)
-cd clients/android && ./gradlew lint testDebugUnitTest assembleDebug
-# Reel Web for Android (WebView client, #225): same toolchain
+# Reel Web for Android, the only Android app (WebView client, #225; JDK 17–21 + Android SDK,
+# setup in clients/android-web/README.md)
 cd clients/android-web && ./gradlew lint testDebugUnitTest assembleDebug
-# release script for both apps (#232): unit tests, no build or network
+# release script (#232): unit tests, no build or network
 scripts/tests/android-release-test.sh
 ```
 
@@ -90,11 +89,11 @@ scripts/tests/android-release-test.sh
 - Deploy: **Actions → deploy → Run workflow** (self-hosted runner CT 116, forced-command SSH key). Fallback:
   `deploy/ct113/deploy.py` from the Mac (`--dry-run` first). Both pull, restart, health-check and update tickets.
 - Never make the repo public while the self-hosted runner is attached.
-- **Android releases** (both apps) are built on the Mac, not by Actions (`android-release.yml` isn't in use):
-  `scripts/android-release.sh web|compose [--version X.Y.Z] [--taildrop] [--github-release]` builds a signed APK
+- **Android releases** (Reel Web) are built on the Mac, not by Actions:
+  `scripts/android-release.sh web [--version X.Y.Z] [--taildrop] [--github-release]` builds a signed APK
   into `dist/`, `--taildrop` sends it to the owner's phone, and `--github-release` publishes it (only when
   asked). The keystore password is the owner's: never look for it, guess it or ask for it in chat; test with
-  `--dry-run` and a throwaway keystore. Details: `clients/android/README.md` → Release builds.
+  `--dry-run` and a throwaway keystore. Details: `clients/android-web/README.md` → Release builds.
 - Live access for checks: `ssh minix-local` → `pct exec 113 -- …` (Reel runs in Docker there). Admin
   credentials for API smoke tests are in `/root/.reel-admin` on minix. Never print them.
 
