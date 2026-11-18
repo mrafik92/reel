@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -205,7 +206,7 @@ private fun PhoneBar(tabs: List<TopLevel>, current: TopLevel?, go: (TopLevel) ->
                 selected = tab == current,
                 onClick = { go(tab) },
                 icon = { Icon(tab.icon, contentDescription = null) },
-                label = { Text(tab.label, maxLines = 1) },
+                label = { Text(tab.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 modifier = Modifier.testTag("tab-${tab.route}"),
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = ReelColors.AccentHi,

@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -30,12 +31,15 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import app.reel.android.ui.theme.ReelColors
+import app.reel.android.ui.theme.ReelDimensions
+import app.reel.android.DeviceKind
+import app.reel.android.LocalDeviceKind
 import app.reel.android.ui.tv.FocusCard
 
 /**
  * A rounded button for actions, tabs and filters (Play, a season, *Unwatched*). [selected] fills it
  * with the accent wash; focus (TV) inverts it to cream like the nav rail. [primary] is the main
- * action: cream, turning to the bright accent when focused so it still stands out.
+ * action: warm ivory with dark text.
  */
 @Composable
 fun Pill(
@@ -47,29 +51,29 @@ fun Pill(
     primary: Boolean = false,
     enabled: Boolean = true,
 ) {
-    FocusCard(onClick = { if (enabled) onClick() }, modifier = modifier, shape = RoundedCornerShape(50)) { focused ->
+    FocusCard(onClick = onClick, enabled = enabled, modifier = modifier, shape = RoundedCornerShape(50)) { focused ->
         val bg = when {
-            primary && focused -> ReelColors.AccentHi
+            !enabled -> ReelColors.Bg2
             focused || primary -> ReelColors.Ink
             selected -> ReelColors.AccentWash
             else -> ReelColors.Bg2
         }
         val fg = when {
-            primary && focused -> ReelColors.AccentInk
+            !enabled -> ReelColors.Ink3
             focused || primary -> ReelColors.Bg
             selected -> ReelColors.AccentHi
-            !enabled -> ReelColors.Ink3
             else -> ReelColors.Ink
         }
         // Fill the whole pill (it may be given a fixed width), with the label centred in it.
         Box(Modifier.matchParentSize().background(bg))
         Row(
-            Modifier.align(Alignment.Center).heightIn(min = 40.dp).padding(horizontal = 18.dp, vertical = 8.dp),
+            Modifier.align(Alignment.Center).heightIn(min = ReelDimensions.TouchTarget).widthIn(min = ReelDimensions.TouchTarget)
+                .padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (icon != null) Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp))
-            Text(text, style = MaterialTheme.typography.labelLarge, color = fg, maxLines = 1)
+            Text(text, style = MaterialTheme.typography.labelLarge, color = fg)
         }
     }
 }
@@ -88,6 +92,9 @@ fun <T> ChoiceDialog(
     onDismiss: () -> Unit,
 ) {
     val start = remember { FocusRequester() }
+    val initialIndex = options.indexOf(selected).coerceAtLeast(0)
+    val list = rememberLazyListState(initialIndex)
+    val tv = LocalDeviceKind.current == DeviceKind.Tv
     Dialog(onDismissRequest = onDismiss) {
         Column(
             Modifier
@@ -97,13 +104,13 @@ fun <T> ChoiceDialog(
                 .testTag("choice-dialog"),
         ) {
             Text(title, style = MaterialTheme.typography.titleMedium, color = ReelColors.Ink, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-            LazyColumn(Modifier.heightIn(max = 480.dp)) {
-                itemsIndexed(options) { _, o ->
+            LazyColumn(Modifier.heightIn(max = 480.dp), state = list) {
+                itemsIndexed(options) { index, o ->
                     val isSel = o == selected
                     FocusCard(
                         onClick = { onPick(o) },
                         shape = RoundedCornerShape(0.dp),
-                        modifier = Modifier.fillMaxWidth().then(if (isSel) Modifier.focusRequester(start) else Modifier).testTag("choice-${label(o)}"),
+                        modifier = Modifier.fillMaxWidth().then(if (index == initialIndex) Modifier.focusRequester(start) else Modifier).testTag("choice-${label(o)}"),
                     ) { focused ->
                         Row(
                             Modifier.fillMaxWidth().background(if (focused) ReelColors.Ink else ReelColors.Bg1).padding(horizontal = 24.dp, vertical = 12.dp),
@@ -116,10 +123,10 @@ fun <T> ChoiceDialog(
                 }
             }
         }
-        LaunchedEffect(Unit) {
-            repeat(5) {
-                kotlinx.coroutines.delay(16)
-                if (runCatching { start.requestFocus() }.isSuccess) return@LaunchedEffect
+        if (tv && options.isNotEmpty()) {
+            LaunchedEffect(initialIndex) {
+                list.scrollToItem(initialIndex)
+                start.requestFocus()
             }
         }
     }

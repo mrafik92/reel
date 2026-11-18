@@ -228,3 +228,21 @@ downloads Robolectric's Android runtime (~200 MB, then cached in `~/.m2`).
 
 Screens call the API through `LocalAppGraph.current.session.api` (`api.get<Home>("/home")`). A 401 there
 signs out and shows the sign-in screen by itself. Show `ReelError.userMessage` for failures.
+
+### Shared visual components
+
+`ReelColors` and `ReelDimensions` define the palette and control geometry. Use
+`Pill(text, onClick, primary, selected, enabled)` for actions and filters. Primary actions
+use the ivory fill, and disabled actions cannot receive focus or clicks. `PosterCard` and
+`LandscapeCard` accept a title, optional image URL, progress from 0 to 1, and played state.
+`WatchProgress` can be used independently for a progress track. `ReelImage` preserves its
+bounds and surface color when artwork is unavailable. `Loadable`, `LoadingView`,
+`EmptyView` and `ErrorView` cover screen states.
+
+For remote navigation, wrap interactive surfaces in `FocusCard`, assign unique stable keys
+with `Modifier.focusMemory`, and call `RestoreFocus` once content is ready. A key such as
+`row-id/item-id` groups items for fallback. Focus uses an inset dark and ivory outline
+without scaling or animation. Restore tries the saved key, an attached item in the same
+group, the preferred entry, then another attached target. Lazy content must preserve its
+scroll state so the saved item can be composed again. `ChoiceDialog` starts on the selected
+option on TV. The caller should restore the trigger when the dialog closes.

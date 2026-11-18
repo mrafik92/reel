@@ -1,12 +1,13 @@
 package app.reel.android.ui.common
 
+import android.animation.ValueAnimator
+import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -130,7 +131,11 @@ fun <T> Loadable(
 @Composable
 fun LoadingView(modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize().testTag("loading"), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(color = ReelColors.Accent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !ValueAnimator.areAnimatorsEnabled()) {
+            CircularProgressIndicator(progress = { 0.75f }, color = ReelColors.AccentHi)
+        } else {
+            CircularProgressIndicator(color = ReelColors.AccentHi)
+        }
     }
 }
 
@@ -141,7 +146,7 @@ fun ErrorView(message: String, onRetry: (() -> Unit)?, modifier: Modifier = Modi
     val tv = LocalDeviceKind.current == DeviceKind.Tv
     CenteredMessage(message, modifier.testTag("error")) {
         if (onRetry != null) {
-            Button(onClick = onRetry, modifier = Modifier.focusRequester(focus).testTag("retry")) { Text("Try again") }
+            Pill("Try again", onClick = onRetry, primary = true, modifier = Modifier.focusRequester(focus).testTag("retry"))
             if (tv) LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
         }
     }
