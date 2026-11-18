@@ -104,7 +104,7 @@ fn movies() -> Value {
         v.push(json!({"num":3+i,"name":format!("Filler Film {}", i + 3),"stream_id":1003+i,"stream_icon":img("p"),
             "rating":r.to_string(),"added":(1_700_000_000i64 + a).to_string(),"category_id":"10","container_extension": if i == 0 { "mkv" } else { "mp4" }}));
     }
-    v.push(json!({"num":7,"name":"Other Movie (2010)","stream_id":1007,"stream_icon":"","rating":"0","added":"1700000050","category_id":"11","container_extension":"mp4","tmdb":"555"}));
+    v.push(json!({"num":7,"name":"Other Movie (2010)","stream_id":1007,"stream_icon":"","rating":"0","added":"1700000050","category_id":"11","container_extension":"mp4","tmdb":"555","genre":"Horror / Thriller"}));
     v.push(json!({"num":8,"name":"Lonely","stream_id":1008,"stream_icon":"","rating":"4","added":"1700000010","category_id":"11","container_extension":"mp4"}));
     Value::Array(v)
 }
@@ -519,6 +519,14 @@ async fn catalog_ingest_lists_filters_sorts_pages_and_keeps_ids_stable() {
         get(&e.admin, "/api/v1/vod/categories?type=nope").await.0,
         StatusCode::BAD_REQUEST
     );
+
+    let (status, genres) = get(&e.admin, "/api/v1/vod/genres?type=movie").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(genres, json!(["Horror", "Thriller"]));
+    let (_, horror) = get(&e.admin, "/api/v1/vod/movies?genre=hORROR").await;
+    assert_eq!(titles(&horror), ["Other Movie"]);
+    let (_, wildcard) = get(&e.admin, "/api/v1/vod/movies?genre=%25").await;
+    assert!(titles(&wildcard).is_empty());
 
     let (s, p) = get(&e.admin, "/api/v1/vod/movies?sort=added").await;
     assert_eq!(s, StatusCode::OK, "{p}");
