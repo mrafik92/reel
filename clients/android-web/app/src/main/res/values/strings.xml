@@ -14,10 +14,24 @@
     <string name="setup_tls">%1$s has a certificate this phone doesn\'t trust. Reel Web doesn\'t open servers with certificate errors.</string>
     <string name="setup_unreachable">Can\'t reach %1$s. If the server is only on your home network or Tailscale, connect to it and try again, or save the address anyway.</string>
 
+    <string name="error_offline_title">You\'re offline</string>
+    <string name="error_offline">This phone has no network connection. Reel Web reconnects to %1$s as soon as it\'s back.</string>
+    <string name="error_unknown_host_title">Can\'t find the server</string>
+    <string name="error_unknown_host">%1$s can\'t be found from this network. If it\'s a home or Tailscale address, connect to your home Wi-Fi or Tailscale.</string>
+    <string name="error_refused_title">Reel isn\'t answering</string>
+    <string name="error_refused">%1$s refused the connection. Check that the Reel server is running and that the address and port are right.</string>
     <string name="error_unreachable_title">Can\'t reach Reel</string>
-    <string name="error_unreachable">%1$s isn\'t answering (%2$s). Check that you\'re on your home network or Tailscale.</string>
+    <string name="error_timed_out">%1$s didn\'t answer. Check that you\'re on your home network or Tailscale.</string>
+    <string name="error_network">The connection to %1$s failed. Check that you\'re on your home network or Tailscale.</string>
+    <string name="error_blocked_port_title">Port not allowed</string>
+    <string name="error_blocked_port">Android\'s web view never connects to port %1$d, which is reserved for other services. Run Reel on another port, such as 8420.</string>
+    <string name="error_detail_timeout">No answer in %1$d s</string>
+    <string name="error_detail_http">HTTP %1$d</string>
+    <string name="retry_in">Trying again in %1$d s</string>
+    <string name="retry_connecting">Connecting…</string>
+    <string name="retry_waiting_network">Waiting for a network connection</string>
     <string name="error_server_title">Reel had a problem</string>
-    <string name="error_server">%1$s returned an error (HTTP %2$d). Try again in a moment.</string>
+    <string name="error_server">%1$s returned an error. Reel may be restarting.</string>
     <string name="error_tls_title">Certificate not trusted</string>
     <string name="error_tls">The certificate of %1$s isn\'t valid for this phone, so Reel Web won\'t open it.</string>
     <string name="error_crash_title">The page stopped</string>

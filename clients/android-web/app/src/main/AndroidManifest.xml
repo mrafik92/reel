@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The error panel retries when a network comes back (#228). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Phones and Android TV (#231, checked on the Android TV emulator): one APK, a touchscreen isn't
          needed and Leanback is optional, so it installs on both. -->
