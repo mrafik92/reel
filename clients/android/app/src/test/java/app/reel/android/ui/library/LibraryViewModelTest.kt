@@ -1,12 +1,16 @@
 package app.reel.android.ui.library
 
+import androidx.lifecycle.viewModelScope
 import app.reel.android.data.LibrarySort
 import app.reel.android.data.ReelApi
 import app.reel.android.data.ServerAddress
 import app.reel.android.ui.common.Load
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -30,6 +34,9 @@ import org.junit.Test
 class LibraryViewModelTest {
     private lateinit var server: MockWebServer
     private val itemQueries = mutableListOf<String>()
+    private var viewModel: LibraryViewModel? = null
+    @Volatile private var delayGenres = false
+    private val genreRequested = CountDownLatch(1)
 
     private fun json(body: String) = MockResponse().setHeader("Content-Type", "application/json").setBody(body)
 
@@ -43,7 +50,12 @@ class LibraryViewModelTest {
                 return when {
                     url.encodedPath == "/api/v1/libraries" ->
                         json("""[{"id":1,"name":"Movies","kind":"movies","item_count":3},{"id":2,"name":"Shows","kind":"shows","item_count":1}]""")
-                    url.encodedPath == "/api/v1/genres" -> json("""[{"name":"Drama","count":2},{"name":"action","count":1}]""")
+                    url.encodedPath == "/api/v1/genres" -> {
+                        genreRequested.countDown()
+                        json("""[{"name":"Drama","count":2},{"name":"action","count":1}]""").apply {
+                            if (delayGenres) setHeadersDelay(2, TimeUnit.SECONDS)
+                        }
+                    }
                     url.encodedPath.matches(Regex("/api/v1/libraries/\\d+/items")) -> {
                         synchronized(itemQueries) { itemQueries += url.encodedPath + "?" + (url.encodedQuery ?: "") }
                         if (url.queryParameter("cursor") == null) {
@@ -61,8 +73,13 @@ class LibraryViewModelTest {
 
     @After
     fun tearDown() {
-        server.shutdown()
-        Dispatchers.resetMain()
+        try {
+            // Drain requests while the test Main dispatcher is still installed.
+            runBlocking { viewModel?.viewModelScope?.coroutineContext?.get(Job)?.cancelAndJoin() }
+            server.shutdown()
+        } finally {
+            Dispatchers.resetMain()
+        }
     }
 
     private fun api() = ReelApi(
@@ -71,12 +88,25 @@ class LibraryViewModelTest {
         token = { "t" },
     )
 
+    private fun createViewModel(initialLibrary: Long? = null, pageSize: Int = 60) =
+        LibraryViewModel(api(), initialLibrary, pageSize).also { viewModel = it }
+
     private fun <T> await(flow: kotlinx.coroutines.flow.StateFlow<T>, ok: (T) -> Boolean): T =
         runBlocking { withTimeout(5_000) { flow.first(ok) } }
 
     @Test
+    fun viewModelScopeCanBeDrainedWhileGenreRequestIsInFlight() {
+        delayGenres = true
+        val vm = createViewModel()
+        assertTrue(genreRequested.await(5, TimeUnit.SECONDS))
+        val job = checkNotNull(vm.viewModelScope.coroutineContext[Job])
+        runBlocking { withTimeout(5_000) { job.cancelAndJoin() } }
+        assertTrue(job.isCompleted)
+    }
+
+    @Test
     fun opensTheFirstLibraryAndPagesThroughIt() {
-        val vm = LibraryViewModel(api(), pageSize = 1)
+        val vm = createViewModel(pageSize = 1)
         await(vm.libraries) { it is Load.Ready }
         assertEquals(1L, vm.selected.value)
         await(vm.pager.state) { it.items.size == 1 && !it.loading }
@@ -90,14 +120,14 @@ class LibraryViewModelTest {
 
     @Test
     fun aPreselectedLibraryOpensFirst() {
-        val vm = LibraryViewModel(api(), initialLibrary = 2)
+        val vm = createViewModel(initialLibrary = 2)
         await(vm.pager.state) { it.items.isNotEmpty() }
         assertEquals(2L, vm.selected.value)
     }
 
     @Test
     fun filtersRestartPagingWithTheirParameters() {
-        val vm = LibraryViewModel(api(), pageSize = 5)
+        val vm = createViewModel(pageSize = 5)
         await(vm.pager.state) { it.items.isNotEmpty() }
         vm.setQuery(vm.query.value.copy(sort = LibrarySort.Added, genre = "Drama", unwatched = true))
         await(vm.pager.state) { it.items.isNotEmpty() && !it.loading }
@@ -107,7 +137,7 @@ class LibraryViewModelTest {
 
     @Test
     fun switchingLibraryClearsTheGenre() {
-        val vm = LibraryViewModel(api())
+        val vm = createViewModel()
         await(vm.pager.state) { it.items.isNotEmpty() }
         vm.setQuery(vm.query.value.copy(genre = "Drama"))
         vm.select(2)

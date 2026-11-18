@@ -81,6 +81,18 @@ class LibraryFocusTest {
     }
 
     @Test
+    fun backFromSortDialogRestoresItsTrigger() {
+        setContent()
+        rule.onNodeWithTag("lib-1").performKeyInput { pressKey(Key.DirectionRight) }
+        rule.onNodeWithTag("lib-2").performKeyInput { pressKey(Key.DirectionRight) }
+        rule.onNodeWithTag("sort").performKeyInput { pressKey(Key.Enter) }
+        rule.onNodeWithTag("choice-A–Z").assertIsFocused()
+        rule.onNodeWithTag("choice-A–Z").performKeyInput { pressKey(Key.Back) }
+        rule.waitForIdle()
+        rule.onNodeWithTag("sort").assertIsFocused()
+    }
+
+    @Test
     fun sortDialogByRemote() {
         setContent()
         rule.onNodeWithTag("lib-1").performKeyInput { pressKey(Key.DirectionRight) }
