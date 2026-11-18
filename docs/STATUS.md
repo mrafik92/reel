@@ -4,6 +4,8 @@ The webOS direct-play audio selection fix (#255) is built: the player applies th
 
 Library poster transitions and the title entrance (#252) are built for the web app. Desktop and 1920×1080 TV mode checks cover opening and returning to the selected poster, including reduced motion and the fallback without the browser animation API. Real TV verification remains pending.
 
+The Live TV retune after returning from the background (#248) is built: when the first tune gets no answer because the network isn't back yet (Reel Web on Android), the page waits for the network and retries once instead of showing *Can't reach Reel*; server and provider errors still show at once. Unit tests and Playwright (mock mode, and the live server with the network off on return: one failed request, one retry 2 s later, playing) cover it; the Android emulator and a real phone remain to check.
+
 Android startup diagnostics (#210) are built for debug measurement. A synthetic MP4 resume run completed 20 warm attempts per client on local loopback, with Android emulator p50/p95 543/598 ms and desktop Chrome 131/148 ms, zero recorded failures. These different environments are a harness check. Cold, LAN, Tailscale, physical phone, real remux/transcode and controlled IPTV VOD remain unmeasured.
 
 Live build: **`3a64eeb`** (2026-11-19) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
@@ -203,7 +205,6 @@ proposal are in [#102](https://github.com/mrafik92/reel/issues/102#issuecomment-
 | Player | The web player's VOD profile always claims HEVC Main 10 (`max_bit_depth: 10`), so on a browser or WebView that decodes only HEVC Main the server copies or encodes Main 10 for every rung, and the player spins without an error (#245, found on the Android emulator in #230) |
 | Player | After a switch to burned-in PGS subtitles, hls.js re-requested one 480p segment ~250 times in 30 s until the server answered 429, and a 1080p pin was then ignored (#246, Android emulator, not yet seen on desktop) |
 | Player | *Next episode* leaves full screen (the Player remounts and its cleanup exits full screen); on Android Reel Web the phone also turns back to portrait (#247) |
-| Live TV | Returning to Reel Web on Android after the background: the automatic retune fails once (the app's network isn't back yet) and shows *Can't reach Reel*; Try again works (#248) |
 | Transcode | VAAPI output is always H.264, even for HEVC-capable clients (#113 part 2, after #111). The low-power encoders (part 1) are built and tested, not yet checked live |
 | IPTV | Some provider feeds stall for 8 s at a time (France 5 on 2026-11-12); the hub reconnects and the player re-tunes, but the picture freezes meanwhile |
 | Reviews | IMDb/RT/Metacritic scores need `REEL_OMDB_API_KEY` |

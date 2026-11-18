@@ -348,6 +348,8 @@ export function createMockIptv(): IptvApi {
     },
     async tune(id, body) {
       const c = need(id);
+      // Like a real request with no network (#248): `context.setOffline(true)` in Playwright.
+      if (typeof navigator !== "undefined" && navigator.onLine === false) throw new ApiError(0, "You're offline", undefined, undefined, "offline");
       // Warm channels zap faster — like the real hub's GOP cache.
       await latency(warm.has(id) ? 40 : 220, warm.has(id) ? 120 : 620);
       const takeover = !!(body as { takeover?: boolean }).takeover;

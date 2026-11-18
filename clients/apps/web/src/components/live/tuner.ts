@@ -9,6 +9,7 @@ import { iptv, type IptvChannel, type TuneBody, type TuneResponse } from "../../
 import { clientInfo } from "../../lib/device";
 import { wantsDirect } from "../../lib/liveDelivery";
 import { toast } from "../../lib/toast";
+import { withResumeRetry } from "./resumeRetry";
 
 export type TunePhase = "idle" | "tuning" | "playing" | "error";
 
@@ -168,7 +169,8 @@ export interface Tuner {
   unmute: () => void;
   nativePlane: () => boolean;
   samples: () => ZapSample[];
-  tune: (c: IptvChannel, o?: { takeover?: boolean; viaServer?: boolean }) => Promise<void>;
+  /** `resume`: the automatic retune after the page comes back from the background; a network failure gets one retry (#248). */
+  tune: (c: IptvChannel, o?: { takeover?: boolean; viaServer?: boolean; resume?: boolean }) => Promise<void>;
   /** `takeover`: admins stop the other users' streams holding the provider connections. */
   retry: (o?: { takeover?: boolean }) => void;
   stop: (keepalive?: boolean) => void;
@@ -252,7 +254,7 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     return Promise.race([new Promise<void>((r) => v.requestVideoFrameCallback!(() => r())), sleep(4000)]);
   };
 
-  const tune = async (c: IptvChannel, o: { takeover?: boolean; viaServer?: boolean; auto?: boolean } = {}): Promise<void> => {
+  const tune = async (c: IptvChannel, o: { takeover?: boolean; viaServer?: boolean; auto?: boolean; resume?: boolean } = {}): Promise<void> => {
     const my = ++gen;
     if (!o.auto) setRecovering(undefined);
     const t0 = now();
@@ -267,8 +269,13 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
     let r: TuneResponse;
     try {
       const body = tuneBody({ viaServer: o.viaServer });
-      r = await iptv.tune(c.id, o.takeover ? ({ ...body, takeover: true } as TuneBody) : body);
+      const send = () => iptv.tune(c.id, o.takeover ? ({ ...body, takeover: true } as TuneBody) : body);
+      // Back from the background, the network may not be restored yet (#248): one more try.
+      r = o.resume
+        ? await withResumeRetry(send, { still: () => my === gen, onWait: () => setRecovering("Waiting for the network") })
+        : await send();
     } catch (e) {
+      if (o.resume && my === gen) setRecovering(undefined);
       if (my !== gen) return;
       // The previous session is already stopped: don't leave its last frames running.
       try {
@@ -285,6 +292,7 @@ export function createTuner(video: () => HTMLVideoElement | undefined): Tuner {
       iptv.stop(r.session_id).catch(() => undefined);
       return;
     }
+    if (o.resume) setRecovering(undefined);
     const apiMs = now() - t0;
     setSession(r);
     rememberSession(r);
