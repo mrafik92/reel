@@ -2,7 +2,7 @@
 
 Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
-Android shared visuals and TV focus (#209) are built and checked on phone and 1080p TV emulators with mock data. Physical-device verification remains pending.
+Android shared visuals and TV focus (#209), and portrait phone Home (#212), are built and checked on emulators with mock data. Physical-device verification remains pending.
 
 ## What's verified on real hardware and data
 
