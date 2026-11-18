@@ -248,6 +248,16 @@ pub fn parse_path(path: &str, hint: Option<LibraryKind>) -> Option<ParsedMedia> 
 /// Parse a subtitle sidecar stem such as `Movie.en.forced`.
 pub fn parse_subtitle(stem: &str, ext: &str) -> SidecarSubtitle {
     let mut base = stem;
+    // Numeric track indexes are only suffixes when preceded by a language token.
+    if let Some((head, number)) = base.rsplit_once('.') {
+        if !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()) {
+            if let Some((_, lang)) = head.rsplit_once('.') {
+                if LANG_RE.is_match(lang) {
+                    base = head;
+                }
+            }
+        }
+    }
     let mut language = None;
     let (mut forced, mut default, mut sdh) = (false, false, false);
     loop {
@@ -1108,6 +1118,11 @@ mod tests {
         };
         assert_eq!(s.base_stem, "movie");
         assert_eq!(s.language, None);
+
+        let s = parse_subtitle("movie.eng.0", "srt");
+        assert_eq!(s.base_stem, "movie");
+        assert_eq!(s.language.as_deref(), Some("eng"));
+        assert_eq!(parse_subtitle("movie.2001", "srt").base_stem, "movie.2001");
 
         let s = parse_subtitle("movie.default.en", "srt");
         assert!(s.default);

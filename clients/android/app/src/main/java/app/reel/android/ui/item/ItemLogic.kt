@@ -47,9 +47,17 @@ object ItemLogic {
     fun episodeCode(seasonNo: Long?, episodeNo: Long?): String? =
         if (seasonNo != null && episodeNo != null) "S$seasonNo · E$episodeNo" else null
 
-    /** The episode a show's Play button plays: one in progress, else the first unwatched, else the first. */
+    fun playLabel(resumeS: Double, episode: String? = null, remaining: String? = null): String {
+        if (resumeS <= 0) return listOfNotNull("Play", episode).joinToString(" ")
+        val target = episode ?: "from ${clock(resumeS)}"
+        return listOfNotNull("Resume $target", remaining).joinToString(" · ")
+    }
+
+    /** Prefer a resumable episode, then an unwatched episode, then the first episode. */
     fun nextUp(episodes: List<ItemSummary>): ItemSummary? =
-        episodes.firstOrNull { !it.played && (it.progress ?: 0.0) >= STARTED } ?: episodes.firstOrNull { !it.played } ?: episodes.firstOrNull()
+        episodes.firstOrNull { !it.played && (it.progress ?: 0.0) in STARTED..<FINISHED }
+            ?: episodes.firstOrNull { !it.played && (it.progress ?: 0.0) < FINISHED }
+            ?: episodes.firstOrNull()
 
     /** The season a show opens on: the first one not fully watched, else the first. */
     fun defaultSeason(seasons: List<ItemSummary>): ItemSummary? = seasons.firstOrNull { !it.played } ?: seasons.firstOrNull()
