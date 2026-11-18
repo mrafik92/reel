@@ -1,5 +1,7 @@
 # Status: 2026-11-18
 
+Library poster transitions and the title entrance (#252) are built for the web app. Desktop and 1920×1080 TV mode checks cover opening and returning to the selected poster, including reduced motion and the fallback without the browser animation API. Real TV verification remains pending.
+
 Android startup diagnostics (#210) are built for debug measurement. A synthetic MP4 resume run completed 20 warm attempts per client on local loopback, with Android emulator p50/p95 543/598 ms and desktop Chrome 131/148 ms, zero recorded failures. These different environments are a harness check. Cold, LAN, Tailscale, physical phone, real remux/transcode and controlled IPTV VOD remain unmeasured.
 
 Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
