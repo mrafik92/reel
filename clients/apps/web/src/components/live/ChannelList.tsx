@@ -128,7 +128,8 @@ export function ChannelList(props: ChannelListProps): JSX.Element {
     if (i < 0 || !el) return;
     const h = rowPx();
     const target = i * h - (el.clientHeight - h) / 2;
-    el.scrollTop = Math.max(0, target);
+    const visible = i * h >= el.scrollTop && (i + 1) * h <= el.scrollTop + el.clientHeight;
+    if (!visible) el.scrollTop = Math.max(0, target);
     measure();
     if (focus) {
       // Wait for the row to render at its new position.
@@ -185,7 +186,7 @@ export function ChannelList(props: ChannelListProps): JSX.Element {
                       {(p) => (
                         <>
                           <span class="chrow__now">
-                            <span class="chrow__time">{fmtTime(p().start)}</span> {p().title}
+                            <span class="chrow__time">{fmtTime(p().start)} – {fmtTime(p().stop)}</span> {p().title}
                           </span>
                           <span class="chrow__bar" aria-hidden="true"><i style={{ width: `${progressOf(p(), clock()) * 100}%` }} /></span>
                         </>

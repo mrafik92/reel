@@ -1,5 +1,7 @@
 # Status: 2026-11-19
 
+Live TV channel browsing (#254) is built around a vertical channel list and a group picker. Playback opens on selection and returns to the list. Playwright checks covered desktop, phone and 1920×1080 navigation in mock mode, plus desktop and 1920×1080 browsing against the live API without tuning. Real-device playback verification remains pending.
+
 The webOS direct-play audio selection fix (#255) is built: the player applies the selected audio after native tracks appear. Unit tests cover selection and incomplete track lists; verification on the LG TV and reported title remains pending.
 
 Library poster transitions and the title entrance (#252) are built for the web app. Desktop and 1920×1080 TV mode checks cover opening and returning to the selected poster, including reduced motion and the fallback without the browser animation API. Real TV verification remains pending.
