@@ -624,7 +624,7 @@ private fun ErrorPanel(err: PlayError, retry: () -> Unit, leave: () -> Unit, mod
 
 /** Phones: the player is landscape and immersive (system bars come back with a swipe). */
 @Composable
-private fun ImmersiveLandscape() {
+internal fun ImmersiveLandscape() {
     val context = LocalContext.current
     DisposableEffect(Unit) {
         val activity = context.findActivity() ?: return@DisposableEffect onDispose {}
