@@ -11,6 +11,7 @@ import androidx.navigation.NavHostController
 import app.reel.android.LocalAppGraph
 import app.reel.android.data.ReelApi
 import app.reel.android.data.item
+import app.reel.android.player.StartupTiming
 import app.reel.android.ui.common.Load
 import app.reel.android.ui.shell.LocalNavController
 import app.reel.android.ui.shell.Routes
@@ -35,6 +36,8 @@ class PlayLauncher internal constructor(
     /** Play [itemId] from its resume point, or from the start when [fromStart]. */
     fun play(itemId: Long, fromStart: Boolean = false) {
         if (busy || api == null) return
+        val tap = StartupTiming.tap()
+        var navigated = false
         busy = true
         error = null
         scope.launch {
@@ -42,14 +45,18 @@ class PlayLauncher internal constructor(
                 val d = api.item(itemId)
                 val file = d.files.firstOrNull()
                 if (file == null) {
+                    StartupTiming.begin(false, tap)?.finish(StartupTiming.Outcome.failed)
                     error = "No playable file for this title yet."
                 } else {
                     val start = if (fromStart) 0.0 else ItemLogic.resumeAt(d.progress, file.durationS, d.played)
-                    nav.navigate(Routes.player(file.id, d.id, start))
+                    nav.navigate(Routes.player(file.id, d.id, start, tap))
+                    navigated = true
                 }
             } catch (e: CancellationException) {
+                if (!navigated) StartupTiming.begin(false, tap)?.finish(StartupTiming.Outcome.canceled)
                 throw e
             } catch (e: Exception) {
+                if (!navigated) StartupTiming.begin(false, tap)?.finish(StartupTiming.Outcome.failed)
                 error = Load.Failed(e).message
             } finally {
                 busy = false

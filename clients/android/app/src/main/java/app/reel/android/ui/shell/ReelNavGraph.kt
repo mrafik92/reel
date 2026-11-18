@@ -38,10 +38,11 @@ fun NavGraphBuilder.reelGraph(user: Me) {
             navArgument("fileId") { type = NavType.LongType },
             navArgument("itemId") { type = NavType.LongType },
             navArgument("startS") { type = NavType.StringType },
+            navArgument("tap") { type = NavType.LongType; defaultValue = 0L },
         ),
     ) { entry ->
         val a = PlayerArgs.from(entry.arguments)
-        PlayerScreen(fileId = a.fileId, itemId = a.itemId, startS = a.startS)
+        PlayerScreen(fileId = a.fileId, itemId = a.itemId, startS = a.startS, tapMs = entry.arguments?.getLong("tap") ?: 0L)
     }
     // IPTV movies and series (#193), for users with VOD access; entered from the Library tab.
     vodGraph(user)

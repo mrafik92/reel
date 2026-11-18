@@ -99,7 +99,9 @@ private const val UP_NEXT_S = 10
  * immersive on phones, D-pad and media keys on TV. Leaving it ends the server session.
  */
 @Composable
-fun PlayerScreen(fileId: Long, itemId: Long, startS: Double) {
+fun PlayerScreen(fileId: Long, itemId: Long, startS: Double, tapMs: Long = 0) {
+    val timing = remember(tapMs) { StartupTiming.begin(vod = false, tapMs = tapMs)?.apply { mark(StartupTiming.Stage.route) } }
+    DisposableEffect(timing) { onDispose { timing?.finish(StartupTiming.Outcome.canceled) } }
     val graph = LocalAppGraph.current
     val api = graph.session.api ?: return
     // The item gives the title, the duration (5-s rule) and the season (next episode).
@@ -128,6 +130,7 @@ fun PlayerScreen(fileId: Long, itemId: Long, startS: Double) {
                 durationS = item?.files?.firstOrNull { it.id == fileId }?.durationS,
                 startS = startS,
                 initialQuality = q,
+                startup = timing,
             )
         }
     }
@@ -150,6 +153,7 @@ fun VodPlayer(
     heading: String? = null,
     /** The device's default quality (`AppGraph.devicePrefs`). */
     initialQuality: String = "auto",
+    startup: StartupTiming? = null,
 ) {
     val graph = LocalAppGraph.current
     val context = LocalContext.current
@@ -167,6 +171,8 @@ fun VodPlayer(
             now = SystemClock::elapsedRealtime,
             knownDurationS = durationS,
             initialQuality = initialQuality,
+            startup = startup,
+            newTiming = { StartupTiming.begin(vod = !nextEnabled) },
         )
     }
     DisposableEffect(controller) {
@@ -206,10 +212,11 @@ fun VodPlayer(
     }
     val playNext: () -> Unit = {
         nextEp?.let { n ->
+            val tap = StartupTiming.tap()
             scope.launch {
                 val nd = runCatching { api.get<ItemDetail>("/items/${n.id}") }.getOrNull() ?: return@launch
                 val f = nd.files.firstOrNull() ?: return@launch
-                nav.navigate(Routes.player(f.id, nd.id, resumePositionS(nd))) {
+                nav.navigate(Routes.player(f.id, nd.id, resumePositionS(nd), tap)) {
                     popUpTo(Routes.PLAYER) { inclusive = true }
                 }
             }

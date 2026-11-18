@@ -66,6 +66,8 @@ class VodController(
     private val knownDurationS: Double? = null,
     private val progressEveryMs: Long = PROGRESS_EVERY_MS,
     initialQuality: String = "auto",
+    private var startup: StartupTiming? = null,
+    private val newTiming: () -> StartupTiming? = { null },
 ) : PlayerListener {
     private val outer = scope
     private val jobs = SupervisorJob(scope.coroutineContext[Job])
@@ -104,7 +106,7 @@ class VodController(
     fun start(atS: Double) {
         val dur = knownDurationS
         val at = if (atS > 0 && dur != null && dur > 0 && atS >= dur - END_SLACK_S) 0.0 else atS.coerceAtLeast(0.0)
-        reopen(at)
+        reopen(at, startup.also { startup = null })
     }
 
     /** *Try again* after an error. */
@@ -112,8 +114,13 @@ class VodController(
 
     private fun currentOr(fallback: Double): Double = positionS.takeIf { it > 0 && _state.value.session != null } ?: fallback
 
-    private fun reopen(at: Double) {
+    private var timing: StartupTiming? = null
+
+    private fun reopen(at: Double, initial: StartupTiming? = null) {
         if (closed) return
+        timing?.finish(StartupTiming.Outcome.superseded)
+        val trace = initial ?: newTiming()
+        timing = trace
         openJob?.cancel()
         gone = false
         startAt = at
@@ -124,6 +131,7 @@ class VodController(
         _state.update { it.copy(error = null, loading = true, ended = false) }
         openJob = cs.launch {
             val s = _state.value
+            trace?.mark(StartupTiming.Stage.decide)
             val d = try {
                 source.open(
                     OpenRequest(
@@ -136,6 +144,7 @@ class VodController(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                trace?.finish(StartupTiming.Outcome.failed)
                 _state.update { it.copy(loading = false, recovering = null, error = source.errorFor(e)) }
                 return@launch
             }
@@ -143,11 +152,12 @@ class VodController(
                 outer.launch { stopQuietly(d.sessionId) }
                 return@launch
             }
-            loaded(d, at)
+            trace?.decided(d.decision.mode.ifEmpty { d.mode })
+            loaded(d, at, trace)
         }
     }
 
-    private fun loaded(d: DecideResponse, at: Double) {
+    private fun loaded(d: DecideResponse, at: Double, trace: StartupTiming?) {
         val firstAnswer = !subChosen
         subChosen = true
         _state.update { st ->
@@ -161,6 +171,7 @@ class VodController(
         player.load(
             PlayItem(
                 url = resolve(d.url),
+                startup = trace,
                 mimeType = if (d.isHls) PlayItem.MIME_HLS else null,
                 startMs = (at * 1000).toLong(),
                 // Paused by the viewer (a reopened session, a track change): load, but stay paused (#100).
@@ -329,6 +340,7 @@ class VodController(
     fun close() {
         if (closed) return
         endSession()
+        timing?.finish(StartupTiming.Outcome.canceled)
         closed = true
         jobs.cancel()
         player.listener = null

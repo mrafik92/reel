@@ -85,8 +85,8 @@ class ItemLogicTest {
     @Test
     fun playerRouteCarriesItsArguments() {
         // The contract with the player (#190): Player(fileId: Long, itemId: Long, startS: Double).
-        assertEquals("player/{fileId}/{itemId}/{startS}", Routes.PLAYER)
-        assertEquals("player/9/42/600.5", Routes.player(9, 42, 600.5))
+        assertEquals("player/{fileId}/{itemId}/{startS}?tap={tap}", Routes.PLAYER)
+        assertEquals("player/9/42/600.5", Routes.player(9, 42, 600.5, 0))
     }
 
     @Test
