@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The error panel retries when a network comes back (#228). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Phone first (#225). The Leanback launcher entry and banner wait for the D-pad check (#231);
          until then the APK is sideloaded on the Android TV emulator for that check. -->
