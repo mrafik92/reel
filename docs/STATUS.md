@@ -6,7 +6,7 @@ Live build: **`1a39b38`** (2026-11-15) on CT 113 → https://reel.rafikii.co (LA
 
 Android shared visuals and TV focus (#209), and portrait phone Home (#212), are built and checked on emulators with mock data. Physical-device verification remains pending.
 
-Reel Web for Android (epic #225), a WebView client next to the Compose app, has its shell built (#226): checked on an Android 15 phone emulator against the live server (setup, sign-in kept across a force stop, Search → title → Back, external links, TLS refusal, error screens). Not on a real phone yet, no release, and playback in WebView is only smoke-tested (#230).
+Reel Web for Android (epic #225), a WebView client next to the Compose app, has its shell built (#226) and Back, full screen and insets (#227): checked on an Android 15 phone emulator against the live server (setup, sign-in kept across a force stop, Search → title → Back, external links, TLS refusal, error screens) and a dev build of the web app (full screen, Back order, rotation, keyboard). The web half of #227 (Search scroll and focus on return, Back on the sign-in page) reaches the live server with the next deploy. Not on a real phone yet, no release, and playback in WebView is only smoke-tested (#230).
 
 ## What's verified on real hardware and data
 
@@ -33,7 +33,7 @@ Reel Web for Android (epic #225), a WebView client next to the Compose app, has 
 - **Crimson + cream retheme** (#177): built and checked in mock mode (desktop + 1920×1080 TV); not yet deployed or checked live.
 - **YouTube-style click** (#183): a mouse click plays/pauses (double-click = full screen, undoing it); a touch tap shows the controls and a double-tap on a side seeks ±10 s, adding up. Checked with Playwright in mock mode (mouse 1280×800, touch 390×844, 1920×1080 TV with arrow keys); not yet deployed or checked on a real phone.
 - **Phone bottom bar** (#180): five tabs + More (sheet with the rest); the inverted rail focus is keyboard/TV only, so a tapped tab no longer stays dark. Checked with Playwright (touch emulation at 360/390/430 px, desktop, 1920×1080 TV with arrow keys) in mock mode and against the live API from a dev build; not yet deployed or checked on a real phone. `viewport-fit=cover` is new: iPhone landscape (player, Live TV) needs a look on the device.
-- **Reel Web for Android** (#226): the WebView shell, checked on a phone emulator against the live server only. Known gaps for #227/#228: an unroutable address shows a blank page until Chromium's own connect timeout; returning to Search reopens the keyboard; full screen isn't wired yet.
+- **Reel Web for Android** (#226, #227): the WebView shell, Back order and full-screen video, checked on a phone emulator only (live server, and mock data from a dev build for #227). Known gap for #228: an unroutable address shows a blank page until Chromium's own connect timeout. A reported black bottom half after hiding the keyboard didn't reproduce on the emulator.
 - **webOS/Tizen apps:** never installed on a TV. Packaging CLIs aren't installed; the Tizen package id is a placeholder.
 - **Casting:** AirPlay and Chromecast never tested with devices. **DLNA** needs the TV IPs + a CT 113 firewall rule.
 - **IPTV VOD remux/transcode playback** through the upstream proxy (#3; direct play is verified, remux seek is broken on `65bd851`, fix built: #92). Reviewed in code and
