@@ -7,6 +7,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.testTag
@@ -96,6 +100,33 @@ class FocusKitTest {
         rule.waitForIdle()
         rule.onNodeWithTag("card2").assertIsFocused()
         rule.onNodeWithTag("card0").assertIsNotFocused()
+    }
+
+    @Test
+    fun missingSavedItemRestoresNearestInSameRow() {
+        var showMiddle by mutableStateOf(true)
+        lateinit var memory: app.reel.android.ui.tv.FocusMemory
+        rule.setContent {
+            CompositionLocalProvider(LocalDeviceKind provides DeviceKind.Tv) {
+                memory = rememberFocusMemory()
+                RestoreFocus(memory)
+                Row {
+                    listOf(0, 1, 2, 3).filter { it != 2 || showMiddle }.forEach { item ->
+                        FocusCard(
+                            onClick = {},
+                            modifier = Modifier.size(100.dp).focusMemory(memory, "row/$item").testTag("item$item"),
+                        ) { Text("Item $item") }
+                    }
+                }
+            }
+        }
+        rule.onNodeWithTag("item0").performKeyInput { pressKey(Key.DirectionRight) }
+        rule.onNodeWithTag("item1").performKeyInput { pressKey(Key.DirectionRight) }
+        rule.onNodeWithTag("item2").assertIsFocused()
+        rule.runOnIdle { showMiddle = false }
+        rule.waitForIdle()
+        rule.runOnIdle { memory.restore() }
+        rule.onNodeWithTag("item1").assertIsFocused()
     }
 
     @Test

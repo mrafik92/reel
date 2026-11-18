@@ -16,6 +16,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.progressSemantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -24,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import app.reel.android.DeviceKind
 import app.reel.android.LocalDeviceKind
 import app.reel.android.ui.theme.ReelColors
+import app.reel.android.ui.theme.ReelDimensions
 import app.reel.android.ui.tv.FocusCard
 
 /** Card widths per device kind (TV is read from across the room). */
@@ -49,7 +51,7 @@ fun PosterCard(
     Column(modifier.width(CardSize.poster())) {
         FocusCard(onClick = onClick, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)) {
             ReelImage(imageUrl, contentDescription = title, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f))
-            if (played) WatchedBadge() else ProgressBar(progress)
+            if (played) WatchedBadge() else WatchProgress(progress, Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 4.dp))
         }
         CardCaption(title, subtitle)
     }
@@ -69,7 +71,7 @@ fun LandscapeCard(
     Column(modifier.width(CardSize.landscape())) {
         FocusCard(onClick = onClick, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
             ReelImage(imageUrl, contentDescription = title, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-            if (played) WatchedBadge() else ProgressBar(progress)
+            if (played) WatchedBadge() else WatchProgress(progress, Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 4.dp))
         }
         CardCaption(title, subtitle)
     }
@@ -86,12 +88,15 @@ private fun androidx.compose.foundation.layout.BoxScope.WatchedBadge() {
     }
 }
 
+/** A compact, accessible playback progress track. Null, non-finite and zero values are hidden. */
 @Composable
-private fun androidx.compose.foundation.layout.BoxScope.ProgressBar(progress: Double?) {
-    val p = progress?.toFloat()?.coerceIn(0f, 1f) ?: return
-    if (p <= 0f) return
-    Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(ReelColors.Bg.copy(alpha = 0.6f)))
-    Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(p).height(4.dp).background(ReelColors.Accent))
+fun WatchProgress(progress: Double?, modifier: Modifier = Modifier) {
+    val fraction = progress?.takeIf { it.isFinite() }?.coerceIn(0.0, 1.0)?.toFloat() ?: return
+    if (fraction == 0f) return
+    Box(modifier.height(ReelDimensions.ProgressHeight).progressSemantics(fraction)
+        .background(ReelColors.Bg.copy(alpha = 0.8f))) {
+        Box(Modifier.fillMaxWidth(fraction).height(ReelDimensions.ProgressHeight).background(ReelColors.AccentHi))
+    }
 }
 
 @Composable
