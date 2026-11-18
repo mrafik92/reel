@@ -1,4 +1,5 @@
 import "./lib/startupTiming";
+import { rememberPoster } from "./lib/posterMotion";
 import { render } from "solid-js/web";
 import { lazy } from "solid-js";
 import { HashRouter, Route, Router } from "@solidjs/router";
@@ -61,6 +62,8 @@ function Routes() {
     </>
   );
 }
+
+document.addEventListener("click", rememberPoster, true);
 
 const R = HASH_ROUTING ? HashRouter : Router;
 render(() => <R root={Shell}>{Routes()}</R>, document.getElementById("root")!);

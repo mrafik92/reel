@@ -2,6 +2,8 @@ import { createEffect, onCleanup, onMount } from "solid-js";
 import { useLocation } from "@solidjs/router";
 import { focusById, focusFirst, isTvMode } from "@reel/ui";
 
+import { returnPoster } from "./posterMotion";
+
 interface Saved {
   fid?: string;
   y: number;
@@ -71,6 +73,7 @@ export function usePageFocus(ready: () => boolean, container?: () => HTMLElement
           // Focusing brings the card into view in its row. On TV it also re-anchors the page; with
           // touch or a mouse the page goes back to exactly where it was.
           if (!isTvMode()) window.scrollTo(0, s.y);
+          returnPoster();
           return;
         }
         if (opts.focusFirst && !opts.focusFirst()) return;

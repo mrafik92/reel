@@ -1265,3 +1265,38 @@ html.tv .player__fs {
     grid-template-columns: 1fr;
   }
 }
+
+@media (min-width: 960px) {
+  .detail__hero--poster {
+    position: relative;
+    box-sizing: border-box;
+    max-width: 84rem;
+    padding-right: calc(12rem + 2 * var(--gutter));
+  }
+  .detail__poster {
+    position: absolute;
+    right: var(--gutter);
+    bottom: 1.6rem;
+    width: 12rem;
+    height: 18rem;
+    border-radius: 0.45rem;
+    overflow: hidden;
+  }
+  .detail__poster .img {
+    width: 100%;
+    height: 100%;
+  }
+}
+@media (max-width: 959px) {
+  .detail__poster { display: none; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .detail__title {
+    animation: detail-title-in 220ms var(--ease-out) both;
+  }
+}
+@keyframes detail-title-in {
+  from { opacity: 0; transform: translateY(0.35rem); }
+  to { opacity: 1; transform: none; }
+}

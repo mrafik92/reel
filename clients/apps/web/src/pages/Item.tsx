@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show, type JSX } from "solid-js";
-import { useNavigate, useParams } from "@solidjs/router";
+import { useBeforeLeave, useNavigate, useParams } from "@solidjs/router";
 import {
   Backdrop, Icon, Img, PosterCard, Row, Sheet,
   audioLabel, codecName, channelsLabel, episodeCode, fileTags, formatBytes, formatRemaining, formatRuntime,
@@ -21,6 +21,8 @@ import { RatingsStrip, ReviewsSection, useReviews } from "../components/Reviews"
 import { CastTile } from "../components/Cast";
 import { href } from "../lib/mode";
 import { itemActivity } from "../lib/downloads";
+
+import { enterPoster, leavePoster } from "../lib/posterMotion";
 
 type Picker = "audio" | "sub" | "version" | "cast" | null;
 /** Sheet value for "Automatic" (use my playback settings). */
@@ -57,6 +59,8 @@ export default function Item(): JSX.Element {
 }
 
 function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Element {
+  let poster: HTMLDivElement | undefined;
+  useBeforeLeave(() => leavePoster(poster, props.item.id));
   const it = () => props.item;
   const isShow = () => it().kind === "show" || it().kind === "season";
 
@@ -187,7 +191,15 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
 
   return (
     <>
-      <section class="detail__hero" data-nav-anchor style={{ "--nav-anchor-top": "0px" }}>
+      <section class="detail__hero" classList={{ "detail__hero--poster": !!it().poster_url }} data-nav-anchor style={{ "--nav-anchor-top": "0px" }}>
+        <Show when={it().poster_url}>
+          <div class="detail__poster" ref={(el) => {
+            poster = el;
+            el.addEventListener("load", () => enterPoster(el), true);
+          }} aria-hidden="true">
+            <Img src={it().poster_url} width={342} eager />
+          </div>
+        </Show>
         <p class="eyebrow">
           {it().kind === "show" ? "Series" : it().kind === "season" ? "Season" : it().kind === "episode" ? episodeCode(it()) : "Film"}
         </p>
