@@ -18,6 +18,7 @@ import {
   StallCounter, bandwidthEstimate, capEstimate, isAdaptive, probeDue, probeThroughput, recordThroughput, variantOf, variantSelect,
 } from "../lib/abr";
 import { audioQuickSave, previewSelection, subtitleQuickSave, type QuickSave } from "../lib/tracks";
+import { nativeAudioChoice } from "../lib/nativeAudio";
 import { loadPrefs, playbackPrefs, prefsSupported, updatePrefs } from "../lib/prefs";
 import {
   castFor, onCastEnd, startCast, stopCast, type CastOpen, type CastSource, type CastStream, type CastTarget, type CastTrack,
@@ -415,9 +416,22 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
       setBuffering(false);
     }
     attachTracks(a, d.subtitles);
-    if (a.getTracks) setNativeTracks(a.getTracks());
+    if (a.getTracks) syncNativeAudio(a, a.getTracks());
     applySubtitle(d);
   };
+
+  let applyingNativeAudio = false;
+  function syncNativeAudio(a: PlayerAdapter, tracks: PlayerTracks): void {
+    if (a !== adapter) return;
+    setNativeTracks(tracks);
+    const d = session();
+    if (!d || !a.selectAudioTrack || applyingNativeAudio) return;
+    const id = nativeAudioChoice(d.mode, d.decision.audio.type, d.audio, audio(), tracks.audio);
+    if (id) {
+      applyingNativeAudio = true;
+      try { a.selectAudioTrack(id); } finally { applyingNativeAudio = false; }
+    }
+  }
 
   function wire(a: PlayerAdapter, startAt: number): void {
     let first = true;
@@ -474,7 +488,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
       }),
       // Tizen AVPlay can't show <track>s: the adapter emits cues and we draw them.
       a.on("cue", (c) => setCueHtml(c.text ? cueToHtml(c.text) : "")),
-      a.on("tracks", (t) => setNativeTracks(t)),
+      a.on("tracks", (t) => syncNativeAudio(a, t)),
       a.on("recovering", (r) => setRecovering(r ? r.reason : undefined)),
       a.on("error", (e) => {
         if (e.fatal) {
