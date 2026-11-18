@@ -30,10 +30,9 @@ const NAV: NavItem[] = [
   { path: "/movies", label: "Movies", icon: "film", match: (p) => p.indexOf("/movies") === 0 },
   { path: "/shows", label: "Shows", icon: "tv", match: (p) => p.indexOf("/shows") === 0 },
   { path: "/discover", label: "Discover", icon: "compass", match: (p) => p.indexOf("/discover") === 0, more: true },
+  { path: "/live", label: "Live TV", icon: "live", match: (p) => p.indexOf("/live") === 0 },
   { path: "/requests", label: "Requests", icon: "inbox", match: (p) => p.indexOf("/requests") === 0, more: true },
   { path: "/downloads", label: "Downloads", icon: "download", match: (p) => p.indexOf("/downloads") === 0, more: true },
-  // Next: Live TV (IPTV guide + zapping). Flip `hidden` when the route lands.
-  { path: "/live", label: "Live TV", icon: "live", match: (p) => p.indexOf("/live") === 0 },
 ];
 
 /** Pages behind the phone bar's More tab that aren't NAV items (they live in the rail's foot). */
