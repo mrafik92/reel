@@ -123,7 +123,10 @@ export default function Search(): JSX.Element {
     if (s.trim()) rememberSearch(s.trim());
   };
 
-  usePageFocus(() => true, () => el);
+  // Back from a title: restore the scroll position and the result that was opened once the query's
+  // results are back (the page needs its full height first). Without a saved result, only TV focuses
+  // the box: on a phone that would open the keyboard over the results (#227).
+  usePageFocus(() => !initial || !!full() || !!error(), () => el, { focusFirst: () => tv || !initial });
   onMount(() => {
     if (initial) {
       runQuick(initial);

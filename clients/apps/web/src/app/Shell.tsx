@@ -78,9 +78,11 @@ export function Shell(props: ParentProps): JSX.Element {
   onMount(() => {
     void bootstrap();
     const offAuth = onAuthChange((u) => (u ? connectEvents() : disconnectEvents()));
-    // Default Back: up one level; on Home, let the platform handle exit.
+    // Default Back: up one level. On Home, and on sign-in/setup while signed out (where "up" only
+    // redirects back to the same page), let the platform handle it: TVs and Reel Web for Android
+    // leave the app (#227).
     const off = onBack(() => {
-      if (loc.pathname === "/") return false;
+      if (loc.pathname === "/" || (isPublic() && authStatus() !== "authed")) return false;
       if (window.history.length > 1) window.history.back();
       else navigate("/");
       return true;
