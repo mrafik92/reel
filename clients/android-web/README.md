@@ -39,7 +39,8 @@ Links to other sites open in your browser. Servers with certificate errors are r
 
 Back works like the web app's Back key: it leaves full-screen video first, then closes an open sheet or
 menu, then goes to the previous page. On Home and on the sign-in page, Back leaves the app. Full-screen video
-turns the phone to landscape and hides the system bars until you leave full screen.
+turns the phone to landscape and hides the system bars until you leave full screen. Media keys and a wired
+headset's button play and pause the video while the app is open.
 
 ## Debugging
 
