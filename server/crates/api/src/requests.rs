@@ -798,6 +798,9 @@ pub async fn arr_webhook(
             Ok(s) => {
                 ingested |= s.scanned > 0;
                 scanned.push(p.clone());
+                if outcome.imported_paths.contains(p) {
+                    st.schedule_import_scans(path.clone()).await;
+                }
             }
             Err(reel_core::Error::NotFound) => {
                 tracing::warn!(path = %p, "webhook path is not inside any library");

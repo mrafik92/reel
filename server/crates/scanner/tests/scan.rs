@@ -245,6 +245,25 @@ async fn scan_movies_and_shows() {
         1
     );
 
+    // Late numbered sidecar is picked up without probing the unchanged video.
+    std::fs::write(m1.with_extension("eng.0.srt"), "late subtitle").unwrap();
+    let s = scanner.reconcile_library(&pool, ml).await.unwrap();
+    assert_eq!((s.unchanged, s.updated, s.removed), (2, 0, 0));
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM streams WHERE language='eng' AND external_path LIKE '%.eng.0.srt'"
+        )
+        .await,
+        1
+    );
+    // A missing file under a still-present root is retained during reconciliation.
+    std::fs::remove_file(&m2).unwrap();
+    let s = scanner.reconcile_library(&pool, ml).await.unwrap();
+    assert_eq!(s.removed, 0);
+    let s = scanner.reconcile_path(&pool, &m2).await.unwrap();
+    assert_eq!(s.removed, 0);
+
     // Missing library root must not delete anything.
     std::fs::remove_dir_all(&movies).unwrap();
     let s = scanner.scan_library(&pool, ml).await.unwrap();
