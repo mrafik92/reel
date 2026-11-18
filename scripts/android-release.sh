@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Local signed Android release (#232): GitHub Actions is unavailable, so release APKs for both Android apps
+# Local signed Android release (#232): GitHub Actions is unavailable, so release APKs of Reel Web for Android
 # are built on the Mac, then optionally sent to the phone with Taildrop and/or attached to a GitHub release.
+# `web` is the only app: the Compose app (`compose`, `android-v*` tags) was removed in #260.
 #
-#   scripts/android-release.sh web|compose [--version X.Y.Z] [--taildrop] [--taildrop-target NAME]
-#                                          [--github-release] [--dry-run]
+#   scripts/android-release.sh web [--version X.Y.Z] [--taildrop] [--taildrop-target NAME]
+#                                  [--github-release] [--dry-run]
 #
-# Docs: clients/android-web/README.md and clients/android/README.md ("Release builds"), docs/OPERATIONS.md.
+# Docs: clients/android-web/README.md ("Release builds"), docs/OPERATIONS.md.
 # Written for macOS's /bin/bash 3.2: no associative arrays, no ${x,,}, no empty "${arr[@]}" under set -u.
 #
 # Passwords never go on disk, into argv or into the log. They come from, in this order:
@@ -18,13 +19,13 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-VERSION_SCRIPT="$REPO_ROOT/clients/android/scripts/version-from-tag.sh"
+VERSION_SCRIPT="$REPO_ROOT/clients/android-web/scripts/version-from-tag.sh"
 DIST_DIR=${REEL_DIST_DIR:-"$REPO_ROOT/dist"}
 GH_REPO=${REEL_GH_REPO:-mrafik92/reel}
 KEYCHAIN_SERVICE=${REEL_KEYCHAIN_SERVICE:-reel-android-keystore}
 TAILSCALE_BIN=${TAILSCALE_BIN:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}
-# SHA-256 of the release certificate (CN=Reel, O=Reel) that signed android-v0.1.0..0.3.0. Public: every APK
-# carries it. An APK signed by any other key can't update the installed apps.
+# SHA-256 of the release certificate (CN=Reel, O=Reel) that signs every Reel Web release. Public: every APK
+# carries it. An APK signed by any other key can't update the installed app.
 RELEASE_CERT_SHA256=${REEL_RELEASE_CERT_SHA256:-a48654758e7b9b85a5825e7f7a55bfebc8b2d5370691d7d056124ee4c9a58ecb}
 
 # Exit codes
@@ -34,18 +35,18 @@ EXIT_TAILDROP_UNDELIVERED=3   # the APK was built (and released, if asked) but t
 
 usage() {
   cat <<'EOF'
-Usage: scripts/android-release.sh web|compose [options]
+Usage: scripts/android-release.sh web [options]
 
-Builds a signed, R8-shrunk release APK of Reel Web (web: clients/android-web) or the Compose app
-(compose: clients/android). Runs lint and unit tests first, verifies the signature against the release
-key, and writes dist/ReelWeb-X.Y.Z.apk or dist/Reel-X.Y.Z.apk with a .sha256 next to it.
+Builds a signed, R8-shrunk release APK of Reel Web for Android (clients/android-web). Runs lint and unit
+tests first, verifies the signature against the release key, and writes dist/ReelWeb-X.Y.Z.apk with a
+.sha256 next to it.
 
 Options:
   --version X.Y.Z        Version to build. Default: the next patch after the app's newest release tag
-                         (android-web-v* for web, android-v* for compose; tags are fetched from origin).
+                         (android-web-v*; tags are fetched from origin).
   --taildrop             Send the APK to the phone with Taildrop afterwards.
   --taildrop-target NAME Taildrop device (default: $REEL_TAILDROP_TARGET or rafiiiki). Implies --taildrop.
-  --github-release       Tag HEAD (android-web-vX.Y.Z / android-vX.Y.Z), push the tag and create a GitHub
+  --github-release       Tag HEAD (android-web-vX.Y.Z), push the tag and create a GitHub
                          release with the APK and its .sha256 (gh release create; works without Actions).
                          Needs a clean tree, HEAD on origin/main and a tag that doesn't exist yet.
   --dry-run              Build for real, but only print the Taildrop and GitHub commands.
@@ -61,7 +62,7 @@ Signing (passwords are never written anywhere):
                          (service reel-android-keystore, account = alias), else a hidden prompt
   REEL_KEY_PASSWORD      key password (default: the keystore password)
   A key whose certificate isn't the Reel release certificate gets a warning (its APK can't update the
-  installed apps); --github-release refuses it. REEL_RELEASE_CERT_SHA256 overrides the expected digest.
+  installed app); --github-release refuses it. REEL_RELEASE_CERT_SHA256 overrides the expected digest.
 
 Exit codes: 0 done, 1 error, 2 usage, 3 built but Taildrop couldn't deliver (phone offline).
 EOF
@@ -83,7 +84,7 @@ quote_cmd() {
 
 # --- app and version ------------------------------------------------------------------------------------
 
-# Sets APP_DIR, APP_ID, TAG_PREFIX, APK_BASENAME, RELEASE_TITLE_PREFIX for `web` or `compose`.
+# Sets APP_DIR, APP_ID, TAG_PREFIX, APK_BASENAME, RELEASE_TITLE_PREFIX for `web` (the only app since #260).
 app_config() {
   case "$1" in
     web)
@@ -92,14 +93,6 @@ app_config() {
       TAG_PREFIX=android-web-v
       APK_BASENAME=ReelWeb
       RELEASE_TITLE_PREFIX="Reel Web"
-      ;;
-    compose)
-      APP_DIR="$REPO_ROOT/clients/android"
-      APP_ID=app.reel.android
-      TAG_PREFIX=android-v
-      APK_BASENAME=Reel
-      # Same title as the releases android-release.yml made (Obtainium filters on it).
-      RELEASE_TITLE_PREFIX="Android"
       ;;
     *) return 1 ;;
   esac
@@ -113,7 +106,7 @@ version_code() {
 }
 
 # Newest tag (by versionCode) among the tag names on stdin that match PREFIX exactly; prints nothing if none.
-# `android-v*` never matches `android-web-v*` tags and vice versa, so the two apps' versions stay apart.
+# The Compose app's old `android-v*` tags don't match `android-web-v` and are ignored.
 newest_tag() {
   local prefix=$1 tag code best="" best_code=0
   while IFS= read -r tag; do
@@ -311,7 +304,7 @@ find_java_home() {
       return 0
     fi
   done
-  echo "error: no JDK 17–21 found (set JAVA_HOME; see clients/android/README.md)" >&2
+  echo "error: no JDK 17–21 found (set JAVA_HOME; see clients/android-web/README.md)" >&2
   return 1
 }
 
@@ -322,7 +315,7 @@ find_sdk() {
     /opt/homebrew/share/android-commandlinetools "$HOME/Library/Android/sdk"; do
     [[ -n "$c" && -d "$c/build-tools" ]] && { echo "$c"; return 0; }
   done
-  echo "error: no Android SDK found (set ANDROID_HOME; see clients/android/README.md)" >&2
+  echo "error: no Android SDK found (set ANDROID_HOME; see clients/android-web/README.md)" >&2
   return 1
 }
 
@@ -342,7 +335,7 @@ main() {
   local app="" version="" taildrop=0 target=${REEL_TAILDROP_TARGET:-rafiiiki} gh_release=0 dry=0
   while (($#)); do
     case "$1" in
-      web | compose) [[ -z "$app" ]] || { usage >&2; exit "$EXIT_USAGE"; }; app=$1 ;;
+      web) [[ -z "$app" ]] || { usage >&2; exit "$EXIT_USAGE"; }; app=$1 ;;
       --version) [[ $# -ge 2 ]] || { usage >&2; exit "$EXIT_USAGE"; }; version=${2#v}; shift ;;
       --version=*) version=${1#--version=}; version=${version#v} ;;
       --taildrop) taildrop=1 ;;
@@ -460,12 +453,7 @@ main() {
   if ((gh_release)); then
     step "GitHub release $tag"
     local notes
-    if [[ "$app" == web ]]; then
-      notes="Reel Web $version (versionCode $code), package $APP_ID. Installs next to the Compose app."
-    else
-      notes="Reel for Android $version (versionCode $code), package $APP_ID. One APK for phones and Android TV."
-    fi
-    notes+="
+    notes="Reel Web for Android $version (versionCode $code), package $APP_ID. One APK for phones and Android TV.
 Built locally (scripts/android-release.sh) from $rev and signed with the Reel release key, certificate SHA-256 $cert.
 APK SHA-256: $sha ($name.sha256)."
     github_release "$tag" "$RELEASE_TITLE_PREFIX $version" "$notes" "$dry" "$out" "$out.sha256" || exit "$EXIT_ERROR"
