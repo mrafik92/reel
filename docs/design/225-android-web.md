@@ -149,6 +149,13 @@ controls.
 
 Still open: the setup screen's keyboard (native, unchanged) on a small phone, and a real phone.
 
+**App feel** (#250): WebView's page-like defaults are off: the stretch overscroll (Android 12+ stretched the
+whole WebView, the fixed bottom bar included), the native scrollbar (drawn over the bottom bar), pinch and
+double-tap zoom (`setSupportZoom(false)`), and long-press text selection outside text fields (the long-press is
+consumed, without a haptic). The web app's own scroll containers and inputs are unchanged. Checked on the phone
+emulator: no scrollbar on load, no stretch when over-swiping at the end of a long title page. A real two-finger
+pinch can't be sent on the emulator, so zoom is checked on the phone only.
+
 ## 6. Recovery (#228)
 
 Built (🧪, ARCHITECTURE A66; Android 15 phone emulator, WebView 124, the live server and a dev build of the web app).
