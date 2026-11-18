@@ -291,18 +291,23 @@ impl Ingest {
                 .filter(|a| *a > 0);
             let rating = rating_of(it);
             let tmdb = tmdb_of(it);
+            let genres = it
+                .get("genre")
+                .and_then(flex_str)
+                .and_then(|g| genres_of(&g));
             if kind == "movie" {
                 let container = it.get("container_extension").and_then(flex_str);
                 sqlx::query(&format!(
                     "INSERT INTO vod_movies (source_id, stream_id, category_id, title, title_norm, year, \
-                     rating, poster, container, added_at, tmdb_id) VALUES (?,?,?,?,?,?,?,?,?,?,?) \
+                     rating, poster, container, added_at, tmdb_id, genres) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) \
                      ON CONFLICT(source_id, {idcol}) DO UPDATE SET category_id = excluded.category_id, \
                      title = excluded.title, title_norm = excluded.title_norm, \
                      year = COALESCE(excluded.year, year), rating = COALESCE(excluded.rating, rating), \
                      poster = COALESCE(excluded.poster, poster), \
                      container = COALESCE(excluded.container, container), \
                      added_at = COALESCE(excluded.added_at, added_at), \
-                     tmdb_id = COALESCE(excluded.tmdb_id, tmdb_id), missing = 0"
+                     tmdb_id = COALESCE(excluded.tmdb_id, tmdb_id), \
+                     genres = COALESCE(excluded.genres, genres), missing = 0"
                 ))
                 .bind(src.id)
                 .bind(ext_id)
@@ -315,13 +320,10 @@ impl Ingest {
                 .bind(&container)
                 .bind(added)
                 .bind(tmdb)
+                .bind(genres)
                 .execute(&mut *tx)
                 .await?;
             } else {
-                let genres = it
-                    .get("genre")
-                    .and_then(flex_str)
-                    .and_then(|g| genres_of(&g));
                 let backdrop = first_image(it, "backdrop_path");
                 sqlx::query(&format!(
                     "INSERT INTO vod_series (source_id, series_id, category_id, title, title_norm, year, \

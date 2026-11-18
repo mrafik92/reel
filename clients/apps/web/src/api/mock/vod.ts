@@ -351,6 +351,9 @@ export function mockVod(): VodApi {
       await latency();
       return (type === "movie" ? db.movieCats : db.seriesCats).map((c) => ({ ...c }));
     },
+    async genres(type) {
+      return [...new Set(pool(type).flatMap((item) => item.genres ?? []))].sort();
+    },
     async list(type, q) {
       await latency();
       const n = q.q ? fold(q.q.trim()) : "";

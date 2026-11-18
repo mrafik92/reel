@@ -2640,7 +2640,7 @@ html[data-input="pointer"] .chcard:focus:not(:hover) .chcard__now {
 html.tv .live--rows {
   padding-top: 1.6rem;
 }
-html.tv .live--rows .live__screen {
+html.tv .live--rows:not(.is-full) .live__screen {
   width: calc((100vh - 23rem) * 16 / 9);
 }
 html.tv .live--rows .nowp__desc {

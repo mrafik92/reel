@@ -130,12 +130,44 @@ impl Scanner {
                 max_depth: None,
             })
             .collect();
-        self.scan_scopes(pool, &lib, scopes, false).await
+        self.scan_scopes(pool, &lib, scopes, false, true).await
+    }
+
+    /// Refresh a library without removing missing media; network mounts can disappear silently.
+    pub async fn reconcile_library(
+        &self,
+        pool: &SqlitePool,
+        library_id: i64,
+    ) -> Result<ScanSummary> {
+        let lib = load_library(pool, library_id).await?;
+        let scopes = lib
+            .roots
+            .iter()
+            .map(|r| Scope {
+                path: r.clone(),
+                max_depth: None,
+            })
+            .collect();
+        self.scan_scopes(pool, &lib, scopes, false, false).await
     }
 
     /// Targeted rescan of a file or directory (also handles deletions).
     /// Errors with `NotFound` if no library contains `path`.
     pub async fn scan_path(&self, pool: &SqlitePool, path: &Path) -> Result<ScanSummary> {
+        self.scan_path_inner(pool, path, true).await
+    }
+
+    /// Refresh an imported path without deleting missing media.
+    pub async fn reconcile_path(&self, pool: &SqlitePool, path: &Path) -> Result<ScanSummary> {
+        self.scan_path_inner(pool, path, false).await
+    }
+
+    async fn scan_path_inner(
+        &self,
+        pool: &SqlitePool,
+        path: &Path,
+        remove_missing: bool,
+    ) -> Result<ScanSummary> {
         let libs = load_libraries(pool).await?;
         let lib = libs
             .into_iter()
@@ -164,7 +196,8 @@ impl Scanner {
         }
         // Targeted rescans come from watcher events: a vanished file may be half of a rename whose
         // other half arrives as a separate event, so removal of its item is deferred briefly.
-        self.scan_scopes(pool, &lib, scopes, true).await
+        self.scan_scopes(pool, &lib, scopes, true, remove_missing)
+            .await
     }
 
     fn emit(&self, library_id: i64, scanned: u64, total: u64) {
@@ -183,6 +216,7 @@ impl Scanner {
         lib: &Library,
         scopes: Vec<Scope>,
         defer_removals: bool,
+        remove_missing: bool,
     ) -> Result<ScanSummary> {
         let _guard = self.lock.lock().await;
         let mut summary = ScanSummary::default();
@@ -385,7 +419,7 @@ impl Scanner {
                 continue;
             }
             let p = Path::new(path);
-            if active.iter().any(|s| s.contains(p)) {
+            if remove_missing && active.iter().any(|s| s.contains(p)) {
                 // Not seen as a video: gone, or no longer classified as one. Remember it briefly
                 // so a "new file" event for the same content can claim the item.
                 if let Some(t) = if defer_removals && !self.rename_window.is_zero() {
