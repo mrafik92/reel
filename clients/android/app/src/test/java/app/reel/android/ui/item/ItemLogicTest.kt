@@ -45,6 +45,14 @@ class ItemLogicTest {
     }
 
     @Test
+    fun nextUpSkipsFinishedProgressAndLabelsThePlaybackTarget() {
+        assertEquals(2L, ItemLogic.nextUp(listOf(ep(1, progress = 0.98), ep(2)))?.id)
+        assertEquals("Resume S2 · E4 · 18 min left", ItemLogic.playLabel(900.0, "S2 · E4", "18 min left"))
+        assertEquals("Play S2 · E4", ItemLogic.playLabel(0.0, "S2 · E4"))
+        assertEquals("Resume from 15:00", ItemLogic.playLabel(900.0))
+    }
+
+    @Test
     fun metaLine() {
         val movie = ItemDetail(
             1, "movie", "M", year = 2010, contentRating = "PG-13", rating = 7.84, genres = listOf("Drama", "Sci-Fi", "War", "x"),

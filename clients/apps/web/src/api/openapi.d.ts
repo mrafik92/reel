@@ -4,6 +4,22 @@
  */
 
 export interface paths {
+    "/api/v1/vod/genres": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["vod_genres"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/arr-servers": {
         parameters: {
             query?: never;
@@ -2796,6 +2812,36 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    vod_genres: {
+        parameters: {
+            query?: {
+                /** @description `movie` (default) or `series`. */
+                type?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     list_arr_servers: {
         parameters: {
             query?: never;

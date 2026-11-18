@@ -3,7 +3,6 @@ package app.reel.android.ui.item
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -11,12 +10,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -35,7 +32,6 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,15 +46,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import app.reel.android.DeviceKind
 import app.reel.android.LocalAppGraph
 import app.reel.android.LocalDeviceKind
@@ -68,7 +63,9 @@ import app.reel.android.data.ItemSummary
 import app.reel.android.data.children
 import app.reel.android.data.item
 import app.reel.android.data.setPlayed
-import app.reel.android.ui.common.CardSize
+import app.reel.android.ui.common.DetailActions
+import app.reel.android.ui.common.DetailHeader
+import app.reel.android.ui.common.WatchProgress
 import app.reel.android.ui.common.EmptyView
 import app.reel.android.ui.common.ErrorView
 import app.reel.android.ui.common.Load
@@ -98,29 +95,57 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun ItemScreen(id: Long) {
+    val api = LocalAppGraph.current.session.api
+    val scope = rememberCoroutineScope()
     val detail = rememberLoad(id) { item(id) }
     val memory = rememberFocusMemory()
     // Shows: which season's episodes are listed. Saved, so Back from an episode keeps it.
     var season by rememberSaveable(id) { mutableStateOf<Long?>(null) }
     Loadable(detail) { d ->
-        val episodesOf: Long? = when (d.kind) {
-            "season" -> d.id
-            "show" -> season
-            else -> null
-        }
         val seasons = if (d.kind == "show") rememberLoad(d.id) { children(d.id) } else null
-        val episodes = episodesOf?.let { sid -> rememberLoad(sid) { children(sid) } }
         val seasonList = (seasons?.state as? Load.Ready)?.value
-        LaunchedEffect(seasonList) {
-            if (season == null) season = seasonList?.let { ItemLogic.defaultSeason(it) }?.id
+        val selected = seasonList?.firstOrNull { it.id == season } ?: seasonList?.let(ItemLogic::defaultSeason)
+        val episodesOf = if (d.kind == "season") d.id else selected?.id
+        val episodes = episodesOf?.let { sid -> rememberLoad(sid) { children(sid) } }
+        val next = (episodes?.state as? Load.Ready)?.value?.let(ItemLogic::nextUp)
+        val episodeDetail = next?.let { rememberLoad(it.id) { item(it.id) } }
+        val ready = seasons?.state !is Load.Loading && episodes?.state !is Load.Loading &&
+            episodeDetail?.state !is Load.Loading
+        var shown by remember { mutableStateOf(false) }
+        LaunchedEffect(ready) { if (ready) shown = true }
+        RestoreFocus(memory, ready = shown, first = "play")
+        // Compose the lazy rows together on return so a saved episode scroll index can be restored.
+        var played by remember(d.id, d.played) { mutableStateOf(d.played) }
+        var saving by remember { mutableStateOf(false) }
+        var error by remember { mutableStateOf<String?>(null) }
+        if (shown || ready) {
+            ItemBody(d, seasons, seasonList, selected?.id, { season = it }, episodes, memory) {
+                Actions(d, next, episodeDetail, memory, played, saving, error) {
+                    if (saving || api == null) return@Actions
+                    val markPlayed = !played
+                    saving = true
+                    error = null
+                    scope.launch {
+                        try {
+                            api.setPlayed(d.id, markPlayed)
+                            played = markPlayed
+                            episodes?.refresh()
+                            episodeDetail?.refresh()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            error = Load.Failed(e).message
+                        } finally {
+                            saving = false
+                        }
+                    }
+                }
+            }
+        } else {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = ReelColors.Accent)
+            }
         }
-        val ready = when (d.kind) {
-            "show" -> seasons?.state !is Load.Loading && (seasonList.isNullOrEmpty() || episodes?.state is Load.Ready || episodes?.state is Load.Failed)
-            "season" -> episodes?.state !is Load.Loading
-            else -> true
-        }
-        RestoreFocus(memory, ready = ready, first = "play")
-        ItemBody(d, seasonList, season, { season = it }, episodes, memory)
     }
 }
 
@@ -128,56 +153,63 @@ fun ItemScreen(id: Long) {
 @Composable
 private fun ItemBody(
     d: ItemDetail,
+    seasonLoad: LoadHandle<List<ItemSummary>>?,
     seasons: List<ItemSummary>?,
     season: Long?,
     onSeason: (Long) -> Unit,
     episodes: LoadHandle<List<ItemSummary>>?,
     memory: FocusMemory,
+    actions: @Composable () -> Unit,
 ) {
     val tv = LocalDeviceKind.current == DeviceKind.Tv
     val edge = if (tv) 48.dp else 20.dp
-    val epList = (episodes?.state as? Load.Ready)?.value
-    CompositionLocalProvider(LocalBringIntoViewSpec provides KeepInView) { ItemList(d, seasons, season, onSeason, episodes, epList, memory, tv, edge) }
-}
+    CompositionLocalProvider(LocalBringIntoViewSpec provides KeepInView) {
+        LazyColumn(
+            Modifier.fillMaxSize().testTag("item"),
+            contentPadding = PaddingValues(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(if (tv) 20.dp else 14.dp),
+        ) {
+            item(key = "hero") {
+                DetailHeader(
+                    title = d.title,
+                    kind = ItemLogic.kindLabel(d),
+                    poster = d.posterUrl.takeUnless { d.kind == "episode" },
+                    backdrop = d.backdropUrl ?: d.posterUrl,
+                    facts = listOfNotNull(ItemLogic.stars(d.rating)) + ItemLogic.meta(d) + ItemLogic.badges(d.files.firstOrNull()),
+                    actions = actions,
+                )
+            }
+            d.overview?.takeIf { it.isNotBlank() }?.let { synopsis ->
+                item(key = "synopsis") {
+                    Text(synopsis, style = MaterialTheme.typography.bodyLarge, color = ReelColors.Ink2,
+                        modifier = Modifier.padding(horizontal = edge).widthIn(max = 800.dp))
+                }
+            }
 
-@Composable
-private fun ItemList(
-    d: ItemDetail,
-    seasons: List<ItemSummary>?,
-    season: Long?,
-    onSeason: (Long) -> Unit,
-    episodes: LoadHandle<List<ItemSummary>>?,
-    epList: List<ItemSummary>?,
-    memory: FocusMemory,
-    tv: Boolean,
-    edge: Dp,
-) {
-    LazyColumn(
-        Modifier.fillMaxSize().testTag("item"),
-        contentPadding = PaddingValues(bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(if (tv) 20.dp else 14.dp),
-    ) {
-        item(key = "hero") { Hero(d, tv, edge) { Actions(d, epList, memory, tv) } }
+            if (!seasons.isNullOrEmpty() && seasons.size > 1) {
+                item(key = "seasons") { SeasonTabs(seasons, season, onSeason, memory, edge) }
+            } else if (d.kind == "season" || !seasons.isNullOrEmpty()) {
+                item(key = "episodes-title") { SectionTitle("Episodes", edge) }
+            }
 
-        if (!seasons.isNullOrEmpty() && seasons.size > 1) {
-            item(key = "seasons") { SeasonTabs(seasons, season, onSeason, memory, edge) }
-        } else if (d.kind == "season" || !seasons.isNullOrEmpty()) {
-            item(key = "episodes-title") { SectionTitle("Episodes", edge) }
-        }
+            val seasonError = seasonLoad?.state as? Load.Failed
+            if (seasonError != null) {
+                item(key = "season-error") { ErrorView(seasonError.message, onRetry = seasonLoad::retry, modifier = Modifier.height(160.dp)) }
+            }
+            if (episodes != null) episodeRows(episodes, memory, edge, tv)
 
-        if (episodes != null) episodeRows(episodes, memory, edge, tv)
-
-        if (d.cast.isNotEmpty()) {
-            item(key = "cast") {
-                Column(Modifier.padding(top = 12.dp)) {
-                    SectionTitle("Cast", edge)
-                    LazyRow(
-                        state = rememberLazyListState(),
-                        contentPadding = PaddingValues(horizontal = edge, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        itemsIndexed(d.cast.take(30)) { i, c ->
-                            CastCard(c, Modifier.focusMemory(memory, "cast/$i"))
+            if (d.cast.isNotEmpty()) {
+                item(key = "cast") {
+                    Column(Modifier.padding(top = 12.dp)) {
+                        SectionTitle("Cast", edge)
+                        LazyRow(
+                            state = rememberLazyListState(),
+                            contentPadding = PaddingValues(horizontal = edge, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        ) {
+                            itemsIndexed(d.cast.take(30)) { i, c ->
+                                CastCard(c, Modifier.focusMemory(memory, "cast/$i"))
+                            }
                         }
                     }
                 }
@@ -196,100 +228,8 @@ private fun SectionTitle(title: String, edge: Dp) {
     )
 }
 
-/** Backdrop fading into the page, then poster (TV) + title + rating/meta + badges + [actions]. */
-@Composable
-private fun Hero(d: ItemDetail, tv: Boolean, edge: Dp, actions: @Composable () -> Unit) {
-    val fade = Brush.verticalGradient(0f to ReelColors.Bg.copy(alpha = 0.5f), 0.45f to Color.Transparent, 1f to ReelColors.Bg)
-    val backdrop = d.backdropUrl ?: d.posterUrl
-    if (tv) {
-        Box(Modifier.fillMaxWidth()) {
-            ReelImage(backdrop, contentDescription = null, modifier = Modifier.fillMaxWidth().height(400.dp))
-            Box(Modifier.matchParentSize().background(Brush.horizontalGradient(0f to ReelColors.Bg, 0.6f to ReelColors.Bg.copy(alpha = 0.3f), 1f to Color.Transparent)))
-            Box(Modifier.matchParentSize().background(fade))
-            Row(Modifier.padding(start = edge, end = edge, top = 48.dp), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                if (d.kind != "episode" && d.posterUrl != null) {
-                    ReelImage(d.posterUrl, contentDescription = d.title, modifier = Modifier.width(220.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)))
-                }
-                Column(Modifier.weight(1f).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    TitleBlock(d, tv = true)
-                    Overview(d, maxLines = 4)
-                    // Pulled left by the action row's padding so the first button lines up with the title.
-                    Box(Modifier.padding(top = 4.dp).offset(x = (-12).dp)) { actions() }
-                }
-            }
-        }
-    } else {
-        Box(Modifier.fillMaxWidth().height(250.dp)) {
-            ReelImage(backdrop, contentDescription = null, modifier = Modifier.fillMaxSize())
-            Box(Modifier.fillMaxSize().background(fade))
-        }
-        Column(
-            Modifier.padding(start = edge, end = edge),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            TitleBlock(d, tv = false)
-            actions()
-            Overview(d, maxLines = Int.MAX_VALUE)
-        }
-    }
-}
-
-@Composable
-private fun TitleBlock(d: ItemDetail, tv: Boolean) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(ItemLogic.kindLabel(d).uppercase(), style = MaterialTheme.typography.labelLarge, color = ReelColors.AccentHi)
-        Text(
-            d.title,
-            style = MaterialTheme.typography.displaySmall.copy(
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = if (tv) 52.sp else 32.sp,
-                lineHeight = if (tv) 54.sp else 34.sp,
-            ),
-            color = ReelColors.Ink,
-            modifier = Modifier.testTag("item-title"),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            ItemLogic.stars(d.rating)?.let { Text(it, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = ReelColors.Ok) }
-            val meta = ItemLogic.meta(d)
-            if (meta.isNotEmpty()) Text(meta.joinToString("  ·  "), style = MaterialTheme.typography.bodyMedium, color = ReelColors.Ink2)
-        }
-        val badges = ItemLogic.badges(d.files.firstOrNull())
-        if (badges.isNotEmpty()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (b in badges) Badge(b)
-            }
-        }
-    }
-}
-
-@Composable
-private fun Badge(text: String) {
-    Box(
-        Modifier
-            .heightIn(min = 26.dp)
-            .border(1.dp, ReelColors.Ink.copy(alpha = 0.24f), RoundedCornerShape(6.dp))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold, fontSize = 12.sp), color = ReelColors.Ink)
-    }
-}
-
-@Composable
-private fun Overview(d: ItemDetail, maxLines: Int) {
-    val text = d.overview?.takeIf { it.isNotBlank() } ?: return
-    Text(
-        text,
-        style = MaterialTheme.typography.bodyLarge,
-        color = ReelColors.Ink2,
-        maxLines = maxLines,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.widthIn(max = 760.dp),
-    )
-}
-
 /** What the main button plays: the item itself, or a show's / season's next episode. */
-private data class PlayTarget(val label: String, val startS: Double?, val play: () -> Unit, val restart: (() -> Unit)?)
+private data class PlayTarget(val label: String, val play: () -> Unit, val restart: (() -> Unit)?)
 
 /**
  * The main button (cream, full width on phones) names what it plays and the time left
@@ -297,135 +237,61 @@ private data class PlayTarget(val label: String, val startS: Double?, val play: 
  * resuming) and *Mark watched*. Shows and seasons play their next episode.
  */
 @Composable
-private fun Actions(d: ItemDetail, episodes: List<ItemSummary>?, memory: FocusMemory, tv: Boolean) {
-    val api = LocalAppGraph.current.session.api
+private fun Actions(
+    d: ItemDetail,
+    next: ItemSummary?,
+    nextDetail: LoadHandle<ItemDetail>?,
+    memory: FocusMemory,
+    played: Boolean,
+    saving: Boolean,
+    error: String?,
+    togglePlayed: () -> Unit,
+) {
     val nav = LocalNavController.current
-    val scope = rememberCoroutineScope()
-    val player = rememberPlayLauncher()
-    var played by remember(d.id, d.played) { mutableStateOf(d.played) }
-    var saving by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    val target: PlayTarget? = if (d.kind == "show" || d.kind == "season") {
-        episodes?.let { ItemLogic.nextUp(it) }?.let { next ->
-            val resuming = !next.played && (next.progress ?: 0.0) >= ItemLogic.STARTED
-            val code = ItemLogic.episodeCode(next.seasonNo, next.episodeNo) ?: next.title
-            val left = if (resuming) ItemLogic.timeLeft(next.progress, next.runtimeS?.toDouble()) else null
+    val tv = LocalDeviceKind.current == DeviceKind.Tv
+    val playable = if (d.kind == "show" || d.kind == "season") (nextDetail?.state as? Load.Ready)?.value else d
+    val target = playable?.let { item ->
+        item.files.firstOrNull()?.let { file ->
+            val progress = ItemLogic.resumeAt(item.progress, file.durationS, if (item.id == d.id) played else item.played)
+            val left = if (progress > 0) ItemLogic.timeLeft(item.progress, file.durationS) else null
+            val episode = ItemLogic.episodeCode(item.seasonNo, item.episodeNo) ?: next?.title
             PlayTarget(
-                listOfNotNull("${if (resuming) "Resume" else "Play"} $code", left).joinToString(" · "),
-                null,
-                { player.play(next.id) },
-                if (resuming) ({ player.play(next.id, fromStart = true) }) else null,
-            )
-        }
-    } else {
-        d.files.firstOrNull()?.let { file ->
-            val resume = ItemLogic.resumeAt(d.progress, file.durationS, played)
-            val left = if (resume > 0) ItemLogic.timeLeft(d.progress, file.durationS) else null
-            PlayTarget(
-                if (resume > 0) listOfNotNull("Resume from ${ItemLogic.clock(resume)}", left).joinToString(" · ") else "Play",
-                resume,
-                { nav.navigate(Routes.player(file.id, d.id, resume)) },
-                if (resume > 0) ({ nav.navigate(Routes.player(file.id, d.id, 0.0)) }) else null,
+                ItemLogic.playLabel(progress, episode, left),
+                { nav.navigate(Routes.player(file.id, item.id, progress)) },
+                if (progress > 0) ({ nav.navigate(Routes.player(file.id, item.id, 0.0)) }) else null,
             )
         }
     }
 
-    val togglePlayed = {
-        if (!saving && api != null) {
-            val next = !played
-            played = next
-            saving = true
-            error = null
-            scope.launch {
-                try {
-                    api.setPlayed(d.id, next)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    played = !next
-                    error = Load.Failed(e).message
-                } finally {
-                    saving = false
-                }
-            }
-        }
-    }
     val watchedLabel = if (played) "Mark unwatched" else "Mark watched"
     val watchedIcon = if (played) Icons.Outlined.VisibilityOff else Icons.Outlined.CheckCircle
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (tv) {
-            // At most three buttons: a plain row (a lazy one scrolls sideways when focus is restored).
-            // Its padding leaves room for a focused pill's 1.1x scale, so the edge isn't clipped.
-            Row(
-                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                target?.let { t ->
-                    Pill(t.label, icon = Icons.Outlined.PlayArrow, primary = true, onClick = t.play, modifier = Modifier.focusMemory(memory, "play").testTag("play"))
-                    t.restart?.let { r ->
-                        Pill("Play from start", icon = Icons.Outlined.Replay, onClick = r, modifier = Modifier.focusMemory(memory, "restart").testTag("restart"))
-                    }
-                }
-                Pill(watchedLabel, icon = watchedIcon, onClick = togglePlayed, modifier = Modifier.focusMemory(memory, "played").testTag("played"))
-                if (saving || player.busy) CircularProgressIndicator(color = ReelColors.Accent, modifier = Modifier.size(28.dp))
-            }
-        } else {
+        DetailActions {
             target?.let { t ->
-                WideButton(t.label, Icons.Outlined.PlayArrow, t.play, Modifier.focusMemory(memory, "play").testTag("play"))
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                target?.restart?.let { r ->
-                    TileButton("Start over", Icons.Outlined.Replay, r, Modifier.weight(1f).focusMemory(memory, "restart").testTag("restart"))
+                Pill(
+                    t.label,
+                    icon = Icons.Outlined.PlayArrow,
+                    primary = true,
+                    onClick = t.play,
+                    modifier = (if (tv) Modifier else Modifier.fillMaxWidth()).focusMemory(memory, "play").testTag("play"),
+                )
+                t.restart?.let { restart ->
+                    Pill("Play from start", icon = Icons.Outlined.Replay, onClick = restart,
+                        modifier = Modifier.focusMemory(memory, "restart").testTag("restart"))
                 }
-                TileButton(if (played) "Unwatched" else "Watched", watchedIcon, togglePlayed, Modifier.weight(1f).focusMemory(memory, "played").testTag("played"))
             }
+            Pill(watchedLabel, icon = watchedIcon, onClick = togglePlayed,
+                modifier = Modifier.focusMemory(memory, "played").testTag("played"))
+            if (saving || nextDetail?.state is Load.Loading) CircularProgressIndicator(color = ReelColors.Accent, modifier = Modifier.size(28.dp))
         }
-        if (d.files.isEmpty() && d.kind != "show" && d.kind != "season") {
+        if (playable?.files?.isEmpty() == true) {
             Text("No playable file for this title yet.", style = MaterialTheme.typography.bodyMedium, color = ReelColors.Ink3)
         }
-        (error ?: player.error)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = ReelColors.AccentHi, modifier = Modifier.testTag("item-error")) }
-    }
-}
-
-/** Full-width cream button (the phone's main action). */
-@Composable
-private fun WideButton(text: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier) {
-    FocusCard(onClick = onClick, modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) { focused ->
-        Row(
-            Modifier.fillMaxWidth().background(if (focused) ReelColors.AccentHi else ReelColors.Ink).height(48.dp).padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            val fg = if (focused) ReelColors.AccentInk else ReelColors.Bg
-            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp))
-            Text(
-                text,
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-                color = fg,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 8.dp),
-            )
+        (nextDetail?.state as? Load.Failed)?.let { failure ->
+            ErrorView(failure.message, onRetry = nextDetail::retry)
         }
-    }
-}
-
-/** Square-ish secondary action: icon over a short label. */
-@Composable
-private fun TileButton(text: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier) {
-    FocusCard(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(8.dp)) { focused ->
-        Column(
-            Modifier.fillMaxWidth().background(if (focused) ReelColors.Ink else ReelColors.Bg2).height(56.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            val fg = if (focused) ReelColors.Bg else ReelColors.Ink
-            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp))
-            Text(text, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold, fontSize = 12.sp), color = fg)
-        }
+        error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = ReelColors.AccentHi, modifier = Modifier.testTag("item-error")) }
     }
 }
 
@@ -444,7 +310,7 @@ private fun SeasonTabs(seasons: List<ItemSummary>, selected: Long?, onSeason: (L
                 FocusCard(
                     onClick = { onSeason(s.id) },
                     shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.focusMemory(memory, "season/${s.id}").testTag("season-${s.id}"),
+                    modifier = Modifier.focusMemory(memory, "season/${s.id}").testTag("season-${s.id}").semantics { this.selected = isSel },
                 ) { focused ->
                     Column(Modifier.width(IntrinsicSize.Max).background(if (focused) ReelColors.Ink else Color.Transparent).padding(horizontal = 10.dp)) {
                         Text(
@@ -455,7 +321,7 @@ private fun SeasonTabs(seasons: List<ItemSummary>, selected: Long?, onSeason: (L
                                 isSel -> ReelColors.Ink
                                 else -> ReelColors.Ink.copy(alpha = 0.6f)
                             },
-                            modifier = Modifier.padding(vertical = 10.dp),
+                            modifier = Modifier.heightIn(min = 45.dp).padding(vertical = 10.dp),
                         )
                         Box(Modifier.fillMaxWidth().height(3.dp).background(if (isSel) ReelColors.AccentHi else Color.Transparent))
                     }
@@ -495,14 +361,7 @@ private fun EpisodeRow(e: ItemSummary, memory: FocusMemory, edge: Dp, tv: Boolea
         ) {
             Box(Modifier.width(if (tv) 200.dp else 120.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp))) {
                 ReelImage(e.backdropUrl ?: e.posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
-                val p = when {
-                    e.played -> 1f
-                    else -> e.progress?.toFloat()?.coerceIn(0f, 1f) ?: 0f
-                }
-                if (p > 0f) {
-                    Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(ReelColors.Ink.copy(alpha = 0.16f)))
-                    Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(p).height(3.dp).background(ReelColors.AccentHi))
-                }
+                WatchProgress(if (e.played) 1.0 else e.progress, Modifier.align(Alignment.BottomCenter).fillMaxWidth())
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(

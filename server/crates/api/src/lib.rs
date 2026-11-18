@@ -25,6 +25,7 @@ mod requests;
 mod routes;
 mod stream;
 pub mod vod;
+pub mod vod_genres;
 pub mod ws;
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -669,6 +670,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(browse::pick))
         .routes(routes!(browse::search_all))
         .routes(routes!(vod::vod_categories))
+        .routes(routes!(vod::vod_genres))
         .routes(routes!(vod::vod_movies))
         .routes(routes!(vod::vod_series))
         .routes(routes!(vod::vod_movie))

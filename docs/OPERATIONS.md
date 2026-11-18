@@ -116,7 +116,7 @@ Backlog → To do → Implementing → Reviewing → **Deployed** (automatic, `d
 | `REEL_ALLOW_PRIVATE_FETCH` / `..._LOGO_FETCH` | `true` / `false` | SSRF policy (playlists/EPG may be LAN; logos never) |
 | `REEL_IMAGE_CACHE_MAX_MB` / `REEL_IPTV_IMAGE_CACHE_MAX_MB` | unset (`4096` / `1024`) | Disk budgets of the TMDB image cache (`/appdata/images`) and the IPTV logo + VOD image caches (`/appdata/iptv/{logos,vod-images}`). Beyond them the least recently used files are deleted (log line `image cache over budget`). `0` = unlimited. Live sizes on 2026-11-15: 772 MB and 62 MB |
 | `REEL_CAST_DISCOVERY` | unset (`true`) | DLNA SSDP discovery every minute. `false` = only TVs added by IP (Settings or `POST /api/v1/admin/cast/devices`) are used; they are kept in `/appdata/cast_devices.json`. Discovered TVs must answer from the same IP their description and control URLs use (#12) |
-| `REEL_TMDB_API_KEY`, `REEL_WEBHOOK_SECRET` | in `.env` | |
+| `REEL_TMDB_API_KEY`, `REEL_WEBHOOK_SECRET` | in `.env` | The TMDB key also enables the IPTV movie genre backfill. The worker makes one serial movie attempt at a time, waits at least one second between attempts, and pauses before retrying TMDB errors |
 | `REEL_OMDB_API_KEY`, `REEL_TRAKT_CLIENT_ID` | optional | IMDb/RT scores, Trakt comments |
 | `REEL_WS_PING_SECS` | unset (`25`) | Ping interval of the `/events` WebSocket, so idle proxy/VPN paths don't drop it silently. `REEL_WS_RECHECK_SECS` (`30`) re-checks the session on open sockets |
 | Container limits | `mem_limit 3g`, `pids_limit 512`, `cpus 3.0`, `read_only`, `cap_drop ALL`, `no-new-privileges` | |

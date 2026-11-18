@@ -1,6 +1,8 @@
 package app.reel.android.ui.vod
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,13 +21,16 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -36,6 +41,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,7 +59,13 @@ import app.reel.android.data.VodMovieDetail
 import app.reel.android.data.VodPage
 import app.reel.android.data.VodSeriesDetail
 import app.reel.android.ui.common.CardSize
+import app.reel.android.ui.common.DetailActions
+import app.reel.android.ui.common.DetailHeader
+import app.reel.android.ui.common.Pill
+import app.reel.android.ui.common.WatchProgress
 import app.reel.android.ui.common.ErrorView
+import app.reel.android.ui.item.ItemLogic
+import app.reel.android.ui.tv.KeepInView
 import app.reel.android.ui.common.Load
 import app.reel.android.ui.common.Loadable
 import app.reel.android.ui.common.PosterCard
@@ -257,54 +271,52 @@ private fun VodGrid(type: String, query: String, modifier: Modifier) {
     }
 }
 
-// ---- detail pages ---------------------------------------------------------------------------
-
 @Composable
-private fun DetailHeader(
-    title: String,
-    posterUrl: String?,
-    facts: List<String>,
-    overview: String?,
-    extra: String?,
-    actions: @Composable () -> Unit,
-) {
-    val tv = LocalDeviceKind.current == DeviceKind.Tv
-    Row(Modifier.fillMaxWidth().padding(horizontal = edge(), vertical = 24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-        ReelImage(posterUrl, contentDescription = title, modifier = Modifier.width(if (tv) 200.dp else 120.dp).aspectRatio(2f / 3f))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, color = ReelColors.Ink)
-            if (facts.isNotEmpty()) Text(facts.joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = ReelColors.Ink2)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { actions() }
-            overview?.takeIf { it.isNotBlank() }?.let {
-                Text(it, style = MaterialTheme.typography.bodyLarge, color = ReelColors.Ink2, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 720.dp))
-            }
-            extra?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = ReelColors.Ink3, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+private fun VodSynopsis(overview: String?, credits: String) {
+    Column(Modifier.padding(horizontal = edge()).widthIn(max = 800.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        overview?.takeIf { it.isNotBlank() }?.let {
+            Text(it, style = MaterialTheme.typography.bodyLarge, color = ReelColors.Ink2)
         }
+        if (credits.isNotBlank()) Text(credits, style = MaterialTheme.typography.bodyMedium, color = ReelColors.Ink3)
     }
 }
 
-private fun runtime(s: Long?) = s?.takeIf { it > 0 }?.let { if (it >= 3600) "${it / 3600} h ${(it % 3600) / 60} min" else "${(it + 59) / 60} min" }
+private fun runtime(s: Long?) = s?.takeIf { it > 0 }?.let(ItemLogic::runtime)
+
+@Composable
+private fun VodActions(label: String, resume: Double, memory: FocusMemory, start: (Double) -> Unit) {
+    val tv = LocalDeviceKind.current == DeviceKind.Tv
+    DetailActions {
+        Pill(
+            label, { start(resume) }, primary = true, icon = Icons.Outlined.PlayArrow,
+            modifier = (if (tv) Modifier else Modifier.fillMaxWidth()).focusMemory(memory, "play").testTag("vod-play"),
+        )
+        if (resume > 0) Pill("Play from start", { start(0.0) }, Modifier.focusMemory(memory, "start"))
+    }
+}
 
 @Composable
 fun VodMovieScreen(id: Long) {
     val nav = LocalNavController.current
     val movie = rememberLoad(id) { get<VodMovieDetail>("/vod/movies/$id") }
     val memory = rememberFocusMemory()
-    RestoreFocus(memory, ready = movie.state is Load.Ready)
+    RestoreFocus(memory, ready = movie.state is Load.Ready, first = "play")
     Loadable(movie) { m ->
-        LazyColumn(Modifier.fillMaxSize().testTag("vod-movie")) {
-            item {
-                val resume = vodResumeS(m.progress, m.runtimeS)
+        DetailList("vod-movie") {
+            item(key = "hero") {
+                val resume = vodResumeS(m.progress, m.runtimeS, m.played)
                 DetailHeader(
-                    m.title,
-                    m.posterUrl,
-                    listOfNotNull(m.year?.toString(), runtime(m.runtimeS), m.rating?.let { "★ %.1f".format(it) }, m.genres?.take(3)?.joinToString(", ")?.ifEmpty { null }),
-                    m.overview,
-                    listOfNotNull(m.director?.let { "Director: $it" }, m.cast.take(5).joinToString(", ") { it.name }.ifEmpty { null }).joinToString(" · ").ifEmpty { null },
+                    m.title, "IPTV film", m.posterUrl, m.backdropUrl,
+                    listOfNotNull(ItemLogic.stars(m.rating), m.year?.toString(), runtime(m.runtimeS)) + m.genres.orEmpty().take(3),
                 ) {
-                    VodChip(if (resume > 0) "Resume" else "Play", true, { nav.navigate(VodRoutes.player("movie", m.id, null, resume)) }, Modifier.focusMemory(memory, "play").testTag("vod-play"))
-                    if (resume > 0) VodChip("From the start", false, { nav.navigate(VodRoutes.player("movie", m.id, null, 0.0)) }, Modifier.focusMemory(memory, "start"))
+                    VodActions(ItemLogic.playLabel(resume, remaining = ItemLogic.timeLeft(m.progress, m.runtimeS?.toDouble())), resume, memory) {
+                        nav.navigate(VodRoutes.player("movie", m.id, null, it))
+                    }
                 }
+            }
+            item(key = "synopsis") {
+                val credits = listOfNotNull(m.director?.let { "Director: $it" }, m.cast.take(5).joinToString(", ") { it.name }.ifEmpty { null })
+                VodSynopsis(m.overview, credits.joinToString(" · "))
             }
         }
     }
@@ -316,46 +328,47 @@ fun VodSeriesScreen(id: Long) {
     val series = rememberLoad(id) { get<VodSeriesDetail>("/vod/series/$id") }
     val memory = rememberFocusMemory()
     var seasonNo by rememberSaveable(id) { mutableStateOf<Long?>(null) }
-    RestoreFocus(memory, ready = series.state is Load.Ready)
+    RestoreFocus(memory, ready = series.state is Load.Ready, first = "play")
     Loadable(series) { s ->
         val seasons = s.seasons.filter { it.episodes.isNotEmpty() }
-        // Start on the first season with an unfinished episode.
         val current = seasons.firstOrNull { it.seasonNo == seasonNo }
             ?: seasons.firstOrNull { se -> se.episodes.any { it.played != true } } ?: seasons.firstOrNull()
-        LazyColumn(Modifier.fillMaxSize().testTag("vod-series"), contentPadding = PaddingValues(bottom = 24.dp)) {
-            item {
+        DetailList("vod-series") {
+            item(key = "hero") {
                 DetailHeader(
-                    s.title,
-                    s.posterUrl,
-                    listOfNotNull(s.year?.toString(), "${seasons.size} season${if (seasons.size == 1) "" else "s"}", s.rating?.let { "★ %.1f".format(it) }),
-                    s.overview,
-                    s.cast.take(5).joinToString(", ") { it.name }.ifEmpty { null },
+                    s.title, "IPTV series", s.posterUrl, s.backdropUrl,
+                    listOfNotNull(ItemLogic.stars(s.rating), s.year?.toString(), "${seasons.size} season${if (seasons.size == 1) "" else "s"}")
+                        + s.genres.orEmpty().take(3),
                 ) {
-                    val next = current?.episodes?.firstOrNull { it.played != true } ?: current?.episodes?.firstOrNull()
-                    if (next != null && current != null) {
-                        val resume = vodResumeS(next.progress, next.runtimeS)
-                        VodChip(
-                            "${if (resume > 0) "Resume" else "Play"} S${current.seasonNo} E${next.episodeNo}",
-                            true,
-                            { nav.navigate(VodRoutes.player("episode", next.id, s.id, resume)) },
-                            Modifier.focusMemory(memory, "play").testTag("vod-play"),
-                        )
+                    val next = current?.let { vodNextEpisode(it.episodes) }
+                    if (next != null) {
+                        val resume = vodResumeS(next.progress, next.runtimeS, next.played)
+                        val label = ItemLogic.playLabel(resume, ItemLogic.episodeCode(current.seasonNo, next.episodeNo))
+                        VodActions(label, resume, memory) { nav.navigate(VodRoutes.player("episode", next.id, s.id, it)) }
                     }
                 }
             }
+            item(key = "synopsis") { VodSynopsis(s.overview, s.cast.take(5).joinToString(", ") { it.name }) }
+            item(key = "episodes-heading") {
+                Text("Episodes", style = MaterialTheme.typography.titleMedium, color = ReelColors.Ink, modifier = Modifier.padding(horizontal = edge()))
+            }
             if (seasons.size > 1) {
-                item {
-                    LazyRow(contentPadding = PaddingValues(horizontal = edge(), vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                item(key = "seasons") {
+                    LazyRow(contentPadding = PaddingValues(horizontal = edge()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(seasons, key = { it.seasonNo }) { se ->
-                            VodChip(se.name ?: "Season ${se.seasonNo}", se.seasonNo == current?.seasonNo, { seasonNo = se.seasonNo }, Modifier.focusMemory(memory, "season-${se.seasonNo}"))
+                            val active = se.seasonNo == current?.seasonNo
+                            Pill(se.name ?: "Season ${se.seasonNo}", { seasonNo = se.seasonNo }, selected = active,
+                                modifier = Modifier.focusMemory(memory, "season/${se.seasonNo}").semantics { selected = active })
                         }
                     }
                 }
             }
-            current?.let { se ->
-                itemsIndexed(se.episodes, key = { _, e -> e.id }) { _, e ->
-                    EpisodeRow(e, Modifier.focusMemory(memory, "ep-${e.id}")) {
-                        nav.navigate(VodRoutes.player("episode", e.id, s.id, vodResumeS(e.progress, e.runtimeS)))
+            if (current == null) {
+                item(key = "empty") { Text("No episodes yet.", color = ReelColors.Ink2, modifier = Modifier.padding(horizontal = edge())) }
+            } else {
+                items(current.episodes, key = { it.id }) { e ->
+                    EpisodeRow(e, Modifier.focusMemory(memory, "ep/${e.id}")) {
+                        nav.navigate(VodRoutes.player("episode", e.id, s.id, vodResumeS(e.progress, e.runtimeS, e.played)))
                     }
                 }
             }
@@ -363,22 +376,38 @@ fun VodSeriesScreen(id: Long) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DetailList(tag: String, content: LazyListScope.() -> Unit) {
+    CompositionLocalProvider(LocalBringIntoViewSpec provides KeepInView) {
+        LazyColumn(
+            Modifier.fillMaxSize().testTag(tag),
+            contentPadding = PaddingValues(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            content = content,
+        )
+    }
+}
+
 @Composable
 private fun EpisodeRow(e: VodEpisode, modifier: Modifier, onClick: () -> Unit) {
     val tv = LocalDeviceKind.current == DeviceKind.Tv
-    FocusCard(onClick = onClick, shape = RoundedCornerShape(10.dp), modifier = modifier.padding(horizontal = edge(), vertical = 6.dp).fillMaxWidth().testTag("vod-ep-${e.id}")) { focused ->
+    FocusCard(onClick = onClick, shape = RoundedCornerShape(10.dp), modifier = modifier.padding(horizontal = edge()).fillMaxWidth().testTag("vod-ep-${e.id}")) { focused ->
         Row(
-            Modifier.fillMaxWidth().background(if (focused) ReelColors.Ink else ReelColors.Bg1).padding(10.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            Modifier.fillMaxWidth().background(if (focused) ReelColors.Bg3 else ReelColors.Bg1).padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ReelImage(e.stillUrl, contentDescription = null, modifier = Modifier.width(if (tv) 200.dp else 128.dp).aspectRatio(16f / 9f))
+            Box(Modifier.width(if (tv) 200.dp else 120.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp))) {
+                ReelImage(e.stillUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
+                WatchProgress(if (e.played == true) 1.0 else e.progress, Modifier.align(Alignment.BottomCenter).fillMaxWidth())
+            }
             Column(Modifier.weight(1f)) {
-                val ink = if (focused) ReelColors.Bg else ReelColors.Ink
-                Text("${e.episodeNo}. ${e.title}", style = MaterialTheme.typography.titleMedium, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val meta = listOfNotNull(runtime(e.runtimeS), if (e.played == true) "Watched" else e.progress?.takeIf { it > 0 }?.let { "${(it * 100).toInt()}% watched" })
-                if (meta.isNotEmpty()) Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = if (focused) ReelColors.Bg else ReelColors.Ink3)
-                e.overview?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = if (focused) ReelColors.Bg else ReelColors.Ink2, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                Text("${e.episodeNo}. ${e.title}", style = MaterialTheme.typography.titleMedium, color = ReelColors.Ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                val status = if (e.played == true) "Watched" else ItemLogic.timeLeft(e.progress, e.runtimeS?.toDouble())
+                val meta = listOfNotNull(runtime(e.runtimeS), status)
+                if (meta.isNotEmpty()) Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = ReelColors.Ink3)
+                e.overview?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = ReelColors.Ink2, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             }
         }
     }

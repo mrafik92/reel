@@ -534,9 +534,31 @@ function mimeFor(url: string): string | undefined {
 export class WebOsAdapter implements PlayerAdapter {
   private ev = new Emitter();
   private sidecar: HTMLTrackElement[] = [];
+  private clockTimer: ReturnType<typeof setInterval> | undefined;
+
+  // Some webOS engines advance currentTime without dispatching timeupdate.
+  private startClock = () => {
+    if (this.clockTimer !== undefined) return;
+    let lastPosition = this.video.currentTime;
+    this.clockTimer = setInterval(() => {
+      const { currentTime, duration } = this.video;
+      if (!Number.isFinite(currentTime) || currentTime === lastPosition) return;
+      lastPosition = currentTime;
+      this.ev.emit("timeupdate", { positionSec: currentTime, durationSec: duration || 0 });
+    }, 250);
+  };
+
+  private stopClock = () => {
+    clearInterval(this.clockTimer);
+    this.clockTimer = undefined;
+  };
 
   constructor(private video: HTMLVideoElement) {
     wireVideoEvents(video, this.ev);
+    video.addEventListener("playing", this.startClock);
+    for (const event of ["pause", "ended", "emptied", "error"]) {
+      video.addEventListener(event, this.stopClock);
+    }
     const emitTracks = () => this.ev.emit("tracks", this.getTracks());
     video.addEventListener("loadedmetadata", emitTracks);
     const at = (video as any).audioTracks;
@@ -581,6 +603,7 @@ export class WebOsAdapter implements PlayerAdapter {
   }
 
   private clearSource(): void {
+    this.stopClock();
     const v = this.video;
     v.removeAttribute("src");
     Array.from(v.querySelectorAll("source,track")).forEach((n) => n.remove());
@@ -649,6 +672,10 @@ export class WebOsAdapter implements PlayerAdapter {
   }
 
   destroy(): void {
+    this.video.removeEventListener("playing", this.startClock);
+    for (const event of ["pause", "ended", "emptied", "error"]) {
+      this.video.removeEventListener(event, this.stopClock);
+    }
     this.clearSource();
     this.video.load();
     this.ev.clear();
