@@ -25,6 +25,9 @@ class SetupActivity : ComponentActivity() {
     private val main = Handler(Looper.getMainLooper())
     private var pending: ServerAddress? = null
 
+    /** A check is running. Connect stays enabled (and focused) meanwhile; disabling it would move a D-pad's focus. */
+    private var checking = false
+
     private lateinit var input: EditText
     private lateinit var connect: Button
     private lateinit var saveAnyway: Button
@@ -62,6 +65,7 @@ class SetupActivity : ComponentActivity() {
     }
 
     private fun submit() {
+        if (checking) return
         val address = ServerAddress.parse(input.text.toString())
         saveAnyway.visibility = View.GONE
         if (address == null) {
@@ -69,7 +73,7 @@ class SetupActivity : ComponentActivity() {
             return
         }
         pending = address
-        connect.isEnabled = false
+        checking = true
         status.text = getString(R.string.setup_checking, address.origin)
         io.execute {
             val result = ServerCheck().check(address)
@@ -78,7 +82,7 @@ class SetupActivity : ComponentActivity() {
     }
 
     private fun onChecked(address: ServerAddress, result: CheckResult) {
-        connect.isEnabled = true
+        checking = false
         if (result == CheckResult.Ok) {
             save(address)
             return
