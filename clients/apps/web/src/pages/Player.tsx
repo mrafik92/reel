@@ -1,5 +1,5 @@
 import { startupTiming, type StartupTiming } from "../lib/startupTiming";
-import { createEffect, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createResource, createSignal, For, onCleanup, onMount, Show, useContext, type JSX } from "solid-js";
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
   Icon, Sheet, audioLabel, codecShort, createPlayerAdapter, episodeCode, focusElement, iso1, isSdh,
@@ -33,6 +33,7 @@ import { createDoubleTap, createTapToggle, pointerKind, zoneOf, type TapResult }
 import { CastSheet } from "../components/casting/CastSheet";
 import { CastRemote } from "../components/casting/CastRemote";
 import { getServerUrl } from "@reel/ui";
+import { FullscreenHost, leaveFullscreen, playerFullscreen } from "../lib/fullscreen";
 
 export default function Player(): JSX.Element {
   const params = useParams<{ id: string }>();
@@ -40,14 +41,19 @@ export default function Player(): JSX.Element {
   onCleanup(() => timing?.finish("canceled"));
   const [item, { refetch }] = createResource(() => Number(params.id), (id) => api.item(id));
   createEffect(() => { if (item.error) timing?.finish("failed"); });
+  // Full screen lives on this wrapper, which outlives the episode swap below (#247).
+  let host: HTMLDivElement | undefined;
+  onCleanup(() => leaveFullscreen(document));
   return (
-    <div class="player">
-      <Show when={!item.error} fallback={<ErrorState error={item.error} onRetry={() => { timing = startupTiming("library"); void refetch(); }} />}>
-        {/* keyed: "Next episode" swaps the item under the same route → fresh player */}
-        <Show when={item()} keyed fallback={<div class="player__loading"><span class="spinner" /></div>}>
-          {(it) => <PlayerView item={it} startup={timing} />}
+    <div class="player" ref={host}>
+      <FullscreenHost.Provider value={() => host}>
+        <Show when={!item.error} fallback={<ErrorState error={item.error} onRetry={() => { timing = startupTiming("library"); void refetch(); }} />}>
+          {/* keyed: "Next episode" swaps the item under the same route → fresh player */}
+          <Show when={item()} keyed fallback={<div class="player__loading"><span class="spinner" /></div>}>
+            {(it) => <PlayerView item={it} startup={timing} />}
+          </Show>
         </Show>
-      </Show>
+      </FullscreenHost.Provider>
     </div>
   );
 }
@@ -998,10 +1004,9 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
     if (window.history.length > 1) window.history.back();
     else navigate(props.source ? props.source.back : `/item/${props.item.id}`);
   };
-  const fullscreen = () => {
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => undefined);
-    else if (root.requestFullscreen) root.requestFullscreen().catch(() => undefined);
-  };
+  // Full screen goes on the route's wrapper when there is one, so "Next" keeps it (#247).
+  const fs = playerFullscreen({ doc: document, host: useContext(FullscreenHost), own: () => root });
+  const fullscreen = fs.toggle;
 
   // ---- clicks and taps on the picture (#183, YouTube's split) ---------------------------
   // Mouse: a click plays/pauses at once with the centre flash; a double-click toggles full
@@ -1296,7 +1301,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
       invalidate("home");
       invalidate("item");
       props.source?.onClose?.();
-      if (document.fullscreenElement) document.exitFullscreen().catch(() => undefined);
+      fs.release();
     });
   });
 
