@@ -8,6 +8,8 @@ import android.net.Uri
 import android.net.http.SslError
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -34,7 +36,8 @@ import androidx.core.graphics.drawable.IconCompat
 
 /**
  * Reel Web: the server's own web app in a WebView (#225). The shell adds what a browser tab can't:
- * a remembered server, Android Back, and a native screen when the server can't be loaded.
+ * a remembered server, Android Back (see [BackPolicy] for the order), full-screen video ([FullScreen]),
+ * and a native screen when the server can't be loaded.
  *
  * Security (#226): navigation stays on the configured origin ([LinkPolicy]), TLS errors always cancel,
  * file and content access are off, mixed content is blocked, and there is no JavaScript bridge.
@@ -46,6 +49,8 @@ class MainActivity : ComponentActivity() {
     private var web: WebView? = null
 
     private lateinit var container: FrameLayout
+    private lateinit var fullScreen: FullScreen
+    private val pageKeys = PageKeys()
     private lateinit var progress: ProgressBar
     private lateinit var errorPanel: View
     private lateinit var errorTitle: TextView
@@ -63,7 +68,8 @@ class MainActivity : ComponentActivity() {
             return
         }
         setContentView(R.layout.activity_main)
-        findViewById<View>(R.id.main_root).padForSystemBars()
+        findViewById<View>(R.id.content).padForSystemBars()
+        fullScreen = FullScreen(this, findViewById(R.id.full_screen), isTelevision())
         container = findViewById(R.id.web_container)
         progress = findViewById(R.id.progress)
         errorPanel = findViewById(R.id.error_panel)
@@ -76,18 +82,10 @@ class MainActivity : ComponentActivity() {
         val view = createWebView()
         if (savedInstanceState?.let { view.restoreState(it) } == null) view.loadUrl(server.home)
 
+        // Always enabled: whether Back stays in the app is the page's call, made after the press (so the
+        // predictive back-to-home preview can't be shown; Back still works the same with it on).
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                val w = web
-                if (w != null && w.canGoBack()) {
-                    hideError()
-                    w.goBack()
-                } else {
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
-                    isEnabled = true
-                }
-            }
+            override fun handleOnBackPressed() = onBack()
         })
         publishShortcut()
     }
@@ -100,6 +98,12 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         web?.onResume()
+        if (::fullScreen.isInitialized) fullScreen.reapply()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && ::fullScreen.isInitialized) fullScreen.reapply()
     }
 
     override fun onPause() {
@@ -114,6 +118,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        if (::fullScreen.isInitialized) fullScreen.hide()
         destroyWebView()
         super.onDestroy()
     }
@@ -143,6 +148,10 @@ class MainActivity : ComponentActivity() {
                 progress.progress = newProgress
                 progress.visibility = if (newProgress in 1..99) View.VISIBLE else View.GONE
             }
+
+            override fun onShowCustomView(view: View, callback: CustomViewCallback) = fullScreen.show(view, callback)
+
+            override fun onHideCustomView() = fullScreen.hide()
         }
         container.addView(view)
         web = view
@@ -203,14 +212,71 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        override fun onUnhandledKeyEvent(view: WebView, event: KeyEvent) {
+            if (event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                when (pageKeys.unhandled(event.downTime, event.action == KeyEvent.ACTION_DOWN)) {
+                    PageKeys.Unhandled.NOT_OURS -> Unit
+                    PageKeys.Unhandled.SWALLOW -> return
+                    PageKeys.Unhandled.FALLBACK -> {
+                        perform(BackPolicy.whenPageIgnored(view.canGoBack(), BackPolicy.isRoot(server, view.url)))
+                        return
+                    }
+                }
+            }
+            super.onUnhandledKeyEvent(view, event)
+        }
+
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             // The renderer crashed or was killed for memory: drop this WebView and offer a reload,
             // instead of letting the whole app crash.
+            fullScreen.hide()
             destroyWebView()
             createWebView()
             showError(getString(R.string.error_crash_title), getString(R.string.error_crash))
             return true
         }
+    }
+
+    private fun onBack() {
+        val w = web
+        perform(
+            BackPolicy.onBack(
+                fullScreen = fullScreen.isShowing,
+                errorShown = errorPanel.visibility == View.VISIBLE,
+                hasPage = w != null,
+                canGoBack = w?.canGoBack() == true,
+            ),
+        )
+    }
+
+    private fun perform(action: BackAction) {
+        when (action) {
+            BackAction.EXIT_FULL_SCREEN -> fullScreen.exit()
+            BackAction.ASK_PAGE -> web?.let(::sendBackToPage)
+            BackAction.GO_BACK -> {
+                hideError()
+                web?.goBack()
+            }
+            BackAction.LEAVE -> moveTaskToBack(true)
+        }
+    }
+
+    /**
+     * Back as the web app's Back key (Escape). When a text field has focus the keyboard is already
+     * closed (the IME takes the press that closes it), and the web app's Escape there only leaves the
+     * field: one Escape does that first, so the press still goes back, as it does in Chrome.
+     */
+    private fun sendBackToPage(w: WebView) {
+        if (!w.hasFocus()) w.requestFocus()
+        if (w.onCheckIsTextEditor()) sendEscape(w, fallback = false)
+        sendEscape(w, fallback = true)
+    }
+
+    private fun sendEscape(w: WebView, fallback: Boolean) {
+        val down = pageKeys.nextDownTime(SystemClock.uptimeMillis())
+        pageKeys.sent(down, fallback)
+        w.dispatchKeyEvent(KeyEvent(down, down, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ESCAPE, 0))
+        w.dispatchKeyEvent(KeyEvent(down, down, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ESCAPE, 0))
     }
 
     private fun openExternally(uri: Uri) {

@@ -37,6 +37,10 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 Links to other sites open in your browser. Servers with certificate errors are refused.
 
+Back works like the web app's Back key: it leaves full-screen video first, then closes an open sheet or
+menu, then goes to the previous page. On Home and on the sign-in page, Back leaves the app. Full-screen video
+turns the phone to landscape and hides the system bars until you leave full screen.
+
 ## Debugging
 
 Debug builds allow remote debugging: with the phone or emulator on adb, open `chrome://inspect` in desktop
