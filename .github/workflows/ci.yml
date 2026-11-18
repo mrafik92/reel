@@ -21,6 +21,7 @@ jobs:
     outputs:
       server: ${{ github.event_name != 'pull_request' || steps.filter.outputs.server == 'true' }}
       android: ${{ github.event_name != 'pull_request' || steps.filter.outputs.android == 'true' }}
+      android_web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.android_web == 'true' }}
     steps:
       - uses: actions/checkout@v4
         if: github.event_name != 'pull_request'
@@ -37,6 +38,9 @@ jobs:
               - 'server/openapi.json'   # ModelsTest checks the app's models against it
               - '.github/workflows/ci.yml'
               - '.github/workflows/android-release.yml'
+            android_web:
+              - 'clients/android-web/**'
+              - '.github/workflows/ci.yml'
 
   server:
     needs: changes
@@ -193,6 +197,37 @@ jobs:
           path: clients/android/app/build/outputs/apk/debug/*.apk
           retention-days: 14
 
+  android-web:
+    needs: changes
+    # Reel Web for Android, the WebView client (#225). PRs that don't touch clients/android-web/ skip it.
+    if: needs.changes.outputs.android_web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/android-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      # assembleRelease (unsigned here) runs R8, so shrinking problems fail the PR, not a release tag.
+      - run: ./gradlew --no-daemon lint testDebugUnitTest assembleDebug assembleRelease
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-web-reports
+          path: clients/android-web/app/build/reports/
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reel-android-web-debug
+          path: clients/android-web/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
   docs:
     # AGENTS.md §6: every PR that changes code updates docs/ — or says why not.
     if: github.event_name == 'pull_request'
@@ -209,7 +244,7 @@ jobs:
         run: |
           changed=$(git diff --name-only "$BASE" "$HEAD")
           echo "$changed"
-          code=$(echo "$changed" | grep -E '^(server/crates|clients/(apps|packages|android)|deploy)/' | grep -vE '(_test|/tests/)' || true)
+          code=$(echo "$changed" | grep -E '^(server/crates|clients/(apps|packages|android|android-web)|deploy)/' | grep -vE '(_test|/tests/)' || true)
           docs=$(echo "$changed" | grep -E '^(docs/|AGENTS\.md|deploy/README\.md)' || true)
           if [ -n "$code" ] && [ -z "$docs" ]; then
             if printf '%s' "$BODY" | grep -qiE 'docs:[[:space:]]*no (doc )?change'; then
