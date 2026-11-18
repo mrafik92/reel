@@ -15,6 +15,10 @@ import { foldText } from "./groups";
 
 export type Filter = { kind: "all" } | { kind: "favorites" } | { kind: "group"; name: string };
 
+let browsingChannel: number | undefined;
+export const getBrowsingChannel = () => browsingChannel;
+export const setBrowsingChannel = (id: number) => { browsingChannel = id; };
+
 const FILTER_KEY = "reel.live.filter";
 /** Per user: pinned / hidden / recently watched groups (localStorage for now). */
 const PREFS_KEY = "reel.live.groups";

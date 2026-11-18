@@ -1,7 +1,7 @@
 // Generates every Reel icon from the one source SVG (#142), so the sizes can't drift:
 //   web favicon (SVG + ICO), apple-touch-icon, PWA manifest icons (any + maskable),
-//   webOS icon / largeIcon / splash, the Tizen package icon, the Android launcher icons + TV banner, and
-//   the Reel Web for Android launcher icons and TV banner (#226/#231: a "WEB" variant on the dark background).
+//   webOS icon / largeIcon / splash, the Tizen package icon, and the Reel Web for Android launcher icons
+//   and TV banner (#226/#231: a "WEB" variant on the dark background).
 // Run from clients/: `bun run icons`. The outputs are committed; CI doesn't run this.
 import { Resvg } from "@resvg/resvg-js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -32,37 +32,13 @@ const tile = (s: number) => png(compose(512, 512, 512), s);
 /** Full-bleed square (no transparent corners); `scale` < 1 keeps the mark in the maskable safe zone. */
 const bleed = (s: number, scale = 1) => png(compose(512, 512, 512 * scale, TILE), s);
 
-/** Android TV launcher banner (320×180 xhdpi): the reel mark and the name, cream on crimson. */
-function banner(): Buffer {
-  const mark = logo.replace("<svg ", `<svg x="18" y="22" width="136" height="136" `);
-  const name = `<text x="160" y="112" font-family="Helvetica, Arial, sans-serif" font-size="64" font-weight="700" fill="#f2e6d3">Reel</text>`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180"><rect width="320" height="180" fill="${TILE}"/>${mark}${name}</svg>`;
-  return Buffer.from(new Resvg(svg, { fitTo: { mode: "width", value: 320 }, font: { loadSystemFonts: true } }).render().asPng());
-}
-
 /** Android density buckets → scale factor (1 dp = n px). */
 const DENSITIES = { mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, xxxhdpi: 4 } as const;
-const ANDROID_RES = "android/app/src/main/res";
-
-function androidIcons(): Record<string, Buffer> {
-  const out: Record<string, Buffer> = {};
-  for (const [d, n] of Object.entries(DENSITIES)) {
-    // Legacy (pre-Android 8) launcher icon: 48 dp, the rounded tile.
-    out[`${ANDROID_RES}/mipmap-${d}/ic_launcher.png`] = tile(48 * n);
-    // Adaptive icon foreground: 108 dp layer, mark kept inside the 66 dp safe zone. The background
-    // layer is @color/tile, so the tile's own edge disappears into it.
-    out[`${ANDROID_RES}/mipmap-${d}/ic_launcher_foreground.png`] = png(compose(512, 512, 512 * 0.66), 108 * n);
-  }
-  out[`${ANDROID_RES}/drawable-nodpi/logo.png`] = tile(384);
-  out[`${ANDROID_RES}/drawable-xhdpi/tv_banner.png`] = banner();
-  return out;
-}
-
 const ANDROID_WEB_RES = "android-web/app/src/main/res";
 
 /**
- * Reel Web for Android (#226): installed next to the Compose app, so its icon must read differently
- * at a glance: the reel tile, smaller, on the dark app background with a cream "WEB" label under it.
+ * Reel Web for Android (#226): the reel tile, smaller, on the dark app background with a cream "WEB"
+ * label under it (chosen while it was installed next to the Compose app, removed in #260).
  */
 function webMark(w: number, tileSize: number, tileY: number, labelY: number, fontSize: number, bg?: string): string {
   const x = (w - tileSize) / 2;
@@ -89,8 +65,8 @@ function androidWebIcons(): Record<string, Buffer> {
 }
 
 /**
- * Reel Web's Android TV banner (#231, 320×180 xhdpi). The Compose app's banner is crimson, so this one
- * is the dark app background with the tile, "Reel" and the same cream "WEB" label as the launcher icon.
+ * Reel Web's Android TV banner (#231, 320×180 xhdpi): the dark app background with the tile, "Reel" and
+ * the same cream "WEB" label as the launcher icon.
  */
 function webBanner(): Buffer {
   const mark = logo.replace("<svg ", `<svg x="26" y="38" width="104" height="104" `);
@@ -132,7 +108,6 @@ const out: Record<string, Buffer | string> = {
   "apps/webos/assets/largeIcon.png": tile(130),
   "apps/webos/assets/splash.png": png(compose(1920, 1080, 360, BG), 1920),
   "apps/tizen/assets/icon.png": tile(512),
-  ...androidIcons(),
   ...androidWebIcons(),
 };
 

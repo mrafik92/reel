@@ -6,9 +6,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 /**
  * The Reel server the shell loads: scheme, host and port only (its *origin*). The web app is served
  * from `/` on it and the API from `/api/v1`. The WebView stays on this origin ([LinkPolicy]).
- *
- * Parsing matches the Compose app's `ServerAddress` (clients/android), so the same input works in
- * both apps.
  */
 @JvmInline
 value class ServerAddress private constructor(val origin: String) {

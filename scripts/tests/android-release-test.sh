@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unit tests for scripts/android-release.sh and clients/android/scripts/version-from-tag.sh (#232).
+# Unit tests for scripts/android-release.sh and clients/android-web/scripts/version-from-tag.sh (#232, #260).
 # No network, no Gradle build, nothing sent: Tailscale, gh and git pushes are stubs or dry runs.
 # A throwaway keystore is generated in a temp dir (needs keytool, i.e. a JDK) and deleted at the end.
 #
@@ -10,7 +10,7 @@ set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/scripts/android-release.sh"
-VERSION_SCRIPT="$ROOT/clients/android/scripts/version-from-tag.sh"
+VERSION_SCRIPT="$ROOT/clients/android-web/scripts/version-from-tag.sh"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/reel-release-test.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 
@@ -27,25 +27,19 @@ source "$SCRIPT"
 set +e
 
 # --- version scheme -------------------------------------------------------------------------------------
-eq "compose tag → version" "$("$VERSION_SCRIPT" android-v0.2.0 | tr '\n' ' ')" "name=0.2.0 code=2000 "
 eq "web tag → version" "$("$VERSION_SCRIPT" android-web-v1.10.3 | tr '\n' ' ')" "name=1.10.3 code=1010003 "
 eq "refs/tags prefix is stripped" "$("$VERSION_SCRIPT" refs/tags/android-web-v0.1.0 | tail -1)" "code=1000"
-for badtag in android-v1.0.0-rc1 android-web-v01.0.0 android-v0.0.0 android-tv-v1.0.0 web-v1.0.0 android-v1.1000.0; do
+# android-v* was the Compose app's prefix (removed in #260); it's rejected like any other foreign tag.
+for badtag in android-v0.3.0 android-web-v1.0.0-rc1 android-web-v01.0.0 android-web-v0.0.0 android-tv-v1.0.0 web-v1.0.0 android-web-v1.1000.0; do
   "$VERSION_SCRIPT" "$badtag" >/dev/null 2>&1
   eq "rejects $badtag" "$?" 1
 done
 eq "version_code web" "$(version_code android-web-v 0.1.0)" 1000
-eq "version_code compose" "$(version_code android-v 0.3.0)" 3000
 
-# --- tag patterns stay apart ----------------------------------------------------------------------------
-# android-release.yml triggers on `android-v*`; Reel Web tags must never match it, and the reverse.
-web_tag=android-web-v0.1.0 compose_tag=android-v0.1.0
-[[ $web_tag == android-v* ]] && bad "web tag matches android-v*" || ok "web tag doesn't match android-v*"
-[[ $compose_tag == android-web-v* ]] && bad "compose tag matches android-web-v*" || ok "compose tag doesn't match android-web-v*"
-
-tags=$'android-v0.3.0\nandroid-v0.10.0\nandroid-v0.9.0\nandroid-web-v9.0.0\nandroid-v1.0.0-rc1\nandroid-web-v0.2.0'
-eq "newest compose tag (numeric, ignores web and bad tags)" "$(newest_tag android-v <<<"$tags")" android-v0.10.0
-eq "newest web tag" "$(newest_tag android-web-v <<<"$tags")" android-web-v9.0.0
+# --- newest tag -----------------------------------------------------------------------------------------
+# The repo still has the Compose app's android-v0.1.0..0.3.0 tags; they must never count as Reel Web releases.
+tags=$'android-v0.3.0\nandroid-v9.0.0\nandroid-web-v0.9.0\nandroid-web-v0.10.0\nandroid-web-v1.0.0-rc1\nandroid-web-v0.2.0'
+eq "newest web tag (numeric, ignores android-v* and bad tags)" "$(newest_tag android-web-v <<<"$tags")" android-web-v0.10.0
 eq "no tag → empty" "$(newest_tag android-web-v <<<"android-v0.3.0")" ""
 
 eq "next_patch none" "$(next_patch "")" 0.1.0
@@ -59,9 +53,7 @@ eq "web package" "$APP_ID" app.reel.android.web
 eq "web tag prefix" "$TAG_PREFIX" android-web-v
 eq "web APK name" "$APK_BASENAME" ReelWeb
 app_config compose
-eq "compose package" "$APP_ID" app.reel.android
-eq "compose tag prefix" "$TAG_PREFIX" android-v
-eq "compose APK name" "$APK_BASENAME" Reel
+eq "compose app removed (#260)" "$?" 1
 app_config tv
 eq "unknown app rejected" "$?" 1
 
@@ -189,7 +181,11 @@ eq "no app → usage (2)" "$?" 2
 eq "unknown flag → usage (2)" "$?" 2
 REEL_NO_FETCH=1 "$SCRIPT" web --version 1.0 >/dev/null 2>&1
 eq "bad --version → usage (2)" "$?" 2
-"$SCRIPT" --help | grep -q 'web|compose' && ok "--help" || bad "--help"
+"$SCRIPT" compose >/dev/null 2>&1
+eq "compose → usage (2)" "$?" 2
+help=$("$SCRIPT" --help)
+has "--help" "$help" "Usage: scripts/android-release.sh web [options]"
+lacks "--help has no compose mode" "$help" "compose"
 
 echo
 echo "$pass passed, $fail failed"

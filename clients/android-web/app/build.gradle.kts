@@ -5,7 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
-// Optional release signing, same sources as the Compose app (clients/android):
+// Optional release signing:
 // clients/android-web/keystore.properties (git-ignored) or the REEL_KEYSTORE_* / REEL_KEY_* env vars.
 // Without either, release builds are unsigned.
 val keystoreProps = Properties().apply {
@@ -17,7 +17,8 @@ fun signingValue(prop: String, env: String): String? =
 val releaseStoreFile = signingValue("storeFile", "REEL_KEYSTORE_FILE")
 
 android {
-    // A different package from the Compose app (app.reel.android), so both install side by side (#225).
+    // Never change it: installed releases update only under this package id (#225; app.reel.android was the
+    // Compose app, removed in #260).
     namespace = "app.reel.android.web"
     compileSdk = 35
 

@@ -1,5 +1,0 @@
-<resources>
-    <!-- Same tokens as packages/ui/src/styles/ui.css (crimson + cream, #177). -->
-    <color name="tile">#C2352D</color>
-    <color name="bg">#0B0909</color>
-</resources>
