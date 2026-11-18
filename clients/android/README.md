@@ -82,7 +82,8 @@ APK. Reel Web uses the same scheme with `android-web-v` tags. Local and debug bu
 **Signing.** Every release must be signed with the **same key**, or Android refuses to install it over the
 previous one (you'd have to uninstall and lose the app's data). The key is `~/.reel-android/reel-release.jks`
 (PKCS12, alias `reel`, certificate SHA-256 `a48654758e7b9b85a5825e7f7a55bfebc8b2d5370691d7d056124ee4c9a58ecb`);
-the keystore and its password are backed up in the owner's password manager. The script takes the password from
+the keystore and its password are backed up in the owner's Proton Pass (vault *Personal*, item *Reel Android
+release key*; the keystore is a base64 hidden field, restore with `base64 -d`). The script takes the password from
 `REEL_KEYSTORE_PASSWORD` (and `REEL_KEY_PASSWORD`, which defaults to it), else the macOS Keychain, else a hidden
 prompt, and passes it to `keytool` and Gradle only as environment variables (`REEL_KEYSTORE_FILE`,
 `REEL_KEYSTORE_PASSWORD`, `REEL_KEY_ALIAS`, `REEL_KEY_PASSWORD`, read by `app/build.gradle.kts`), never as a file
