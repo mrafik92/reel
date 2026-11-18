@@ -40,6 +40,7 @@ export function GroupPicker(): JSX.Element {
           <For each={groupPrefs().pinned}>{(name) => <button type="button" dir="auto" onClick={() => choose({ kind: "group", name })}>★ {name}</button>}</For>
           <button type="button" onClick={() => choose({ kind: "all" })}>All channels</button>
           <button type="button" onClick={() => { setOpen(false); setBrowsing(true); }}>Browse all groups…</button>
+          <button type="button" onClick={() => { setOpen(false); trigger.focus(); }}>Close</button>
         </div>
       </Show>
       <Show when={browsing()}><GroupBrowser onPick={choose} onClose={() => { setBrowsing(false); requestAnimationFrame(() => trigger.focus()); }} /></Show>
