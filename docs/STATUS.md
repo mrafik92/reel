@@ -37,6 +37,7 @@ Reel Web for Android (epic #225), a WebView client next to the Compose app, has 
 - **webOS/Tizen apps:** the webOS package launches and connects on the LG TV. The elapsed-time fallback (#131) and Live TV fullscreen sizing fix (#132) are built and awaiting hardware verification in the LG browser and app. Tizen has yet to be installed on a TV, and its package ID is a placeholder.
 - **Casting:** AirPlay and Chromecast never tested with devices. **DLNA** needs the TV IPs + a CT 113 firewall rule.
 - **Web identity in Reel Web for Android** (#229): client `android-web`, "Reel Web on <model>", TV mode from the ` (TV)` token, Chromecast off in the shell. Checked with Playwright using spoofed shell user agents (mock mode, and the live API storing the session); not deployed, not yet seen through the real APK on an emulator or phone.
+- **IPTV movie genres** (#239): the live catalog had 22 tagged movies out of 41,368. The bulk import, TMDB backfill and full-catalog picker are built. Live backfill coverage is pending deployment.
 - **IPTV VOD remux/transcode playback** through the upstream proxy (#3; direct play is verified, remux seek is broken on `65bd851`, fix built: #92). Reviewed in code and
   covered by CI tests with local fake providers (2026-11-11):
   - Movie and series episode, direct play (proxied through `/vod/direct` with `Range`) and remux/transcode (ffmpeg

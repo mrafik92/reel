@@ -71,6 +71,7 @@ gaps are listed in [STATUS.md](STATUS.md).
 | TV guide (EPG) | ✅ | The provider has no guide data, so Reel combines several external XMLTV guides (epgshare01: AE, beIN, Al Jazeera, UK, ZA, FR) matched by name. ~1,436 channels, ~54k programmes |
 | Guide grid | ✅ | Virtualized channels × time grid |
 | IPTV movies & series (VOD) | ✅ catalog / ✅ direct play / 🧪 remux | 41,268 movies and 15,109 series imported. **My library · IPTV** switch on Movies/Shows; detail pages; "Play now (IPTV)" in Discover. Playback goes through the internal upstream proxy with the source's User-Agent, and shares the provider's connection budget with live TV (a stop or takeover also closes a paused direct-play stream). Direct play verified on the real provider (2026-11-11, #3). A remux (video copy) serves a full, seekable VOD playlist: the keyframe index is read from the MKV Cues / MP4 `stss` with a few `Range` requests through the proxy (#92, built and tested in CI, not deployed; containers without an index still play but can't be seeked). Remux/transcode is covered by CI with fake providers |
+| IPTV genre coverage (#239) | 🧪 | The genre picker lists saved tags across the catalog. Reel imports provider tags when present and gradually fills missing movie genres through TMDB. Titles without a confident match remain searchable by name and provider category |
 | Provider politeness | ✅ | Per-source rate limiter with backoff on the panel's 46x/429 anti-abuse codes |
 
 ## Clients & casting

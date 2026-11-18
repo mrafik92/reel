@@ -5022,6 +5022,50 @@
         }
       }
     },
+    "/api/v1/vod/genres": {
+      "get": {
+        "operationId": "vod_genres",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "description": "`movie` (default) or `series`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/vod/images/{what}/{id}": {
       "get": {
         "summary": "Provider artwork (poster, backdrop, season poster, episode still), fetched once and cached.",
