@@ -167,6 +167,11 @@
 .pc__side--end {
   justify-content: flex-end;
 }
+/* TV: long track labels ("AAC · 5.1", "EN SDH Auto") used to spill left over the transport buttons
+   (#231). The end group keeps its width and the transport moves left only when it has to. */
+html.tv .pc__side--end {
+  min-width: max-content;
+}
 .pc__side > * + * {
   margin-left: 0.2rem;
 }

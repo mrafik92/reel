@@ -41,6 +41,13 @@ Back works like the web app's Back key: it leaves full-screen video first, then 
 menu, then goes to the previous page. On Home and on the sign-in page, Back leaves the app. Full-screen video
 turns the phone to landscape and hides the system bars until you leave full screen.
 
+### Android TV
+
+The same APK installs on Android TV (checked on the emulator only, #231). It's listed under **Apps** with the
+dark "Reel WEB" banner, and the web app switches to its 10-foot layout with D-pad navigation (needs a server
+with #229 deployed). The remote's arrows, OK, Back and media keys go straight to the web app. There's no
+long-press shortcut on TV: use **Change server** on the "Can't reach Reel" screen.
+
 ## Release builds (#232)
 
 GitHub Actions is unavailable for now, so release APKs are built on the Mac and sent to the phone with

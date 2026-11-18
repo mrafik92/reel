@@ -41,7 +41,7 @@ export interface TvNavigationOptions {
   /** Force TV behaviour (always-visible focus, pointer hover focuses, instant scroll). */
   tv?: boolean;
   debug?: boolean;
-  /** Called when Back is pressed and no handler consumed it (default: `exitApp()` on TVs). */
+  /** Called when Back is pressed and no handler consumed it (default: `exitApp()` on webOS and Tizen). */
   onBack?: () => void;
 }
 
@@ -226,12 +226,9 @@ function onRemote(e: RemoteKeyEvent): boolean {
     state.onBack();
     return true;
   }
-  // Root screen: leave the app on TVs (no-op in a browser — let it be).
-  if (state.tv) {
-    exitApp();
-    return true;
-  }
-  return false;
+  // Root screen: leave the app on webOS and Tizen. Elsewhere Back stays unhandled, so a browser does
+  // nothing and the Reel Web Android shell leaves (it only acts on an Escape the page didn't take).
+  return state.tv && exitApp();
 }
 
 function onFocusIn(e: FocusEvent): void {
