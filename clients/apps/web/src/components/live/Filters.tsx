@@ -1,9 +1,52 @@
 import { createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
-import { Icon, onRemoteKey } from "@reel/ui";
-import { favouriteCount, filter, filterKey, groupPrefs, groups, query, setFilter, setQuery, totalChannels, type Filter } from "./store";
+import { Icon, onBack, onRemoteKey } from "@reel/ui";
+import { favouriteCount, filter, filterKey, filterLabel, groupPrefs, groups, query, setFilter, setQuery, totalChannels, type Filter } from "./store";
 import { classify, prefixOf, shortName, type GroupInfo } from "./groups";
 import { GroupBrowser, GroupMenu } from "./GroupBrowser";
 import { pressHandlers } from "./press";
+
+export function GroupPicker(): JSX.Element {
+  const [open, setOpen] = createSignal(false);
+  const [browsing, setBrowsing] = createSignal(false);
+  let trigger!: HTMLButtonElement;
+  let menu!: HTMLDivElement;
+  onMount(() => {
+    const off = onBack(() => {
+      if (!open()) return false;
+      setOpen(false);
+      trigger.focus();
+      return true;
+    });
+    onCleanup(off);
+  });
+  const choose = (f: Filter) => {
+    setQuery("");
+    setFilter(f);
+    setOpen(false);
+    setBrowsing(false);
+    requestAnimationFrame(() => trigger.focus());
+  };
+  return (
+    <div class="group-picker">
+      <button ref={trigger} type="button" class="btn group-picker__trigger" aria-haspopup="dialog" aria-expanded={open()} onClick={() => {
+        setOpen(!open());
+        if (open()) requestAnimationFrame(() => menu?.querySelector<HTMLButtonElement>("button")?.focus());
+      }}>
+        <span dir="auto">{filterLabel()}</span><span aria-hidden="true">▾</span>
+      </button>
+      <Show when={open()}>
+        <div ref={menu} class="group-picker__menu" data-nav-group data-nav-trap role="dialog" aria-label="Channel groups">
+          <button type="button" onClick={() => choose({ kind: "favorites" })}>★ Favourites <small>{favouriteCount()}</small></button>
+          <For each={groupPrefs().pinned}>{(name) => <button type="button" dir="auto" onClick={() => choose({ kind: "group", name })}>★ {name}</button>}</For>
+          <button type="button" onClick={() => choose({ kind: "all" })}>All channels</button>
+          <button type="button" onClick={() => { setOpen(false); setBrowsing(true); }}>Browse all groups…</button>
+          <button type="button" onClick={() => { setOpen(false); trigger.focus(); }}>Close</button>
+        </div>
+      </Show>
+      <Show when={browsing()}><GroupBrowser onPick={choose} onClose={() => { setBrowsing(false); requestAnimationFrame(() => trigger.focus()); }} /></Show>
+    </div>
+  );
+}
 
 
 /**
