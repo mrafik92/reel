@@ -13,6 +13,8 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.sync.Mutex
 import okhttp3.OkHttpClient
 
 /**
@@ -31,6 +33,12 @@ class AppGraph(context: Context) {
 
     /** Per-device settings (playback quality); the player reads them (#190). */
     val devicePrefs = DevicePrefs(PreferenceDataStoreFactory.create { context.preferencesDataStoreFile("device_prefs") })
+
+    /** A channel to tune when the Live TV tab opens (Home's *Live now* row); the tab clears it. */
+    val liveRequest = MutableStateFlow<Long?>(null)
+
+    /** Serialize live session changes even if the viewer leaves and immediately reopens the tab. */
+    val liveSessionLock = Mutex()
 
     val session = SessionManager(
         store = SessionStore(PreferenceDataStoreFactory.create { context.preferencesDataStoreFile("session") }),

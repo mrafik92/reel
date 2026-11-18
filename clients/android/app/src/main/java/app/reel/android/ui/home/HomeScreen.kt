@@ -62,6 +62,7 @@ import app.reel.android.ui.common.ReelImage
 import app.reel.android.ui.common.rememberLoad
 import app.reel.android.ui.item.ItemLogic
 import app.reel.android.ui.item.rememberPlayLauncher
+import app.reel.android.ui.live.LiveNowRow
 import app.reel.android.ui.shell.LocalNavController
 import app.reel.android.ui.shell.Routes
 import app.reel.android.ui.theme.ReelColors
@@ -100,6 +101,8 @@ internal fun cardMeta(i: ItemSummary, withGenres: Boolean = false): String? = li
     ItemLogic.timeLeft(i.progress, i.runtimeS?.toDouble()),
 ).joinToString(" · ").ifEmpty { null }
 
+private const val EMPTY_HOME = "Nothing here yet. Add a library in Reel on the web."
+
 /**
  * Home (#188): a featured title, then Continue watching (with progress), Recently added and one row
  * per library (ending in *See all*), from `GET /home`.
@@ -107,23 +110,25 @@ internal fun cardMeta(i: ItemSummary, withGenres: Boolean = false): String? = li
  * - Phone: a large featured title with *Resume* / *Details*, then the rows.
  * - TV: the featured area at the top follows the focused card (title, rating, meta, overview).
  *
+ * With Live TV access, a *Live now* row of favourite channels follows the first row (#191).
+ *
  * It reloads when shown again (Back) and refreshes quietly when the app comes back to the front.
  */
 @Composable
-fun HomeScreen() {
+fun HomeScreen(live: Boolean) {
     val home = rememberLoad { home() }
     OnResume { home.refresh() }
     val memory = rememberFocusMemory()
     RestoreFocus(memory, ready = home.state is Load.Ready)
-    Loadable(home, isEmpty = { lanes(it).isEmpty() }, emptyText = "Nothing here yet. Add a library in Reel on the web.") { h ->
-        if (LocalDeviceKind.current == DeviceKind.Tv) TvHome(h, memory) else PhoneHome(h, memory)
+    Loadable(home, isEmpty = { !live && lanes(it).isEmpty() }, emptyText = EMPTY_HOME) { h ->
+        if (LocalDeviceKind.current == DeviceKind.Tv) TvHome(h, memory, live) else PhoneHome(h, memory, live)
     }
 }
 
 // ---- phone ---------------------------------------------------------------------------------
 
 @Composable
-private fun PhoneHome(h: Home, memory: FocusMemory) {
+private fun PhoneHome(h: Home, memory: FocusMemory, live: Boolean) {
     val feature = featured(h)
     LazyColumn(
         Modifier.fillMaxSize().testTag("home"),
@@ -131,7 +136,10 @@ private fun PhoneHome(h: Home, memory: FocusMemory) {
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
         if (feature != null) item(key = "featured") { PhoneFeatured(feature) }
-        items(lanes(h), key = { it.key }) { lane -> Lane(lane, memory, edge = 16.dp, tv = false) }
+        val all = lanes(h)
+        items(all.take(1), key = { it.key }) { lane -> Lane(lane, memory, edge = 16.dp, tv = false) }
+        if (live) item(key = "live-now") { LiveNowRow(memory, edge = 16.dp, tv = false, emptyText = EMPTY_HOME.takeIf { all.isEmpty() }) }
+        items(all.drop(1), key = { it.key }) { lane -> Lane(lane, memory, edge = 16.dp, tv = false) }
     }
 }
 
@@ -200,7 +208,7 @@ private fun PhoneFeatured(i: ItemSummary) {
 private data class Spotlight(val lane: HomeLane?, val item: ItemSummary)
 
 @Composable
-private fun TvHome(h: Home, memory: FocusMemory) {
+private fun TvHome(h: Home, memory: FocusMemory, live: Boolean) {
     val all = lanes(h)
     var spot by remember { mutableStateOf(featured(h)?.let { f -> Spotlight(all.firstOrNull { f in it.items }, f) }) }
     Column(Modifier.fillMaxSize().testTag("home")) {
@@ -210,7 +218,11 @@ private fun TvHome(h: Home, memory: FocusMemory) {
             contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp),
             verticalArrangement = Arrangement.spacedBy(28.dp),
         ) {
-            items(all, key = { it.key }) { lane ->
+            items(all.take(1), key = { it.key }) { lane ->
+                Lane(lane, memory, edge = 32.dp, tv = true, onFocusItem = { spot = Spotlight(lane, it) })
+            }
+            if (live) item(key = "live-now") { LiveNowRow(memory, edge = 32.dp, tv = true, emptyText = EMPTY_HOME.takeIf { all.isEmpty() }) }
+            items(all.drop(1), key = { it.key }) { lane ->
                 Lane(lane, memory, edge = 32.dp, tv = true, onFocusItem = { spot = Spotlight(lane, it) })
             }
         }
