@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    # Docs-only pushes don't change the image. Path filters aren't evaluated for tag pushes.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   workflow_dispatch:
 
 permissions:
@@ -56,11 +60,11 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
 
-      - name: Deploy link
+      - name: Deploy hint
         if: github.ref == 'refs/heads/main'
         run: |
           {
             echo "### Image \`${GITHUB_SHA::7}\` is ready"
             echo
-            echo "Deploy it to CT 113: **[Actions → deploy → Run workflow](${{ github.server_url }}/${{ github.repository }}/actions/workflows/deploy.yml)**"
+            echo "Deploy it to CT 113 from the owner's Mac: \`deploy/ct113/deploy.py\` (\`--dry-run\` first)."
           } >> "$GITHUB_STEP_SUMMARY"

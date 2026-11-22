@@ -1,18 +1,12 @@
 #!/usr/bin/env python3
 """Deploy Reel to CT 113 and move the tickets that shipped to "Deployed" on the GitHub Project.
 
-Two ways to run it:
+Run it from the owner's Mac (the only deploy path since #268; the repo is public, so there is no
+self-hosted runner). Needs `ssh minix-local`, `gh` with the `project` scope, and the checkout.
 
-* **From GitHub** (normal): Actions → `deploy` → *Run workflow*. Runs on the self-hosted runner (CT 116)
-  with `--forced`; see `.github/workflows/deploy.yml`.
-* **From the Mac** (fallback): needs `ssh minix-local`, `gh` with the `project` scope, and the checkout.
-
-    deploy/ct113/deploy.py                     # Mac: deploy :latest, update tickets
+    deploy/ct113/deploy.py                     # deploy :latest, update tickets
     deploy/ct113/deploy.py --dry-run           # show what would happen, change nothing
-    DEPLOY_SSH=root@10.10.10.10 deploy/ct113/deploy.py --forced
     deploy/ct113/deploy.py --since <sha>       # only (re)process tickets for <sha>..latest, no deploy
-        # runner: the SSH key is pinned on minix to the forced command /usr/local/bin/reel-deploy,
-        # which only understands `sha` and `deploy`
 
 Ticket convention: reference issues in commit messages with `Refs #12` (or `#12`). Use `Fixes #12` only
 when the change needs no verification — GitHub closes it on push, skipping Deployed/Verified.
@@ -21,7 +15,6 @@ Tickets referenced by commits between the previously deployed build and the new 
   * Status → Deployed (unless already Deployed / Verified / Done).
 """
 import json
-import os
 import re
 import subprocess
 import sys
@@ -35,8 +28,6 @@ HEALTH = "https://reel.rafikii.co/api/v1/health"
 
 DRY = "--dry-run" in sys.argv
 SINCE = sys.argv[sys.argv.index("--since") + 1] if "--since" in sys.argv else None
-FORCED = "--forced" in sys.argv
-FORCED_TARGET = os.environ.get("DEPLOY_SSH", "root@10.10.10.10")
 ADVANCE_FROM = {"Backlog", "To do", "Implementing", "Reviewing", None}
 
 
@@ -58,11 +49,6 @@ def gql(query, **variables):
     return out["data"]
 
 
-def forced(verb, check=True):
-    """Forced-command mode: the remote side runs /usr/local/bin/reel-deploy with `verb`."""
-    return run("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", FORCED_TARGET, verb, check=check)
-
-
 def remote(cmd, check=True):
     """Run `cmd` (argv list) inside CT 113 via the PVE host, quoting safely through ssh."""
     import shlex
@@ -71,19 +57,13 @@ def remote(cmd, check=True):
 
 
 def deployed_sha():
-    if FORCED:
-        out = forced("sha", check=False)
-        return out if re.fullmatch(r"[0-9a-f]{7,40}", out or "") else None
     env = remote(["docker", "inspect", "reel", "--format", "{{range .Config.Env}}{{println .}}{{end}}"], check=False)
     m = re.search(r"^REEL_GIT_SHA=([0-9a-f]{7,40})", env, re.M)
     return m.group(1) if m else None
 
 
 def do_deploy():
-    if FORCED:
-        print(forced("deploy"))
-    else:
-        remote(["sh", "-c", "cd /root/reel && docker compose pull -q && docker compose up -d && docker image prune -f"])
+    remote(["sh", "-c", "cd /root/reel && docker compose pull -q && docker compose up -d && docker image prune -f"])
 
 
 def latest_image_sha():
@@ -131,10 +111,6 @@ def main():
         print("health:", health)
         if '"ok"' not in health:
             sys.exit("health check failed — investigate before touching tickets")
-        summary = os.environ.get("GITHUB_STEP_SUMMARY")
-        if summary:
-            with open(summary, "a") as f:
-                f.write(f"### Deployed `{new[:7]}` to CT 113\n\nPrevious build: `{(old or '?')[:7]}` · health: `{health}`\n")
 
     # Commits that shipped.
     run("git", "fetch", "-q", "origin")
@@ -159,7 +135,7 @@ def main():
         return
 
     # Project updates go through GraphQL directly: `gh project …` insists on read:org/read:discussion,
-    # while these queries only need the `project` scope that PROJECT_TOKEN has.
+    # while these queries only need the `project` scope.
     owner, name = REPO.split("/")
     proj = gql("""query($login:String!,$n:Int!){ user(login:$login){ projectV2(number:$n){ id
                  field(name:"Status"){ ... on ProjectV2SingleSelectField { id options { id name } } } } } }""",
