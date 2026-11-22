@@ -16,8 +16,8 @@
 | Firewall | CT 113 Proxmox firewall drops LAN egress apart from the Arr ports and **qBittorrent :8200** (added for Reel) | Backup: `/root/113.fw.bak-*` |
 | Remote access | Tailscale; OPNsense has a static-port outbound NAT + WAN UDP 41641 pass (Firewall → Automation, "Tailscale: …") | Config backup `/conf/backup/config-pre-tailscale-static-port-20261103T165802Z.xml` |
 | Image registry | `ghcr.io/mrafik92/reel` (private) | CT 113 is logged in with a **pull-only** PAT (`read:packages`) |
-| Deploy runner | **CT 116** `gh-runner` (10.10.10.196, Debian 13, unprivileged, 512 MB) | GitHub Actions self-hosted runner `gh-runner-ct116`, label `homelab`, service user `runner`. Outbound only: firewall `policy_in DROP`, LAN egress limited to DNS/NTP, minix:22, Caddy:443 |
-| Deploy key | minix `/root/.ssh/authorized_keys` → `restrict,command="/usr/local/bin/reel-deploy",from="10.10.10.0/24"` | `reel-deploy` accepts only `sha` / `deploy` and logs to the journal (`journalctl -t reel-deploy`). Host firewall `host.fw`: `IN ACCEPT -source 10.10.10.196 -p tcp -dport 22` (backup `/root/host.fw.bak-*`) |
+| Deploys | The owner's Mac: `deploy/ct113/deploy.py` over `ssh minix-local` | No self-hosted runner: the repo is public, and a runner would let fork PRs run code on the LAN (#268, ARCHITECTURE A73). The former runner, **CT 116** `gh-runner` (10.10.10.196, `gh-runner-ct116`, label `homelab`), is unregistered and its service stopped |
+| Former runner deploy key | minix `/root/.ssh/authorized_keys` → `restrict,command="/usr/local/bin/reel-deploy",from="10.10.10.0/24"`; `host.fw` `IN ACCEPT -source 10.10.10.196 -p tcp -dport 22` | Used only by the CT 116 runner, so nothing uses it now. If the key line, `/usr/local/bin/reel-deploy` or the `host.fw` rule are still there, they can be removed (infrastructure change: owner's call) |
 
 ### Credentials and where they live
 
@@ -26,7 +26,7 @@
 | Reel admin (`rafik`) | minix `/root/.reel-admin` (root-only). Change the password in Settings |
 | TMDB key, webhook secret, (OMDb, Trakt) | CT 113 `/root/reel/.env` |
 | IPTV provider login, qBittorrent password, Arr API keys | Reel DB (entered in Settings) |
-| `PROJECT_TOKEN` (classic PAT: `repo`, `project`) | GitHub repo secret, used by the `deploy` workflow to comment on tickets and move them to Deployed |
+| `PROJECT_TOKEN` (classic PAT: `repo`, `project`) | GitHub repo secret, used only by the removed `deploy` workflow (#268); nothing reads it now, so the secret can be deleted and the PAT revoked. Ticket updates on deploy use the Mac's `gh` login (needs the `project` scope) |
 | Cloudflare API token for Caddy DNS-01 (`CF_API_TOKEN`: zone rafikii.co, Zone Read + DNS Edit) | CT 107 `/etc/caddy/cloudflare.env` (root, 0600), loaded by the caddy unit's `override.conf`. Was written to the journal by `--environ` until 2026-11-15; **rotation pending** (owner deferred it), see Public edge → Token rotation |
 | Android release signing (#195, #232): keystore `reel-release.jks` (alias `reel`, certificate SHA-256 `a4865475…58ecb`) and its password, for Reel Web for Android | Mac `~/.reel-android/reel-release.jks` (dir 0700, file 0600); the keystore and its password are backed up in the owner's **Proton Pass** (vault *Personal*, item *Reel Android release key*: alias, password, certificate SHA-256 and the keystore as base64, with restore steps in the item's note). That item is the only recoverable copy: GitHub secrets can't be read back, and losing the key means future APKs can't update installed apps. `scripts/android-release.sh` reads the password from `REEL_KEYSTORE_PASSWORD`, or the macOS Keychain item service `reel-android-keystore`, account `reel` (optional; add it once with `security add-generic-password -s reel-android-keystore -a reel -w`), or a hidden prompt; never from a file. The GitHub Actions secrets `ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` were used only by the Compose app's `android-release.yml`, removed in #260; nothing reads them now. A git-ignored `clients/android-web/keystore.properties` also works for plain Gradle but puts the password on disk. Setup: `clients/android-web/README.md` → Release builds |
 | OPNsense API key (firewall automation) | Mac `~/.config/opnsense-api` (0600). Revoke in OPNsense if no longer needed |
@@ -38,7 +38,7 @@ git push main ──► GitHub Actions
                    ├── ci.yml:    cargo fmt/clippy/nextest (rustc 1.86, ffmpeg, mold), bun typecheck/build
                    └── image.yml: docker buildx (deploy/Dockerfile) → ghcr.io/mrafik92/reel:latest + :sha-xxxx
                                   build args GIT_SHA / BUILD_DATE → shown in Settings → About
-CT 113:  Actions → deploy → Run workflow  (runner CT 116 → ssh forced command → compose pull/up/prune)
+CT 113:  deploy/ct113/deploy.py on the Mac  (ssh minix-local → pct exec 113 → compose pull/up/prune)
 ```
 
 - CI runs **once** per PR (`pull_request`) and once per push to `main`. The `server` job is skipped on PRs
@@ -71,10 +71,18 @@ CT 113:  Actions → deploy → Run workflow  (runner CT 116 → ssh forced comm
   ssh minix-local 'pct exec 113 -- sh -c "cd /root/reel && docker compose pull -q && docker compose up -d && docker image prune -f"'
   curl -s https://reel.rafikii.co/api/v1/health   # {"status":"ok"} (version only when signed in)
   ```
-- **Preferred: GitHub.** After an image build, its run summary links to **Actions → deploy → Run workflow**. That click is the gate (web or the GitHub mobile app). The job runs `deploy/ct113/deploy.py --forced` on CT 116: it deploys, health-checks, moves tickets to Deployed and writes a run summary. Runs are serialized, and the job refuses to deploy while a newer image build is still running. Recovery: run it with **since = <old sha>** to (re)process tickets without deploying.
-- **Fallback from the Mac:** `deploy/ct113/deploy.py` (or `--dry-run`). It pulls the latest successful image, restarts, runs a health check, then finds tickets referenced in the commits since the previously deployed build. Each gets a comment "🚀 Deployed to CT 113 — build `abc1234`" and moves to **Deployed** on the project board.
-- **Android app releases** (#232) are separate from the server image and, while GitHub Actions is unavailable
-  (account billing), built on the Mac. Reel Web is the only Android app (the Compose app was removed in #260):
+- **Normal deploy: `deploy/ct113/deploy.py` from the Mac** (`--dry-run` first). There is no deploy workflow
+  since #268 (the repo is public, so no self-hosted runner); the image run summary only reminds you of this
+  command. It needs `ssh minix-local` and `gh` with the `project` scope. It pulls the latest successful
+  image, restarts, runs a health check, then finds tickets referenced in the commits since the previously
+  deployed build. Each gets a comment "🚀 Deployed to CT 113 — build `abc1234`" and moves to **Deployed** on
+  the project board. It refuses to deploy while a newer image build is still running. Recovery:
+  `deploy/ct113/deploy.py --since <old sha>` (re)processes tickets without deploying.
+- `image.yml` skips pushes that only touch `docs/**` or `*.md` files, so such a merge builds no image and
+  `deploy.py` reports "already up to date"; tickets referenced only by those commits move to Deployed with
+  the next image build.
+- **Android app releases** (#232) are separate from the server image and built on the Mac (no Actions
+  workflow builds them since #260). Reel Web is the only Android app (the Compose app was removed in #260):
   ```sh
   scripts/android-release.sh web --taildrop     # Reel Web → dist/ReelWeb-X.Y.Z.apk (+ .sha256)
   ```
@@ -189,11 +197,10 @@ the container (`sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' /config/config.xml`)
 3. `POST /api/v1/admin/cast/devices {"ip": "<tv>"}`, or use Settings.
 4. If SSDP finds the TV but it doesn't show up, check the logs for `DLNA description points away from the device` (its control URLs are on another address) and add it by IP instead. To rely on IP-added TVs only, set `REEL_CAST_DISCOVERY=false` in `/root/reel/.env`.
 
-**Deploy runner (CT 116)**
-- Status: GitHub → Settings → Actions → Runners (`gh-runner-ct116` online), or `systemctl status 'actions.runner.*'` in CT 116.
-- Re-register: `gh api -X POST repos/mrafik92/reel/actions/runners/registration-token`, then `./config.sh --url … --token … --labels homelab --replace` as `runner` in `~/actions-runner`.
-- If the runner's IP changes from 10.10.10.196, update `host.fw` and `116.fw` (the key's `from=` allows 10.10.10.0/24).
-- **The repo must stay private** while this runner is attached.
+**Self-hosted runners**
+- None. The repo is public, and a self-hosted runner would let fork PRs run code on the homelab, so don't
+  register one (the CT 116 runner was decommissioned in #268). GitHub → Settings → Actions → Runners
+  should stay empty.
 
 **Bootstrap a fresh instance**
 `deploy/ct113/bootstrap.py` (on minix) creates the admin, libraries, Arr servers and webhooks. It's idempotent and never prints keys.
