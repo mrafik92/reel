@@ -300,10 +300,16 @@ because they load from `file://`.
 | A72 | **The web player's full-screen element is the route wrapper (`div.player` in `Player` / `VodPlayer`), not the player view's own stage; the wrapper leaves full screen when the route closes** (#247) | *Next episode* swaps the item under the same `/play/:id` route and the keyed `<Show>` builds a fresh `PlayerView`. Removing a full-screen element drops full screen, and in Reel Web for Android the shell then turns the phone back to portrait. The wrapper stays mounted while only the id changes, so the new episode opens full screen without asking again, which would need a fresh user gesture and would flash portrait. `PlayerView` gets the wrapper through a context (`FullscreenHost`, `lib/fullscreen.ts`) and falls back to its stage when there's no wrapper | Overlays in full screen now mount into the wrapper, next to the stage instead of inside it (#94's `overlayTarget` follows the full-screen element). A future player route that renders `PlayerView` must provide the host to keep this behaviour. Going Back to another `/play/` entry would also stay in full screen |
 | A73 | **The repo is public, has no self-hosted runners, and deploys run from the owner's Mac with `deploy/ct113/deploy.py`; CI and image builds stay on GitHub-hosted runners, and `image.yml` skips docs-only pushes** (#268; supersedes A18) | Private-repo Actions minutes ran out on 2026-11-18 and public repos get hosted runners for free, so CI runs on PRs again. A self-hosted runner on a public repo is unsafe: a fork PR could run its code on the homelab LAN, so the CT 116 runner and its `deploy` workflow had to go. `deploy.py` already did the whole job from the Mac (pull, restart, health check, tickets to Deployed with a build-SHA comment), so nothing new was needed | Deploys need the owner's Mac (`ssh minix-local` and `gh` with the `project` scope); there's no one-click deploy from the GitHub web or mobile app and no Actions audit trail for deploys. The Mac's SSH path is root on minix, broader than the runner's two-verb forced command. Tickets referenced only by docs-only commits move to Deployed with the next image build |
 | A74 | **Request status updates apply only if the row still has the status the caller read (#276)** | The tracker and import webhooks read a request, wait on the Arr, download client or scanner, then write. An unconditional write could move an `available` request back in flight, so the next import sent another *available* notification. | A stale update is dropped rather than retried. The tracker derives the state again on its next poll, and `mark_available` re-reads the row first. |
+| A75 | **Admin powers are a per-request grant, off by default; an admin on a public address keeps viewing (#127)** | The owner watches over the public address from abroad, so refusing admin logins there would lock them out of their own library. `is_admin()` now means "may use admin powers on this request", and only a bearer session from the LAN or Tailscale gets it, so a code path that forgets the check gets a regular user. Proxy headers from an untrusted peer fail closed | An admin abroad needs Tailscale for admin actions. Admin sessions opened through a signed URL can't act on someone else's session |
+| A76 | **Offline common-password list, compiled in (#148)** | A breach-check API would send password material to a third party on every change. With a 12-character minimum, the useful extra check is a common word padded to length, so the top-100k list also matches the password with leading and trailing digits and symbols removed | About 690 KB in the binary. Passwords from newer breaches aren't caught |
+| A77 | **`webauthn-rs` 0.5.4, with OpenSSL in the image (#146)** | Passkey verification is easy to get subtly wrong, so it uses the maintained library. 0.6 needs rustc 1.89 and CI is pinned to 1.86 | Reel now links OpenSSL (`libssl3` in the runtime image). `time` stays at 0.3.45 for the same compiler reason, with a reasoned exception in `audit.toml` (Reel doesn't parse RFC 2822) |
+| A78 | **A login that needs a second factor is an error value in the auth crate and a 202 in the API (#146)** | `login()` returning `Err(SecondFactorRequired)` means a caller that doesn't handle it can never treat the password step as a finished login. Challenges live in memory: a restart just means entering the password again | A client built before this can't sign in to an account that has a second factor until it's rebuilt. Sessions it already holds keep working |
+| A79 | **OpenID Connect inside Reel, verified with `ring`, linking by (issuer, `sub`) (#149)** | Google and Microsoft are free standard OIDC, and Reel keeps its own sessions, so TVs, signed URLs and casting are unchanged. Compared on 2026-11-16: Supabase Auth (a whole backend, its OIDC server still beta), Auth0/Clerk (a hosted broker that sees every login), Apple (paid account, secret renewed every 6 months), GitHub (no ID token), self-hosted Pocket ID/Authentik (needs its own public hostname). `ring` is already in the build and covers RS256 and ES256, while the `rsa` crate is banned. Email is never used to find an account, because a provider's email isn't a stable identity | Reel owns about 150 lines of token verification, covered by tests with forged tokens. Only RS256 and ES256 are accepted |
 
 ## 6. Data model (essentials)
 
-`users`, `user_limits`, `user_prefs`, `sessions_auth`, `invites`, `audit_log` · `libraries`, `library_access`,
+`users`, `user_limits`, `user_prefs`, `sessions_auth`, `invites`, `audit_log`, `user_totp`, `user_recovery_codes`,
+`user_passkeys`, `oidc_providers`, `user_identities` · `libraries`, `library_access`,
 `media_items` (movie/show/season/episode), `media_files`, `media_file_links`, `streams`, `people`, `credits`,
 `genres`, `collections` · `watch_state`, `playback_sessions` · `requests`, `request_downloads`, `arr_servers`,
 `download_clients`, `notification_targets` · `iptv_sources` (+ `epg_urls`), `channels`, `channel_aliases`,
@@ -322,12 +328,25 @@ Migrations are in `server/crates/core/migrations` and applied on startup.
   - Argon2id with bounded concurrency.
   - Lockout per (user, IP), with a /64 bucket for IPv6.
   - `/setup` only from the LAN or with a one-time token.
+  - New passwords: 12+ characters, checked offline against a compiled-in common-password list (#148).
+  - Second factor (#146): after a correct password, `/auth/login` answers 202 with a short-lived challenge that
+    isn't a session. `/auth/login/mfa` takes a TOTP code, passkey or recovery code. TOTP secrets are encrypted with a
+    key derived from the signing key and bound to the user, a code works once, recovery codes are stored as keyed
+    hashes, and failures count against a per-account lock.
+  - TV sign-in (#147): the device grant of RFC 8628 inside Reel. The TV polls with a secret, a signed-in user approves
+    its short code, and the session is delivered once.
+  - Provider sign-in (#149): authorization code + PKCE with `state` and `nonce`. The ID token's signature (RS256 or
+    ES256), issuer, audience and expiry are checked, and the result is a one-time ticket that works only in the
+    browser that started the login. It replaces the password step only, so a second factor still applies.
   - Sessions slide for 30 days, with a 90-day absolute limit.
   - WebSocket connections authenticate with a single-use, 60-second ticket (`POST /auth/ws-ticket` → `?ticket=`) or an
     `Authorization` header. The session token is never accepted in a URL (`?token=` was removed, #28), so it can't end
     up in proxy, CDN or edge logs.
 - **Authorization.**
   - Admin routes use the `AdminUser` extractor.
+  - Admin powers are granted per request and are off by default (#127, #146): the account has the admin role, the
+    client is on the LAN or Tailscale, and it has a second factor. A signed URL never carries them. Viewing doesn't
+    depend on them, so an admin on a public address still sees every library.
   - Library access is enforced on items, images, media and search.
   - Per-user flags gate IPTV, VOD, requests and casting.
   - Cast control is admin-only by default.

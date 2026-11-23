@@ -31,6 +31,7 @@ services:
       REEL_WEBHOOK_SECRET: ${REEL_WEBHOOK_SECRET:-}
       # public URL used in invite links, e.g. https://reel.example.com
       REEL_PUBLIC_URL: ${REEL_PUBLIC_URL:-}
+      REEL_REQUIRE_ADMIN_2FA: ${REEL_REQUIRE_ADMIN_2FA:-true}
       # LAN address TVs / Chromecasts use to fetch media, e.g. http://10.10.10.207:8420 (casting)
       REEL_CAST_BASE_URL: ${REEL_CAST_BASE_URL:-}
       # let devices play Live TV straight from the IPTV provider (sends them the provider login in the stream URL)

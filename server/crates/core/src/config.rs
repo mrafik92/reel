@@ -289,6 +289,8 @@ mod tests {
             });
             out.unwrap()
         };
+        assert!(!load("REEL_REQUIRE_ADMIN_2FA", "false").require_admin_2fa);
+        assert!(!load("REEL_REQUIRE_ADMIN_2FA", "0").require_admin_2fa);
         // the plain spelling used to stop the server from starting
         assert_eq!(
             load("REEL_TRUSTED_PROXIES", "10.10.10.73").trusted_proxies,

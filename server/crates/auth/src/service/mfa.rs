@@ -399,15 +399,9 @@ impl AuthService {
         if let Err(wait) = self.limiter.reserve(&mfa_key, user_max) {
             self.limiter.refund(&ip_key, ip_max);
             put_back(pending);
-            self.audit(
-                Some(user.id),
-                Some(&user.username),
-                "login_mfa_locked",
-                None,
-                json!({"retry_after_s": wait.as_secs()}),
-                ip,
-            )
-            .await;
+            // sampled, so a locked client can't grow the audit table (see #125)
+            self.audit_failure("login_mfa_locked", &user.username, ip)
+                .await;
             return Err(AuthError::Locked(wait));
         }
         let (method, verified) = match proof {

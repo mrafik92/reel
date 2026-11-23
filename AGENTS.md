@@ -96,7 +96,9 @@ scripts/tests/android-release-test.sh
   asked). The keystore password is the owner's: never look for it, guess it or ask for it in chat; test with
   `--dry-run` and a throwaway keystore. Details: `clients/android-web/README.md` → Release builds.
 - Live access for checks: `ssh minix-local` → `pct exec 113 -- …` (Reel runs in Docker there). Admin
-  credentials for API smoke tests are in `/root/.reel-admin` on minix. Never print them.
+  credentials for API smoke tests are in `/root/.reel-admin` on minix. Never print them. Once that account
+  has a second factor (#146), its password alone returns a 202 challenge: use a non-admin test account for
+  smoke tests, and never read or reuse the owner's recovery codes or authenticator secret.
 
 ## 5. Guardrails
 
