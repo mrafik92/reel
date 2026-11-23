@@ -25,9 +25,8 @@ an issue in `mrafik92/reel`. When asked to "work on #N":
    don't get their own cards.
    If `main` moved meanwhile and the PR conflicts, merge `origin/main` into your branch and resolve
    (docs: keep both sides' rows/sections), then re-run §3.
-6. **After merge** (by the owner, or by you when explicitly asked), CI builds the image. To deploy, trigger
-   **Actions → deploy → Run workflow** (`gh workflow run deploy -R mrafik92/reel`, only when asked), or run
-   `deploy/ct113/deploy.py` from the Mac as a fallback. It moves every ticket referenced in the shipped commits to **Deployed** and
+6. **After merge** (by the owner, or by you when explicitly asked), CI builds the image. To deploy (only when
+   asked), run `deploy/ct113/deploy.py` from the Mac (`--dry-run` first). It moves every ticket referenced in the shipped commits to **Deployed** and
    comments the build SHA. Then run `scripts/sync_obsidian.py` so the owner's Obsidian notes match `docs/`.
 7. **Verified** and **Done** belong to the owner. They check the change on the real setup, fill in
    *Verified on*, and close the issue, which moves the card to Done. Don't close tickets yourself
@@ -72,8 +71,8 @@ cd clients/android-web && ./gradlew lint testDebugUnitTest assembleDebug
 scripts/tests/android-release-test.sh
 ```
 
-- **GitHub Actions is unavailable for now** (account billing): PRs get no CI, so the commands above, run
-  locally, are the gate. Paste their results into the PR.
+- **CI runs on every PR** (`ci.yml` on GitHub-hosted runners, free since the repo went public in #268). Still
+  run the commands above locally before pushing, paste their results into the PR, and check that CI is green.
 
 - **Security audit:** `cd server && cargo audit`. Exceptions go in `server/.cargo/audit.toml`, each with a reason; never ignore an advisory without one. Keep sqlx on the single workspace entry (SQLite only); CI fails if a MySQL/Postgres driver or `rsa` gets built.
 - **Always commit `server/Cargo.lock`** when dependencies change. The image build uses `--locked` and fails otherwise.
@@ -86,9 +85,11 @@ scripts/tests/android-release-test.sh
 
 - Images: GitHub Actions `image.yml` → `ghcr.io/mrafik92/reel:latest` (~10 min for server changes,
   ~1 min for web-only).
-- Deploy: **Actions → deploy → Run workflow** (self-hosted runner CT 116, forced-command SSH key). Fallback:
-  `deploy/ct113/deploy.py` from the Mac (`--dry-run` first). Both pull, restart, health-check and update tickets.
-- Never make the repo public while the self-hosted runner is attached.
+  Pushes that only touch `docs/**` or `*.md` build no image.
+- Deploy: `deploy/ct113/deploy.py` from the Mac (`--dry-run` first). It pulls, restarts, health-checks and
+  moves shipped tickets to Deployed. There is no deploy workflow.
+- **No self-hosted runners on this repo while it is public**: a fork PR could run code on the homelab. Only
+  GitHub-hosted runners (`ubuntu-latest`), and never a workflow that reaches the LAN.
 - **Android releases** (Reel Web) are built on the Mac, not by Actions:
   `scripts/android-release.sh web [--version X.Y.Z] [--taildrop] [--github-release]` builds a signed APK
   into `dist/`, `--taildrop` sends it to the owner's phone, and `--github-release` publishes it (only when
