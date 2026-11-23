@@ -1862,11 +1862,6 @@ html.tv .live__info .nowp__actions {
 html.tv .later__list li:nth-child(n + 4) {
   display: none;
 }
-/* The floating search pill would sit on the picture / guide actions. */
-html.is-live-page .topsearch {
-  display: none;
-}
-
 /* Narrow windows (desktop): stack the list under the player. */
 @media (max-width: 900px) {
   .live {

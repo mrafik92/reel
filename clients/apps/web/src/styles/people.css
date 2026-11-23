@@ -531,43 +531,9 @@ html[data-input="key"] .dl-row__inner:focus {
   padding-left: 4.5rem;
 }
 
-/* ---------- Nav indicator ------------------------------------------------ */
-.rail__ring {
-  position: absolute;
-  top: 50%;
-  left: 0.42rem;
-  width: 2.45rem;
-  height: 2.45rem;
-  margin-top: -1.225rem;
-  pointer-events: none;
-}
-.rail__ring-track {
-  fill: none;
-  stroke: var(--ink-5);
-  stroke-width: 3.5;
-}
-.rail__ring-arc {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 3.5;
-  stroke-linecap: round;
-  transition: stroke-dashoffset 900ms linear;
-}
-.rail__ring--stalled .rail__ring-arc { stroke: var(--warn); }
-html[data-input="key"] .rail__link:focus .rail__ring-track,
-html.tv .rail__link:focus .rail__ring-track { stroke: rgba(var(--bg-rgb), 0.15); }
-html[data-input="key"] .rail__link:focus .rail__ring-arc,
-html.tv .rail__link:focus .rail__ring-arc { stroke: var(--bg); }
-.rail__label small,
-.rail__sub {
-  display: block;
-  margin-top: 0.2rem;
-  font: 400 0.72rem/1 var(--font-body);
-  opacity: 0.7;
-}
 .rail__count--bad {
   background: var(--danger);
-  color: #1a0503;
+  color: var(--on-light);
 }
 
 @media (max-width: 960px) {
@@ -593,19 +559,6 @@ html.tv .rail__link:focus .rail__ring-arc { stroke: var(--bg); }
 /* Grid items must not grow to their nowrap caption's width (overlapping tiles). */
 .results-grid > * {
   min-width: 0;
-}
-/* TV: eight nav entries + footer must fit 1080p without clipping. */
-html.tv .rail__brand {
-  margin-bottom: 1.6rem;
-}
-html.tv .rail__list li + li {
-  margin-top: 0.25rem;
-}
-html.tv .rail__foot .rail__link {
-  height: 2.9rem;
-}
-html.tv .rail__badge {
-  margin-top: 0.6rem;
 }
 /* `.results-grid .card {width:auto}` would shrink-wrap the <button> to its caption. */
 .results-grid .dcard__poster {

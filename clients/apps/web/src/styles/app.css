@@ -7,7 +7,6 @@ html {
   background: var(--bg);
   color: var(--ink);
   --gutter: 3rem;
-  --rail-w: 5rem;
   --topbar-h: 4.25rem;
   -webkit-text-size-adjust: 100%;
 }
@@ -20,7 +19,6 @@ html {
 /* 10-foot: scale everything with the viewport — 24px at 1920, 16px at 1280. */
 html.tv {
   font-size: 1.25vw;
-  --rail-w: 5.5rem;
   --poster-w: 9.6rem;
   --land-w: 16rem;
   --cast-w: 7rem;
@@ -77,61 +75,60 @@ code {
 .main {
   position: relative;
   min-height: 100vh;
-  padding-left: var(--rail-w);
-  /* iOS landscape with viewport-fit=cover: keep the rail and content clear of the notch (#180).
-     Chromium 68 drops env() and keeps the line above. */
-  padding-left: calc(var(--rail-w) + env(safe-area-inset-left));
+  /* iOS landscape with viewport-fit=cover: keep content clear of the notch (#180). */
+  padding-left: env(safe-area-inset-left);
 }
 .app.is-immersive .main {
   padding-left: 0;
 }
 
-.rail {
+/* ---------- Top bar (desktop and TV) -------------------------------------- */
+.topbar {
   position: fixed;
   top: 0;
   left: 0;
-  bottom: 0;
+  right: 0;
   z-index: 50;
-  width: var(--rail-w);
   display: flex;
-  flex-direction: column;
-  padding: 2rem 0 1.5rem;
-  margin-left: env(safe-area-inset-left);
+  align-items: center;
+  height: var(--topbar-h);
+  padding: 0 var(--gutter);
 }
-/* Always-on shade so icons read over bright backdrops */
-.rail::before {
+/* Two layers: the gradient over the billboard, and the glass that fades in over it. */
+.topbar::before,
+.topbar::after {
   content: "";
   position: absolute;
   top: 0;
   left: 0;
+  right: 0;
   bottom: 0;
-  width: calc(var(--rail-w) + 5rem);
-  background: linear-gradient(90deg, rgba(var(--bg-rgb), 0.9) 0%, rgba(var(--bg-rgb), 0.55) 55%, rgba(var(--bg-rgb), 0) 100%);
+  z-index: -1;
   pointer-events: none;
 }
-/* Expanded shade: opacity-only transition (cheap on TV GPUs) */
-.rail__bg {
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: 30rem;
-  background: linear-gradient(90deg, rgba(var(--bg-rgb), 0.98) 0%, rgba(var(--bg-rgb), 0.94) 50%, rgba(var(--bg-rgb), 0) 100%);
+.topbar::before {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.7) 0%, rgba(0, 0, 0, 0) 100%);
+}
+.topbar::after {
+  background: var(--glass-strong);
+  border-bottom: 1px solid var(--glass-line);
   opacity: 0;
-  transition: opacity var(--t) var(--ease);
-  pointer-events: none;
+  transition: opacity 400ms var(--ease);
 }
-.rail > *:not(.rail__bg) {
-  position: relative;
-}
-.rail.is-open .rail__bg,
-html[data-input="pointer"] .rail:hover .rail__bg {
+.topbar.is-solid::after {
   opacity: 1;
 }
-
-.rail__brand {
-  display: block;
-  margin: 0 0 2.6rem 1.15rem;
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  html:not(.tv) .topbar::after {
+    background: var(--glass);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
+}
+.topbar__brand {
+  flex-shrink: 0;
+  margin-right: 2.1rem;
+  color: var(--ink);
   text-decoration: none;
 }
 .logo {
@@ -142,136 +139,276 @@ html[data-input="pointer"] .rail:hover .rail__bg {
   position: relative;
   display: block;
   flex-shrink: 0;
-  width: 2.3rem;
-  height: 2.3rem;
-  border: 0.34rem solid var(--ink);
+  width: 1.65rem;
+  height: 1.65rem;
+  border: 0.25rem solid var(--ink);
   border-radius: 50%;
 }
 .logo__mark i {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 0.62rem;
-  height: 0.62rem;
-  margin: -0.31rem 0 0 -0.31rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin: -0.225rem 0 0 -0.225rem;
   border-radius: 50%;
   background: var(--accent);
 }
 .logo__word {
-  margin-left: 0.7rem;
-  font: 800 1.7rem/1 var(--font-display);
+  margin-left: 0.5rem;
+  font: 800 1.45rem/1 var(--font-display);
   letter-spacing: -0.05em;
-  opacity: 0;
-  transform: translateX(-0.5rem);
-  transition: opacity var(--t) var(--ease), transform var(--t) var(--ease-out);
 }
-.rail.is-open .logo__word,
-html[data-input="pointer"] .rail:hover .logo__word {
-  opacity: 1;
-  transform: none;
-}
-
-.rail__list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.rail__list li + li {
-  margin-top: 0.55rem;
-}
-.rail__link {
-  position: relative;
+.topbar__links {
   display: flex;
   align-items: center;
-  width: 3.3rem;
-  height: 3.3rem;
-  margin-left: 0.85rem;
-  padding: 0 0.9rem;
-  border-radius: 999px;
-  color: var(--ink-3);
+  min-width: 0;
+}
+.topbar__link {
+  display: inline-flex;
+  align-items: center;
+  height: 2.5rem;
+  padding: 0 0.7rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink-2);
+  font: 500 0.9rem/1 var(--font-body);
   text-decoration: none;
   white-space: nowrap;
-  overflow: hidden;
-  transition: width var(--t) var(--ease-out), background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
 }
-.rail__icon {
-  font-size: 1.5rem;
-}
-.rail__label {
-  margin-left: 1.1rem;
-  font: 700 1.08rem/1 var(--font-body);
-  opacity: 0;
-  transition: opacity var(--t) var(--ease);
-}
-.rail.is-open .rail__link,
-html[data-input="pointer"] .rail:hover .rail__link {
-  width: 14rem;
-}
-.rail.is-open .rail__label,
-html[data-input="pointer"] .rail:hover .rail__label {
-  opacity: 1;
-}
-.rail__link[aria-current] {
+.topbar__link[aria-current] {
   color: var(--ink);
+  font-weight: 700;
 }
-.rail__link[aria-current]::before {
-  content: "";
-  position: absolute;
-  left: 0.2rem;
-  top: 50%;
-  width: 0.32rem;
-  height: 0.32rem;
-  margin-top: -0.16rem;
-  border-radius: 50%;
-  background: var(--accent);
-}
-/* Hover only where a pointer can hover: a tap on a phone leaves a sticky :hover behind (#180).
-   TV keeps it unconditionally (Magic Remote), whatever its media query reports. */
 @media (hover: hover) {
-  .rail__link:hover {
+  .topbar__link:hover {
+    color: rgba(var(--ink-rgb), 0.85);
+  }
+  .topbar__link[aria-current]:hover {
     color: var(--ink);
-    background: var(--ink-5);
   }
 }
-html.tv .rail__link:hover {
-  color: var(--ink);
-  background: var(--ink-5);
+.topbar__pill {
+  min-width: 1.05rem;
+  height: 1.05rem;
+  margin-left: 0.35rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: 700 0.68rem/1.05rem var(--font-body);
+  text-align: center;
 }
-/* The inverted pill is the D-pad / keyboard focus. A tapped or clicked link keeps focus after the
-   client-side navigation, so for pointer and touch input it must not invert, or the icon stays
-   dark (#180). TV always shows it (the Magic Remote's pointer *is* focus there). */
-html[data-input="key"] .rail__link:focus,
-html.tv .rail__link:focus {
-  background: var(--ink);
-  color: var(--bg);
-  box-shadow: none !important;
-}
-html[data-input="key"] .rail__link:focus::before,
-html.tv .rail__link:focus::before {
-  background: var(--bg);
-}
-/* The More tab only exists in the phone bottom bar (below). */
-.rail__item--morebtn {
+.topbar__browse {
   display: none;
 }
-.rail__foot {
-  margin-top: auto;
+.topbar__caret {
+  display: inline-block;
+  margin-left: 0.4rem;
+  border: 0.28rem solid transparent;
+  border-top-color: currentColor;
+  border-bottom-width: 0;
 }
-.rail__link--quiet {
-  color: var(--ink-4);
+.topbar__tools {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: auto;
 }
-.rail__badge {
-  display: block;
-  margin: 1.4rem 0 0 2.15rem;
-  padding: 0.6rem 0.2rem;
-  border-left: 2px solid var(--accent);
-  -webkit-writing-mode: vertical-rl;
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  font: 700 0.62rem/1 var(--font-body);
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--accent-hi);
+.topbar__tools > * + * {
+  margin-left: 0.5rem;
+}
+.topbar__tag {
+  margin-right: 0.4rem;
+  padding: 0.22rem 0.5rem;
+  border: 1px solid var(--ink-4);
+  border-radius: var(--radius-s);
+  color: var(--ink-2);
+  font: 700 0.68rem/1.2 var(--font-body);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.topbar__tool {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-size: 1.35rem;
+  text-decoration: none;
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+@media (hover: hover) {
+  .topbar__tool:hover {
+    background: var(--fill-row);
+  }
+}
+.topbar__ring {
+  position: absolute;
+  top: 0.15rem;
+  left: 0.15rem;
+  width: 2.2rem;
+  height: 2.2rem;
+  pointer-events: none;
+}
+.topbar__ring-track {
+  fill: none;
+  stroke: var(--ink-4);
+  stroke-width: 2.5;
+}
+.topbar__ring-arc {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 900ms linear;
+}
+.topbar__ring--stalled .topbar__ring-arc {
+  stroke: var(--warn);
+}
+.topbar__count {
+  position: absolute;
+  top: 0;
+  right: -0.1rem;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: 700 0.62rem/1rem var(--font-body);
+  text-align: center;
+}
+.topbar__count--bad {
+  background: var(--danger);
+  color: var(--on-light);
+}
+.topmenu {
+  position: relative;
+}
+.topbar__account {
+  display: inline-flex;
+  align-items: center;
+  height: 2.5rem;
+  padding: 0 0.3rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.topbar__avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-s);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: 700 0.95rem/1 var(--font-body);
+}
+/* Key focus along the bar: white fill, black text, on links and tools alike. */
+html[data-input="key"] .topbar__link:focus,
+html[data-input="key"] .topbar__tool:focus,
+html[data-input="key"] .topbar__account:focus {
+  background: var(--ink);
+  color: var(--on-light);
+  box-shadow: none;
+}
+html[data-input="key"] .topbar__tool:focus .topbar__ring-track {
+  stroke: rgba(0, 0, 0, 0.2);
+}
+html[data-input="key"] .topbar__tool:focus .topbar__ring-arc {
+  stroke: var(--on-light);
+}
+.topmenu__panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  z-index: 2;
+  min-width: 14rem;
+  padding: 0.4rem;
+  border-radius: var(--radius);
+  box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.6);
+  animation: fade-in 150ms var(--ease) both;
+}
+.topmenu__panel--right {
+  right: 0;
+}
+.topmenu__panel--left {
+  left: 0;
+}
+.topmenu__head {
+  padding: 0.55rem 0.7rem 0.6rem;
+  color: var(--ink-2);
+  font: 400 0.82rem/1.3 var(--font-body);
+  white-space: nowrap;
+}
+.topmenu__head strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+.topmenu__item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 2.6rem;
+  padding: 0 0.7rem;
+  border: 0;
+  border-radius: 0.55rem;
+  background: transparent;
+  color: var(--ink);
+  font: 500 0.92rem/1.2 var(--font-body);
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.topmenu__item > .icon {
+  margin-right: 0.65rem;
+  font-size: 1.15rem;
+}
+.topmenu__item.is-current {
+  font-weight: 700;
+}
+@media (hover: hover) {
+  .topmenu__item:hover {
+    background: var(--fill-row);
+  }
+}
+html[data-input="key"] .topmenu__item:focus {
+  background: var(--ink);
+  color: var(--on-light);
+}
+.topmenu__divider {
+  height: 1px;
+  margin: 0.35rem 0.3rem;
+  background: var(--line);
+}
+/* The rail is now only the phone's bottom bar. */
+.rail {
+  display: none;
+}
+@media (max-width: 1100px) {
+  html:not(.tv) .topbar__links {
+    display: none;
+  }
+  html:not(.tv) .topbar__browse {
+    display: block;
+  }
+}
+@media (max-width: 760px) {
+  html:not(.tv) .topbar {
+    display: none;
+  }
 }
 
 /* ---------- Shared typography ------------------------------------------- */
@@ -409,7 +546,7 @@ html.tv .focus-caption {
   display: block;
   position: fixed;
   top: 9vh;
-  left: calc(var(--rail-w) + var(--gutter));
+  left: var(--gutter);
   width: 46rem;
   z-index: 2;
   opacity: 0;
@@ -454,7 +591,7 @@ html.tv .home.is-scrolled .page-backdrop {
 .page {
   position: relative;
   z-index: 1;
-  padding: 3.5rem var(--gutter) 5rem;
+  padding: calc(var(--topbar-h) + 1.6rem) var(--gutter) 5rem;
 }
 .page.detail {
   padding: 0 0 5rem;
@@ -1161,80 +1298,74 @@ html.tv .player__fs {
   padding: 0;
 }
 
-/* ---------- Small screens: rail becomes a bottom bar -------------------- */
+/* ---------- Small screens: the bottom bar -------------------------------- */
 @media (max-width: 760px) {
   html:not(.tv) {
     font-size: 15px;
     --gutter: 1.25rem;
-    --rail-w: 0px;
+    --topbar-h: 0px;
     --poster-w: 7rem;
     --land-w: 14rem;
   }
   html:not(.tv) .rail {
-    top: auto;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    display: flex;
     width: 100%;
     height: 4.4rem;
     height: calc(4.4rem + env(safe-area-inset-bottom));
-    margin-left: 0;
     padding: 0;
     padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-    flex-direction: row;
-    background: var(--bg-1);
-    border-top: 1px solid var(--line);
-  }
-  html:not(.tv) .rail::before,
-  html:not(.tv) .rail__bg,
-  html:not(.tv) .rail__brand,
-  html:not(.tv) .rail__foot {
-    display: none;
+    background: var(--glass-strong);
+    border-top: 1px solid var(--glass-line);
   }
   /* Five destinations + More, equal width: ≥ 60px each at 360px (#180). */
   html:not(.tv) .rail__list {
     display: flex;
     width: 100%;
+    margin: 0;
+    padding: 0;
+    list-style: none;
   }
   html:not(.tv) .rail__list li {
     -webkit-box-flex: 1;
     flex: 1 1 0;
     min-width: 0;
   }
-  html:not(.tv) .rail__list li + li {
-    margin-top: 0;
-  }
-  html:not(.tv) .rail__list .rail__item--more {
-    display: none;
-  }
-  html:not(.tv) .rail__list .rail__item--morebtn {
-    display: block;
-  }
-  html:not(.tv) .rail__link,
-  html:not(.tv) .rail:hover .rail__link,
-  html:not(.tv) .rail.is-open .rail__link {
+  html:not(.tv) .rail__link {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
     width: 100%;
     height: 4.4rem;
     margin: 0;
     padding: 0 0.15rem;
-    flex-direction: column;
-    justify-content: center;
-    border-radius: 0;
-    background: transparent;
+    color: var(--ink-3);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color var(--t-fast) var(--ease);
+  }
+  html:not(.tv) .rail__link[aria-current] {
+    color: var(--ink);
+  }
+  html:not(.tv) .rail__icon {
+    font-size: 1.45rem;
   }
   html:not(.tv) .rail__label {
     max-width: 100%;
     margin: 0.3rem 0 0;
-    font-size: 0.72rem;
-    opacity: 1;
+    font: 600 0.72rem/1 var(--font-body);
     overflow: hidden;
     text-overflow: ellipsis;
   }
   html:not(.tv) .rail__count {
     left: 50%;
     margin-left: 0.4rem;
-  }
-  html:not(.tv) .rail__link[aria-current]::before {
-    top: 0.35rem;
-    left: 50%;
-    margin: 0 0 0 -0.16rem;
   }
   html:not(.tv) .main {
     padding-bottom: 4.4rem;
@@ -1256,6 +1387,16 @@ html.tv .player__fs {
   }
   .tech__grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  @media (max-width: 760px) {
+    html:not(.tv) .rail {
+      background: var(--glass);
+      -webkit-backdrop-filter: var(--glass-blur);
+      backdrop-filter: var(--glass-blur);
+    }
   }
 }
 
