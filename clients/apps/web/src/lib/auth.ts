@@ -140,6 +140,11 @@ export async function login(username: string, password: string): Promise<{ me: M
   return "mfa_token" in r ? { challenge: r } : { me: finishLogin(r) };
 }
 
+/** A provider sign-in finished (#149). */
+export function finishExternalLogin(r: LoginResponse): Me {
+  return accept(r);
+}
+
 /** A TV's poll came back approved (#147). */
 export function finishDeviceLogin(r: LoginResponse): Me {
   return accept(r);
@@ -158,8 +163,9 @@ export async function createAdmin(username: string, password: string): Promise<M
   return accept(await api.setup(withDevice({ username, password })));
 }
 
-export async function acceptInvite(code: string, username: string, password: string): Promise<Me> {
-  return accept(await api.acceptInvite(code, withDevice({ username, password })));
+export async function acceptInvite(code: string, username: string, password: string, link?: { ticket: string; binding: string }): Promise<Me> {
+  const extra = link ? { oidc_ticket: link.ticket, oidc_binding: link.binding } : {};
+  return accept(await api.acceptInvite(code, withDevice({ username, password, ...extra })));
 }
 
 export async function logout(): Promise<void> {

@@ -2074,6 +2074,7 @@ dependencies = [
  "form_urlencoded",
  "futures-util",
  "http-body-util",
+ "openssl",
  "quick-xml",
  "rand 0.8.8",
  "reel-auth",

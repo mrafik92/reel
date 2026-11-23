@@ -269,6 +269,11 @@ impl AuthService {
         }
     }
 
+    /// Check the current password before a change to the account's sign-in methods.
+    pub async fn confirm_password(&self, user: &User, password: &str) -> AuthResult<()> {
+        self.reauthenticate(user, password).await
+    }
+
     // ───────────── login, step two ─────────────
 
     fn sweep_logins(map: &mut HashMap<String, PendingLogin>) {

@@ -883,6 +883,10 @@ pub async fn invite_info(
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AcceptInviteBody {
+    /// Ticket from a provider sign-in, to link it to the new account (#149).
+    pub oidc_ticket: Option<String>,
+    /// The browser secret that goes with `oidc_ticket`.
+    pub oidc_binding: Option<String>,
     pub username: String,
     /// At least 12 characters, and not a common password.
     pub password: String,
@@ -914,9 +918,14 @@ pub async fn accept_invite(
     Path(code): Path<String>,
     Json(b): Json<AcceptInviteBody>,
 ) -> ApiResult<(StatusCode, Json<LoginResponse>)> {
+    let identity = match (&b.oidc_ticket, &b.oidc_binding) {
+        (Some(t), Some(k)) => Some(crate::oidc::invite_identity(&st, t, k)?),
+        (None, None) => None,
+        _ => return Err(ApiError::BadRequest("incomplete provider sign-in".into())),
+    };
     let out = st
         .auth
-        .accept_invite(
+        .accept_invite_with(
             &code,
             &b.username,
             &b.password,
@@ -926,8 +935,12 @@ pub async fn accept_invite(
                 client: b.client,
                 ip,
             },
+            identity.as_ref(),
         )
         .await?;
+    if let Some(t) = &b.oidc_ticket {
+        crate::oidc::finish_invite_ticket(&st, t);
+    }
     let res = login_response(&st, out, peer, &headers).await?;
     Ok((StatusCode::CREATED, Json(res)))
 }

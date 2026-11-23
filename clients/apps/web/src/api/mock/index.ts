@@ -3,7 +3,7 @@ import { ApiError } from "../http";
 import type { ItemSummary } from "@reel/ui";
 import type { ReelEvent } from "@reel/sdk";
 import type {
-  AccountSecurity, AdminSession, ArrServer, DecideResponse, DiscoverCard, DownloadClient, InviteDto, Me, NotificationTarget,
+  AccountSecurity, OidcProviderAdmin, AdminSession, ArrServer, DecideResponse, DiscoverCard, DownloadClient, InviteDto, Me, NotificationTarget,
   ProgressDto, RequestDto, RequestState, UserDto,
 } from "../types";
 import { buildDb, detail, home, importTitle, tmdbIndex, SAMPLE_VIDEO } from "./fixtures";
@@ -35,6 +35,10 @@ const mockSecurity: AccountSecurity = {
   passkeys_available: true,
   must_enroll: false,
 };
+
+let mockOidc: OidcProviderAdmin[] = [
+  { id: 1, slug: "google", name: "Google", issuer: "https://accounts.google.com", client_id: "1234.apps.googleusercontent.com", secret_set: true, enabled: true, redirect_uri: "https://reel.example/api/v1/auth/oidc/callback" },
+];
 
 const ADMIN: Me = {
   id: 1, username: "rafik", role: "admin",
@@ -279,6 +283,26 @@ export function createMockApi(): MockApi {
     },
     linkApprove: ok,
     linkDeny: ok,
+    oidcProviders: async () => mockOidc.filter((p) => p.enabled).map((p) => ({ slug: p.slug, name: p.name })),
+    oidcStart: async () => { throw new ApiError(502, "Mock mode has no sign-in provider to go to"); },
+    oidcExchange: async () => { throw new ApiError(401, "that sign-in isn't linked to a Reel account"); },
+    myIdentities: async () => [{ id: 1, provider: "Google", label: "rafik@example.com", created_at: nowS() - 86400 * 5, last_used_at: nowS() - 3600 }],
+    identityStart: async () => { throw new ApiError(502, "Mock mode has no sign-in provider to go to"); },
+    identityComplete: ok,
+    identityRemove: ok,
+    adminOidcProviders: async () => mockOidc.map((p) => ({ ...p })),
+    adminCreateOidcProvider: async (b) => {
+      const p = { id: mockOidc.length + 1, slug: b.preset, name: b.name || b.preset, issuer: b.issuer || "https://issuer.example", client_id: b.client_id, secret_set: true, enabled: true, redirect_uri: `${location.origin}/api/v1/auth/oidc/callback` };
+      mockOidc.push(p);
+      return p;
+    },
+    adminPatchOidcProvider: async (id, b) => {
+      const p = mockOidc.find((x) => x.id === id);
+      if (!p) throw new ApiError(404, "not found");
+      if (b.enabled !== undefined) p.enabled = b.enabled;
+      return { ...p };
+    },
+    adminDeleteOidcProvider: async (id) => { mockOidc = mockOidc.filter((x) => x.id !== id); },
     logout: ok,
     me: async () => ADMIN,
     inviteInfo: async (code) => ({ valid: code.length > 3, library_names: ["Films", "Series"], expires_at: nowS() + 86400 * 3 }),

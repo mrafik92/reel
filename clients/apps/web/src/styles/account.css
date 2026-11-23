@@ -15,3 +15,4 @@
 .devicelink__facts { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; }
 .devicelink__facts dd { margin: 0; overflow-wrap: anywhere; }
 .auth__methods { display: flex; flex-wrap: wrap; gap: 8px; }
+.auth__methods--stack { flex-direction: column; }

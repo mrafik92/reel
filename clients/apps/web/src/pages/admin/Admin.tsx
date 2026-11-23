@@ -11,6 +11,7 @@ const Arr = lazy(() => import("./Arr"));
 const DownloadClients = lazy(() => import("./DownloadClients"));
 const Notifications = lazy(() => import("./Notifications"));
 const Sessions = lazy(() => import("./Sessions"));
+const OidcProviders = lazy(() => import("./OidcProviders"));
 const Hardware = lazy(() => import("./Hardware"));
 const Iptv = lazy(() => import("./Iptv"));
 const Playback = lazy(() => import("../SettingsPlayback"));
@@ -20,6 +21,7 @@ import About from "./About";
 const SECTIONS: { id: string; label: string; icon: IconName; blurb: string }[] = [
   { id: "libraries", label: "Libraries", icon: "folder", blurb: "Folders Reel scans" },
   { id: "users", label: "Users & invites", icon: "user", blurb: "Who can watch, and how much" },
+  { id: "signin", label: "Sign-in providers", icon: "key", blurb: "Google, Microsoft, OpenID" },
   { id: "arr", label: "Radarr & Sonarr", icon: "server", blurb: "Where requests go" },
   { id: "downloads", label: "Download clients", icon: "download", blurb: "Speed, peers, ETA" },
   { id: "notifications", label: "Notifications", icon: "bell", blurb: "Discord, Telegram, webhooks" },
@@ -114,6 +116,7 @@ export default function Admin(props: { section?: string }): JSX.Element {
             </Match>
             <Match when={section() === "libraries"}><Libraries /></Match>
             <Match when={section() === "users"}><Users /></Match>
+            <Match when={section() === "signin"}><OidcProviders /></Match>
             <Match when={section() === "arr"}><Arr /></Match>
             <Match when={section() === "downloads"}><DownloadClients /></Match>
             <Match when={section() === "notifications"}><Notifications /></Match>

@@ -1193,6 +1193,154 @@
         }
       }
     },
+    "/api/v1/admin/oidc/providers": {
+      "get": {
+        "summary": "Configured sign-in providers.",
+        "operationId": "admin_list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OidcProviderDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add a provider.",
+        "operationId": "admin_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOidcProviderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcProviderDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/oidc/providers/{id}": {
+      "delete": {
+        "summary": "Remove a provider and the sign-ins linked through it.",
+        "operationId": "admin_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Provider id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Change a provider.",
+        "operationId": "admin_patch",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Provider id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchOidcProviderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcProviderDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/sessions": {
       "get": {
         "summary": "Live playback sessions.",
@@ -1896,6 +2044,212 @@
             "description": "Signed out"
           }
         }
+      }
+    },
+    "/api/v1/auth/oidc/callback": {
+      "get": {
+        "summary": "Where the provider sends the browser back.",
+        "operationId": "callback",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Back to the web app"
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/oidc/exchange": {
+      "post": {
+        "summary": "Finish a provider sign-in. An identity that isn't linked to a Reel account is refused.",
+        "operationId": "exchange",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcExchangeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Second factor needed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MfaChallengeDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/oidc/providers": {
+      "get": {
+        "summary": "Sign-in providers to offer on the login page.",
+        "operationId": "public_providers",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OidcProviderPublicDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/oidc/{slug}/start": {
+      "post": {
+        "summary": "Start signing in with a provider.",
+        "operationId": "start",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Provider",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcStartDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v1/auth/ws-ticket": {
@@ -4017,6 +4371,180 @@
             }
           },
           "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/identities": {
+      "get": {
+        "summary": "Provider sign-ins linked to this account.",
+        "operationId": "my_identities",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IdentityDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/identities/complete": {
+      "post": {
+        "summary": "Finish linking: the provider login becomes a way into this account.",
+        "operationId": "link_complete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcExchangeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Linked"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/identities/{id}/remove": {
+      "post": {
+        "summary": "Remove a linked provider sign-in.",
+        "operationId": "unlink",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identity id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnlinkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/identities/{slug}/start": {
+      "post": {
+        "summary": "Start linking a provider sign-in to this account.",
+        "operationId": "link_start",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Provider",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcStartDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -6640,6 +7168,20 @@
               "null"
             ]
           },
+          "oidc_binding": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The browser secret that goes with `oidc_ticket`."
+          },
+          "oidc_ticket": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ticket from a provider sign-in, to link it to the new account (#149)."
+          },
           "password": {
             "type": "string",
             "description": "At least 12 characters, and not a common password."
@@ -7786,6 +8328,40 @@
           "kind": {
             "type": "string",
             "description": "`discord` (`webhook_url`), `telegram` (`bot_token`, `chat_id`) or `webhook` (`url`, `headers?`)."
+          }
+        }
+      },
+      "CreateOidcProviderBody": {
+        "type": "object",
+        "required": [
+          "preset",
+          "client_id",
+          "client_secret"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "client_secret": {
+            "type": "string"
+          },
+          "issuer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issuer URL; required for `custom`."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display name; required for `custom`."
+          },
+          "preset": {
+            "type": "string",
+            "description": "`google`, `microsoft` (personal accounts) or `custom`."
           }
         }
       },
@@ -9046,6 +9622,41 @@
           }
         }
       },
+      "IdentityDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The provider account's email, for recognizing it."
+          },
+          "last_used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "provider": {
+            "type": "string"
+          }
+        }
+      },
       "InviteDto": {
         "type": "object",
         "required": [
@@ -9611,6 +10222,21 @@
           }
         }
       },
+      "LinkStartBody": {
+        "type": "object",
+        "required": [
+          "password",
+          "binding_hash"
+        ],
+        "properties": {
+          "binding_hash": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
       "LiveModeDto": {
         "type": "string",
         "enum": [
@@ -10022,6 +10648,130 @@
           }
         }
       },
+      "OidcExchangeBody": {
+        "type": "object",
+        "required": [
+          "ticket",
+          "binding"
+        ],
+        "properties": {
+          "binding": {
+            "type": "string",
+            "description": "The secret whose hash was sent to `/start`."
+          },
+          "ticket": {
+            "type": "string"
+          }
+        }
+      },
+      "OidcProviderDto": {
+        "type": "object",
+        "description": "A provider as admins see it; the client secret is never returned.",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "issuer",
+          "client_id",
+          "secret_set",
+          "enabled"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "issuer": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "redirect_uri": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Register this redirect URI at the provider."
+          },
+          "secret_set": {
+            "type": "boolean"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "OidcProviderPublicDto": {
+        "type": "object",
+        "required": [
+          "slug",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "OidcStartBody": {
+        "type": "object",
+        "required": [
+          "binding_hash"
+        ],
+        "properties": {
+          "binding_hash": {
+            "type": "string",
+            "description": "base64url SHA-256 of a random secret the browser keeps until it returns."
+          },
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purpose": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`login` (default) or `invite`."
+          }
+        }
+      },
+      "OidcStartDto": {
+        "type": "object",
+        "required": [
+          "authorization_url"
+        ],
+        "properties": {
+          "authorization_url": {
+            "type": "string",
+            "description": "Send the browser here."
+          }
+        }
+      },
       "PasskeyDto": {
         "type": "object",
         "required": [
@@ -10102,6 +10852,36 @@
           "new_password": {
             "type": "string",
             "description": "At least 12 characters, and not a common password."
+          }
+        }
+      },
+      "PatchOidcProviderBody": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Omit or leave empty to keep the current secret."
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -11999,6 +12779,17 @@
           "url": {
             "type": "string",
             "description": "Signed URL: `stream.ts` (passthrough) or `index.m3u8` (HLS). Valid for the configured\nsigned-URL lifetime; the session itself ends shortly after the player disconnects.\nFor `direct`: the provider's own URL (contains the provider login; never log it)."
+          }
+        }
+      },
+      "UnlinkBody": {
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string"
           }
         }
       },

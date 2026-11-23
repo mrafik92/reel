@@ -14,8 +14,12 @@ use crate::{
 };
 
 mod device;
+mod identity;
 mod mfa;
 pub use device::{DevicePairing, PairingInfo};
+pub use identity::{
+    LinkedIdentity, NewOidcProvider, OidcProvider, OidcProviderPatch, VerifiedIdentity,
+};
 pub use mfa::{MfaChallenge, MfaProof, MfaStatus, PasskeyInfo, TotpEnrollment};
 
 /// Don't rewrite the session row more often than this.
@@ -1072,6 +1076,19 @@ impl AuthService {
         password: &str,
         dev: Device,
     ) -> AuthResult<LoginOutcome> {
+        self.accept_invite_with(code, username, password, dev, None)
+            .await
+    }
+
+    /// [`Self::accept_invite`], also linking a verified provider sign-in to the new account (#149).
+    pub async fn accept_invite_with(
+        &self,
+        code: &str,
+        username: &str,
+        password: &str,
+        dev: Device,
+        identity: Option<&VerifiedIdentity>,
+    ) -> AuthResult<LoginOutcome> {
         let ip_key = format!("ip:{}", ip_bucket(dev.ip.as_deref()));
         if let Err(wait) = self.limiter.check(&ip_key) {
             return Err(AuthError::Locked(wait));
@@ -1115,6 +1132,9 @@ impl AuthService {
         .bind(uid)
         .execute(&mut *tx)
         .await?;
+        if let Some(i) = identity {
+            Self::insert_identity(&mut tx, uid, i).await?;
+        }
         // Single use: only one concurrent accept can flip `used_by`.
         let claimed = sqlx::query(
             "UPDATE invites SET used_by = ?, used_at = ? WHERE id = ? AND used_by IS NULL \

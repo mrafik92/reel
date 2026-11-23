@@ -3,6 +3,7 @@
 
 mod error;
 mod model;
+pub mod oidc;
 pub mod password;
 pub mod ratelimit;
 mod service;
@@ -16,7 +17,8 @@ pub use model::{
 };
 pub use ratelimit::{LimiterConfig, RateLimiter};
 pub use service::{
-    AuthOptions, AuthService, DevicePairing, LoginOutcome, MfaChallenge, MfaProof, MfaStatus,
-    PairingInfo, PasskeyInfo, TotpEnrollment, ip_bucket, load_or_create_signing_key,
+    AuthOptions, AuthService, DevicePairing, LinkedIdentity, LoginOutcome, MfaChallenge, MfaProof,
+    MfaStatus, NewOidcProvider, OidcProvider, OidcProviderPatch, PairingInfo, PasskeyInfo,
+    TotpEnrollment, VerifiedIdentity, ip_bucket, load_or_create_signing_key,
 };
 pub use signing::UrlSigner;

@@ -207,3 +207,37 @@ export interface DeviceLinkInfo {
   ip?: string | null;
   expires_in_s: number;
 }
+
+// ---- provider sign-in (#149) --------------------------------------------------------------------
+export interface OidcProviderPublic {
+  slug: string;
+  name: string;
+}
+export interface OidcProviderAdmin extends OidcProviderPublic {
+  id: number;
+  issuer: string;
+  client_id: string;
+  secret_set: boolean;
+  enabled: boolean;
+  redirect_uri?: string | null;
+}
+export interface CreateOidcProvider {
+  preset: string;
+  name?: string;
+  issuer?: string;
+  client_id: string;
+  client_secret: string;
+}
+export interface PatchOidcProvider {
+  name?: string;
+  client_id?: string;
+  client_secret?: string;
+  enabled?: boolean;
+}
+export interface LinkedIdentity {
+  id: number;
+  provider: string;
+  label?: string | null;
+  created_at: number;
+  last_used_at?: number | null;
+}

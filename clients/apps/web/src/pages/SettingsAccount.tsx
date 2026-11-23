@@ -5,6 +5,7 @@ import { Panel, ConfirmButton } from "../components/AdminKit";
 import { Field, PasswordField } from "../components/Form";
 import { QrCode } from "../components/QrCode";
 import { bootstrap, currentUser, MIN_PASSWORD } from "../lib/auth";
+import { oidcSupported, startOidcLink } from "../lib/oidc";
 import { toast } from "../lib/toast";
 import { createPasskey, passkeyCancelled, passkeysSupported } from "../lib/webauthn";
 import "../styles/account.css";
@@ -43,6 +44,8 @@ function RecoveryCodes(props: { codes: string[]; onDone: () => void }): JSX.Elem
 export default function SettingsAccount(): JSX.Element {
   const [sec, { refetch }] = createResource(() => api.security());
   const [devices, devicesCtl] = createResource(() => api.mySessions());
+  const [identities, identitiesCtl] = createResource(() => api.myIdentities());
+  const [providers] = createResource(() => api.oidcProviders().catch(() => []));
   const [password, setPassword] = createSignal("");
   const [enrolling, setEnrolling] = createSignal<TotpEnrollment>();
   const [code, setCode] = createSignal("");
@@ -200,6 +203,37 @@ export default function SettingsAccount(): JSX.Element {
             <p class="state__body">{sec()?.recovery_codes_left ?? 0} left</p>
             <ConfirmButton label="Make new codes" confirm="Replace all codes?" onConfirm={() => { if (needPassword()) return run(async () => { const r = await api.newRecoveryCodes(password()); setPassword(""); if (r.recovery_codes) setCodes(r.recovery_codes); }, "Couldn't make new codes."); }} />
           </div>
+        </Panel>
+      </Show>
+
+      <Show when={providers()?.length || identities()?.length}>
+        <Panel title="Linked sign-ins" icon="user">
+          <ul class="list">
+            <For each={identities() ?? []}>
+              {(i) => (
+                <li class="list__row">
+                  <div class="list__main">
+                    <strong>{i.provider}</strong>
+                    <span class="list__sub">{i.label ? `${i.label} · ` : ""}last used {when(i.last_used_at)}</span>
+                  </div>
+                  <div class="list__actions">
+                    <ConfirmButton label="Unlink" onConfirm={() => { if (needPassword()) return run(async () => { await api.identityRemove(i.id, password()); setPassword(""); await identitiesCtl.refetch(); toast("Unlinked", "success"); }, "Couldn't unlink it."); }} />
+                  </div>
+                </li>
+              )}
+            </For>
+          </ul>
+          <Show when={oidcSupported()} fallback={<p class="state__body">Link a provider from a phone or computer.</p>}>
+            <div class="auth__methods">
+              <For each={providers() ?? []}>
+                {(p) => (
+                  <button type="button" class="btn btn--sm" onClick={() => { if (needPassword()) void run(() => startOidcLink(p, password()), `Couldn't reach ${p.name}.`); }}>
+                    <Icon name="plus" /> <span>Link {p.name}</span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
         </Panel>
       </Show>
 

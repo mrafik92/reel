@@ -100,7 +100,8 @@ export function Shell(props: ParentProps): JSX.Element {
     if (s === "needs_server" && path !== "/connect") navigate("/connect", { replace: true });
     else if (s === "needs_setup" && path !== "/setup" && path.indexOf("/invite/") !== 0) navigate("/setup", { replace: true });
     else if (s === "anon" && !isPublic()) navigate(`/login${path !== "/" ? `?next=${encodeURIComponent(path + loc.search)}` : ""}`, { replace: true });
-    else if (s === "authed" && /^\/(login|setup)/.test(path)) navigate("/", { replace: true });
+    // /login/oidc stays: a signed-in user lands there when linking a provider (#149)
+    else if (s === "authed" && /^\/(login|setup)/.test(path) && path !== "/login/oidc") navigate("/", { replace: true });
   });
 
   // Global search shortcuts: "/" (when not typing) and Ctrl/Cmd+K (always).

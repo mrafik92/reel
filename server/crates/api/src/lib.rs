@@ -11,6 +11,7 @@ mod extras;
 mod iptv;
 pub mod mfa;
 pub mod netutil;
+pub mod oidc;
 
 /// Test hook for the profile sanitizer.
 #[doc(hidden)]
@@ -89,6 +90,8 @@ pub struct AppState {
     pub cast: Arc<cast::CastRuntime>,
     /// WebSocket tickets and per-user socket slots.
     pub ws: Arc<ws::WsHub>,
+    /// Provider sign-ins in progress and cached provider metadata (#149).
+    pub oidc: Arc<oidc::OidcRuntime>,
     /// TMDB client (set by [`AppState::with_tmdb`]).
     pub tmdb: Option<reel_metadata::TmdbClient>,
     pub omdb: Option<reel_requests::reviews::OmdbClient>,
@@ -152,6 +155,7 @@ impl AppState {
             vod: Arc::default(),
             cast: Arc::default(),
             ws: Arc::default(),
+            oidc: Arc::default(),
             tmdb: None,
             omdb: config
                 .omdb_api_key
@@ -663,6 +667,16 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(device_link::link_lookup))
         .routes(routes!(device_link::link_approve))
         .routes(routes!(device_link::link_deny))
+        .routes(routes!(oidc::public_providers))
+        .routes(routes!(oidc::start))
+        .routes(routes!(oidc::callback))
+        .routes(routes!(oidc::exchange))
+        .routes(routes!(oidc::my_identities))
+        .routes(routes!(oidc::link_start))
+        .routes(routes!(oidc::link_complete))
+        .routes(routes!(oidc::unlink))
+        .routes(routes!(oidc::admin_list, oidc::admin_create))
+        .routes(routes!(oidc::admin_patch, oidc::admin_delete))
         .routes(routes!(mfa::login_mfa))
         .routes(routes!(mfa::login_mfa_passkey))
         .routes(routes!(mfa::security))

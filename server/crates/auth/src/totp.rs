@@ -70,8 +70,10 @@ pub fn matching_step(secret: &[u8], code: &str, now: i64, after_step: i64) -> Op
     found
 }
 
-fn sealing_key(signing_key: &[u8]) -> Option<aead::LessSafeKey> {
-    let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, b"reel-totp-secret-v1").extract(signing_key);
+const TOTP_DOMAIN: &[u8] = b"reel-totp-secret-v1";
+
+fn sealing_key(domain: &[u8], signing_key: &[u8]) -> Option<aead::LessSafeKey> {
+    let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, domain).extract(signing_key);
     let okm = prk
         .expand(&[b"chacha20-poly1305"], &aead::CHACHA20_POLY1305)
         .ok()?;
@@ -80,13 +82,22 @@ fn sealing_key(signing_key: &[u8]) -> Option<aead::LessSafeKey> {
 
 /// Encrypt a TOTP secret, bound to its user: a row copied onto another account won't open.
 pub fn seal(signing_key: &[u8], user_id: i64, secret: &[u8]) -> Option<Vec<u8>> {
-    let key = sealing_key(signing_key)?;
+    seal_for(TOTP_DOMAIN, signing_key, user_id, secret)
+}
+
+pub fn open(signing_key: &[u8], user_id: i64, sealed: &[u8]) -> Option<Vec<u8>> {
+    open_for(TOTP_DOMAIN, signing_key, user_id, sealed)
+}
+
+/// Encrypt under a key specific to `domain`, bound to the row `id`.
+pub fn seal_for(domain: &[u8], signing_key: &[u8], id: i64, secret: &[u8]) -> Option<Vec<u8>> {
+    let key = sealing_key(domain, signing_key)?;
     let mut nonce = [0u8; NONCE_BYTES];
     rand::rngs::OsRng.fill_bytes(&mut nonce);
     let mut body = secret.to_vec();
     key.seal_in_place_append_tag(
         aead::Nonce::assume_unique_for_key(nonce),
-        aead::Aad::from(user_id.to_be_bytes()),
+        aead::Aad::from(id.to_be_bytes()),
         &mut body,
     )
     .ok()?;
@@ -95,16 +106,16 @@ pub fn seal(signing_key: &[u8], user_id: i64, secret: &[u8]) -> Option<Vec<u8>> 
     Some(out)
 }
 
-pub fn open(signing_key: &[u8], user_id: i64, sealed: &[u8]) -> Option<Vec<u8>> {
+pub fn open_for(domain: &[u8], signing_key: &[u8], id: i64, sealed: &[u8]) -> Option<Vec<u8>> {
     if sealed.len() <= NONCE_BYTES {
         return None;
     }
-    let key = sealing_key(signing_key)?;
+    let key = sealing_key(domain, signing_key)?;
     let (nonce, body) = sealed.split_at(NONCE_BYTES);
     let nonce = aead::Nonce::try_assume_unique_for_key(nonce).ok()?;
     let mut body = body.to_vec();
     let plain = key
-        .open_in_place(nonce, aead::Aad::from(user_id.to_be_bytes()), &mut body)
+        .open_in_place(nonce, aead::Aad::from(id.to_be_bytes()), &mut body)
         .ok()?;
     Some(plain.to_vec())
 }
@@ -153,16 +164,7 @@ mod tests {
         let step = now / STEP_SECS;
         assert_eq!(matching_step(RFC_SECRET, &code, now, 0), Some(step));
         assert_eq!(
-            matching_step(
-                RFC_SECRET,
-                &code[..3]
-                    .to_string()
-                    .chars()
-                    .chain(code[3..].chars())
-                    .collect::<String>(),
-                now + STEP_SECS,
-                0
-            ),
+            matching_step(RFC_SECRET, &code, now + STEP_SECS, 0),
             Some(step),
             "one step of drift"
         );

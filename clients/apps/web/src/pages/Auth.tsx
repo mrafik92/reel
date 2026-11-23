@@ -6,6 +6,8 @@ import { acceptInvite, afterLogin, authStatus, bootstrap, completeMfa, completeM
 import { passkeyCancelled, passkeysSupported } from "../lib/webauthn";
 import { Field, PasswordField, useCountdown } from "../components/Form";
 import { href } from "../lib/mode";
+import { clearInviteLink, inviteLink, takePendingChallenge } from "../lib/oidc";
+import { OidcButtons } from "../components/OidcButtons";
 
 /** Two-column auth layout: wordmark + message left, form right. Stacks on narrow screens. */
 function AuthLayout(props: ParentProps<{ eyebrow: string; title: string; lede: string; aside?: JSX.Element }>): JSX.Element {
@@ -46,9 +48,11 @@ export function Login(): JSX.Element {
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal(false);
   const [left, startCountdown] = useCountdown();
-  const [challenge, setChallenge] = createSignal<MfaChallenge>();
+  // a provider sign-in on an account with a second factor continues here (#149)
+  const returned = takePendingChallenge();
+  const [challenge, setChallenge] = createSignal<MfaChallenge | undefined>(returned);
   const [code, setCode] = createSignal("");
-  const [useRecovery, setUseRecovery] = createSignal(false);
+  const [useRecovery, setUseRecovery] = createSignal(!!returned && !returned.methods.includes("totp") && !returned.methods.includes("passkey"));
   const done = (me: Me) => navigate(afterLogin(me, safeNext(params.next)), { replace: true });
   const has = (m: string) => !!challenge()?.methods.includes(m);
 
@@ -175,6 +179,7 @@ export function Login(): JSX.Element {
         <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() || left() > 0 ? "true" : undefined}>
           <span>{busy() ? "Signing in…" : "Sign in"}</span>
         </button>
+        <OidcButtons purpose="login" next={safeNext(params.next)} onError={setError} />
         <a class="btn btn--block" href={href("/login/device")}>
           <Icon name="tv" /> <span>Sign in with your phone</span>
         </a>
@@ -266,7 +271,8 @@ export function Invite(): JSX.Element {
     setBusy(true);
     setError(undefined);
     try {
-      await acceptInvite(params.code, username().trim(), password());
+      await acceptInvite(params.code, username().trim(), password(), inviteLink(params.code));
+      clearInviteLink();
       navigate("/", { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) setError("That username is taken — try another.");
@@ -310,6 +316,12 @@ export function Invite(): JSX.Element {
             }
           >
             <form class="auth__form" onSubmit={submit} novalidate>
+              <Show
+                when={inviteLink(params.code)}
+                fallback={<OidcButtons purpose="invite" invite={params.code} onError={setError} />}
+              >
+                {(l) => <p class="state__body" role="status"><Icon name="check" /> {l().provider} will be linked. Pick a username and a password to keep as a fallback.</p>}
+              </Show>
               <Field label="Choose a username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocomplete="username" autocapitalize="off" spellcheck={false} data-autofocus />
               <PasswordField label="Choose a password" hint={`At least ${MIN_PASSWORD} characters`} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
               <Show when={error()}>
