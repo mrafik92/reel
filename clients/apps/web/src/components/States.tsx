@@ -92,9 +92,11 @@ export function SkeletonRow(props: { variant?: "poster" | "landscape"; count?: n
           {Array.from({ length: n }, () => (
             <div class={`card card--${props.variant ?? "poster"}`}>
               <div class="card__frame skel" />
-              <div class="card__caption">
-                <span class="skel skel--text" style={{ width: "70%" }} />
-              </div>
+              <Show when={props.variant === "landscape"}>
+                <div class="card__caption">
+                  <span class="skel skel--text" style={{ width: "70%" }} />
+                </div>
+              </Show>
             </div>
           ))}
         </div>

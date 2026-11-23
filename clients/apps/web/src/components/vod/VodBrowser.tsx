@@ -14,7 +14,6 @@ const SORTS: { value: VodSort; label: string; detail?: string }[] = [
   { value: "title", label: "A–Z" },
 ];
 const PAGE = 60;
-const pad = (n: number) => (n < 10 ? "0" + n : String(n));
 
 interface VodParams {
   source?: string;
@@ -288,9 +287,8 @@ export function VodBrowser(props: { kind: VodKind; switcher: JSX.Element; onRead
                 <Row
                   title={lane.title}
                   subtitle={lane.subtitle}
-                  index={pad(i() + 1)}
                   class={`row--lane vlane vlane--${lane.kind}`}
-                  action={laneHref(lane) ? { label: "See all", href: laneHref(lane)! } : undefined}
+                  action={laneHref(lane) ? { label: "Explore all", href: laneHref(lane)! } : undefined}
                 >
                   <For each={lane.items}>
                     {(it, j) => <VodCard card={it} badge={false} autofocus={i() === 0 && j() === 0} />}

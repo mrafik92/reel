@@ -12,9 +12,8 @@
   align-items: center;
   height: 1.65rem;
   padding: 0 0.6rem;
-  border-radius: 999px;
+  border-radius: var(--radius-s);
   background: rgba(var(--bg-rgb), 0.86);
-  box-shadow: 0 0.25rem 0.9rem rgba(0, 0, 0, 0.45);
   font: 700 0.78rem/1 var(--font-body);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -42,6 +41,13 @@ html[data-input="key"] .card:focus .card__meta {
   }
 }
 
+/* Desktop and TV: this strip lives in the preview card; only phones keep it on the tile. */
+@media (min-width: 761px) {
+  .card__meta {
+    display: none;
+  }
+}
+
 /* ---------- Row subtitle ------------------------------------------------- */
 .row__sub {
   margin-left: 0.85rem;
@@ -56,11 +62,6 @@ html[data-input="key"] .card:focus .card__meta {
   padding-right: 0;
 }
 .segmented__btn {
-  white-space: nowrap;
-}
-.row__action {
-  flex-shrink: 0;
-  margin-left: 1rem;
   white-space: nowrap;
 }
 .library .page-head,

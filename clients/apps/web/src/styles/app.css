@@ -494,97 +494,145 @@ html[data-input="key"] .topmenu__item:focus {
     linear-gradient(0deg, var(--bg) 0%, rgba(var(--bg-rgb), 0.82) 28%, rgba(var(--bg-rgb), 0) 62%),
     linear-gradient(180deg, rgba(var(--bg-rgb), 0.5) 0%, rgba(var(--bg-rgb), 0) 18%);
 }
-.home > *:not(.page-backdrop):not(.page-scrim):not(.focus-caption),
 .detail > *:not(.page-backdrop):not(.page-scrim) {
   position: relative;
   z-index: 1;
 }
-.home.is-scrolled .page-backdrop,
 .detail.is-scrolled .page-backdrop {
   opacity: 0.4;
 }
 
 /* ---------- Home --------------------------------------------------------- */
+.home {
+  position: relative;
+  overflow: hidden;
+}
+/* The billboard: art full bleed under the top bar, with the title at the lower left. */
 .hero {
-  display: flex;
-  align-items: flex-end;
-  min-height: 80vh;
-  padding: 6rem var(--gutter) 2.6rem;
-  transition: opacity var(--t) var(--ease);
+  position: relative;
+  height: 56.25vw;
+  min-height: 32rem;
+  max-height: 88vh;
+}
+.hero__art {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+.hero__art .backdrop__img {
+  object-position: 70% 20%;
+}
+.hero__scrim {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(var(--bg-rgb), 0.85) 0%, rgba(var(--bg-rgb), 0) 55%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(var(--bg-rgb), 0) 25%);
 }
 .hero__body {
-  max-width: 46rem;
+  position: absolute;
+  left: var(--gutter);
+  bottom: 28%;
+  width: 36rem;
+  max-width: calc(100% - 2 * var(--gutter));
+}
+.eyebrow--bar {
+  display: flex;
+  align-items: center;
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  color: var(--ink);
+}
+.eyebrow--bar::before {
+  content: "";
+  flex: none;
+  width: 3px;
+  height: 0.9rem;
+  margin-right: 0.55rem;
+  background: var(--accent);
 }
 .hero__title {
-  margin: 0.7rem 0 1rem;
-  font: 800 5.2rem/0.9 var(--font-display);
-  letter-spacing: -0.04em;
-  text-shadow: 0 0.2rem 2.5rem rgba(0, 0, 0, 0.35);
+  margin: 0.7rem 0 0.8rem;
+  font: 800 4rem/1 var(--font-display);
+  letter-spacing: -0.02em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-shadow: 0 0.1rem 1.2rem rgba(0, 0, 0, 0.45);
+}
+.hero .meta {
+  color: rgba(var(--ink-rgb), 0.85);
+  text-shadow: 0 1px 0.5rem rgba(0, 0, 0, 0.6);
 }
 .hero__overview {
-  margin-top: 0.9rem;
-  max-width: 38rem;
-  font: 400 1.12rem/1.55 var(--font-body);
-  color: var(--ink-2);
+  margin-top: 0.6rem;
+  font: 400 1.1rem/1.45 var(--font-body);
+  color: rgba(var(--ink-rgb), 0.9);
+  text-shadow: 0 1px 0.4rem rgba(0, 0, 0, 0.6);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.home__rows {
-  padding-bottom: 4rem;
+.hero .actions {
+  margin-top: 1.3rem;
 }
-.home__rows .row {
-  transition: opacity var(--t) var(--ease);
+.hero .actions > * {
+  margin: 0 0.75rem 0 0;
 }
-
-/* Focus caption: TV only, once focus is in the rows */
-.focus-caption {
+.hero__flag {
+  position: absolute;
+  right: 0;
+  bottom: 28%;
+  padding: 0.5rem 2.8rem 0.5rem 0.85rem;
+  border-left: 3px solid var(--ink);
+  background: rgba(51, 51, 51, 0.6);
+  color: var(--ink);
+  font: 400 1rem/1.2 var(--font-body);
+}
+/* Slim phone-only header over the art. */
+.home__phonebar {
   display: none;
 }
-html.tv .focus-caption {
-  display: block;
-  position: fixed;
-  top: 9vh;
-  left: var(--gutter);
-  width: 46rem;
-  z-index: 2;
-  opacity: 0;
-  transform: translateY(0.6rem);
-  transition: opacity var(--t) var(--ease), transform var(--t) var(--ease-out);
+.home__rows {
+  position: relative;
+  z-index: 1;
+  margin-top: -5vw;
+  padding-bottom: 4rem;
+}
+/* Ambient art: the billboard at thumbnail size, stretched (the scaling blurs it, no CSS filter),
+   so the rows sit on its colours instead of flat black. */
+.home__ambient {
+  position: absolute;
+  top: 5vw;
+  left: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100vh;
+  background: transparent;
+  opacity: 0.55;
   pointer-events: none;
 }
-html.tv .home.has-focus-row .focus-caption.is-on {
-  opacity: 1;
-  transform: none;
+.home__ambient-fade {
+  position: absolute;
+  top: 5vw;
+  left: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100vh;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--bg) 0%, rgba(var(--bg-rgb), 0.35) 14%, rgba(var(--bg-rgb), 0.6) 55%, var(--bg) 100%);
 }
-.focus-caption__title {
-  margin: 0.4rem 0 0.6rem;
-  font: 800 3.1rem/0.95 var(--font-display);
-  letter-spacing: -0.035em;
-  text-shadow: 0 0.2rem 2rem rgba(0, 0, 0, 0.4);
-}
-.focus-caption__overview {
-  margin-top: 0.5rem;
-  max-width: 36rem;
-  min-height: 3em;
-  color: var(--ink-2);
-  font-size: 1rem;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-/* TV: the focused row parks at 40vh; rows above it step aside */
+/* TV: the focused row parks about a third of the way down, under the bar. */
 html.tv .home__rows .row {
-  --nav-anchor-top: 40vh;
-}
-html.tv .home.has-focus-row .hero,
-html.tv .home__rows .row.is-past {
-  opacity: 0;
-}
-html.tv .home.is-scrolled .page-backdrop {
-  opacity: 0.75;
+  --nav-anchor-top: 32vh;
 }
 
 /* ---------- Generic page ------------------------------------------------- */
@@ -1371,7 +1419,61 @@ html.tv .player__fs {
     padding-bottom: 4.4rem;
     padding-bottom: calc(4.4rem + env(safe-area-inset-bottom));
   }
-  .hero__title,
+  .hero {
+    height: 70vh;
+    min-height: 0;
+    max-height: none;
+  }
+  .hero__title {
+    font-size: 2.4rem;
+  }
+  .hero__body {
+    bottom: 1.25rem;
+    width: auto;
+    right: var(--gutter);
+    max-width: none;
+  }
+  .hero__overview {
+    font-size: 0.98rem;
+    -webkit-line-clamp: 2;
+  }
+  .hero .actions > * {
+    -webkit-box-flex: 1;
+    flex: 1 1 0;
+    justify-content: center;
+    min-width: 0;
+    padding-left: 0.6rem;
+    padding-right: 0.6rem;
+  }
+  .hero .actions > * + * {
+    margin-right: 0;
+  }
+  .hero__scrim {
+    background: linear-gradient(0deg, var(--bg) 0%, rgba(var(--bg-rgb), 0.65) 34%, rgba(var(--bg-rgb), 0) 62%);
+  }
+  .hero__flag {
+    display: none;
+  }
+  html:not(.tv) .home__phonebar {
+    display: flex;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 2;
+    align-items: center;
+    height: 3.5rem;
+    padding: 0 var(--gutter);
+    padding-top: env(safe-area-inset-top);
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0));
+  }
+  .home__rows {
+    margin-top: 0.4rem;
+  }
+  .home__ambient,
+  .home__ambient-fade {
+    top: 0;
+  }
   .detail__title {
     font-size: 2.9rem;
   }
@@ -1381,7 +1483,6 @@ html.tv .player__fs {
   .search__input {
     font-size: 2rem;
   }
-  .hero,
   .detail__hero {
     min-height: 72vh;
   }

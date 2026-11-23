@@ -24,7 +24,6 @@ const SORTS: { value: LibrarySort; label: string; detail?: string }[] = [
   { value: "random", label: "Shuffle", detail: "A fresh random order" },
 ];
 const PAGE = 60;
-const pad = (n: number) => (n < 10 ? "0" + n : String(n));
 
 interface GridState {
   items: ItemSummary[];
@@ -287,9 +286,8 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
                   <Row
                     title={lane.title}
                     subtitle={lane.subtitle}
-                    index={pad(i() + 1)}
                     class={`row--lane row--lane-${lane.kind}`}
-                    action={laneHref(lane, libs() ?? []) ? { label: "See all", href: laneHref(lane, libs() ?? [])! } : undefined}
+                    action={laneHref(lane, libs() ?? []) ? { label: "Explore all", href: laneHref(lane, libs() ?? [])! } : undefined}
                   >
                     <For each={lane.items}>
                       {(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} />}

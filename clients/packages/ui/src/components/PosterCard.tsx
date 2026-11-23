@@ -29,6 +29,8 @@ export interface PosterCardProps {
   autofocus?: boolean;
   /** Rating + runtime strip, revealed on focus/hover (default on when the item carries them). */
   meta?: boolean;
+  /** Position in a ranked row: draws the large numeral and joins the accessible name ("3. Title"). */
+  rank?: number;
   class?: string;
 }
 
@@ -64,7 +66,12 @@ export function PosterCard(props: PosterCardProps): JSX.Element {
   return (
     <a
       class={`card card--${variant()}${props.class ? " " + props.class : ""}`}
-      classList={{ "has-download": dlActive(), "is-ready": dl()?.state === "available" }}
+      classList={{
+        "has-download": dlActive(),
+        "is-ready": dl()?.state === "available",
+        "card--ranked": props.rank != null,
+        "card--ranked-wide": (props.rank ?? 0) >= 10,
+      }}
       href={props.href}
       data-fid={it().id}
       data-autofocus={props.autofocus ? "" : undefined}
@@ -79,8 +86,11 @@ export function PosterCard(props: PosterCardProps): JSX.Element {
         }
         props.onClick?.(e);
       }}
-      aria-label={`${it().title}${sub() ? ", " + sub() : ""}${showMeta() ? `${rating() ? ", rated " + rating() : ""}${runtime() ? ", " + runtime() : ""}` : ""}${dl() ? ", " + RING_LABEL[dl()!.state] : props.activity ? `, ${RING_LABEL[props.activity.state]} ${Math.round(props.activity.progress * 100)}%` : ""}`}
+      aria-label={`${props.rank != null ? props.rank + ". " : ""}${it().title}${sub() ? ", " + sub() : ""}${showMeta() ? `${rating() ? ", rated " + rating() : ""}${runtime() ? ", " + runtime() : ""}` : ""}${dl() ? ", " + RING_LABEL[dl()!.state] : props.activity ? `, ${RING_LABEL[props.activity.state]} ${Math.round(props.activity.progress * 100)}%` : ""}`}
     >
+      <Show when={props.rank != null}>
+        <span class="card__rank" aria-hidden="true">{props.rank}</span>
+      </Show>
       <div class="card__frame">
         <Img
           class="card__img"

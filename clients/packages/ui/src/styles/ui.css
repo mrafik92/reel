@@ -711,46 +711,72 @@ html[data-input="key"] .ring__retry:focus {
 /* ---------- Rows --------------------------------------------------------- */
 .row {
   position: relative;
-  margin-bottom: 1.6rem;
+  margin-bottom: 0.7rem;
 }
 .row__head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   padding: 0 var(--gutter);
-  margin-bottom: 0.25rem;
 }
 .row__title {
   margin: 0;
-  font: 700 1.3rem/1.2 var(--font-display);
+  font: 700 1.35rem/1.2 var(--font-display);
   letter-spacing: -0.01em;
-  color: var(--ink);
+  color: rgba(var(--ink-rgb), 0.9);
 }
-.row__index {
-  display: inline-block;
-  margin-right: 0.8rem;
-  font: 500 0.82rem/1 var(--font-display);
-  letter-spacing: 0.08em;
-  color: var(--accent-hi);
-  vertical-align: 0.18em;
+html.tv .row__title {
+  font-size: 1.5rem;
 }
 .row__action {
-  padding: 0.3rem 0.7rem;
-  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-s);
   font: 700 0.85rem/1 var(--font-body);
-  color: var(--ink-3);
+  color: var(--ink-2);
   text-decoration: none;
+  white-space: nowrap;
+  transition: opacity 200ms var(--ease), transform 200ms var(--ease-out), color var(--t-fast) var(--ease);
 }
-.row__action:hover,
-.row__action:focus {
-  color: var(--bg);
+.row__action .icon {
+  margin-left: 0.2rem;
+  font-size: 1rem;
+}
+.row__action:hover {
+  color: var(--ink);
+}
+html[data-input="key"] .row__action:focus {
   background: var(--ink);
+  color: var(--on-light);
+  box-shadow: var(--focus-ring);
+}
+/* With a mouse it appears on row hover; key input and touch always see it. */
+@media (hover: hover) {
+  html[data-input="pointer"]:not(.tv) .row__action {
+    opacity: 0;
+    transform: translateX(-0.4rem);
+  }
+  html[data-input="pointer"]:not(.tv) .row:hover .row__action,
+  html[data-input="pointer"]:not(.tv) .row__action:focus {
+    opacity: 1;
+    transform: none;
+  }
+}
+.row__body {
+  position: relative;
+}
+/* The bigger TV focus scale needs more room above and below the tile. */
+html.tv .row__scroller {
+  padding-top: 1.35rem;
+  padding-bottom: 1.35rem;
 }
 .row__scroller {
   overflow-x: auto;
   overflow-y: hidden;
   /* Room for the focus scale + ring without clipping. */
-  padding: 0.9rem var(--gutter) 0.6rem;
+  padding: 1rem var(--gutter) 1rem;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
@@ -768,6 +794,84 @@ html[data-input="key"] .ring__retry:focus {
   /* trailing padding in overflow containers */
   content: "";
   flex: 0 0 1px;
+}
+/* Paging arrows: pointer only. */
+.row__nav {
+  display: none;
+  position: absolute;
+  top: 1rem;
+  bottom: 1rem;
+  z-index: 3;
+  width: var(--gutter);
+  padding: 0;
+  border: 0;
+  background: rgba(var(--bg-rgb), 0.5);
+  color: var(--ink);
+  font-size: 1.9rem;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 200ms var(--ease), background-color var(--t-fast) var(--ease);
+}
+.row__nav--prev {
+  left: 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.row__nav--next {
+  right: 0;
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+.row__nav:hover {
+  background: rgba(var(--bg-rgb), 0.75);
+}
+.row__nav .icon {
+  transition: transform var(--t-fast) var(--ease-out);
+}
+.row__nav:hover .icon {
+  transform: scale(1.2);
+}
+@media (hover: hover) {
+  html[data-input="pointer"]:not(.tv) .row__nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  html[data-input="pointer"]:not(.tv) .row:hover .row__nav.is-on {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+/* Ranked: a huge outlined numeral tucked behind the tile's left edge. */
+.card--ranked {
+  --rank-tile: calc(var(--poster-w) * 0.86);
+  --rank-w: calc(var(--rank-tile) * 0.72);
+  width: calc(var(--rank-tile) + var(--rank-w));
+  padding-left: var(--rank-w);
+}
+.card--ranked-wide {
+  --rank-w: calc(var(--rank-tile) * 1.42);
+}
+.card__rank {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  width: calc(var(--rank-w) + var(--rank-tile) * 0.25);
+  height: calc(var(--rank-tile) * 1.5);
+  overflow: visible;
+  color: transparent;
+  font: 900 calc(var(--rank-tile) * 1.65) / 0.74 var(--font-display);
+  letter-spacing: -0.07em;
+  white-space: nowrap;
+  -webkit-text-stroke: 0.2rem rgba(var(--ink-rgb), 0.45);
+  pointer-events: none;
+}
+@media (min-width: 761px) {
+  .card--ranked > .card__caption {
+    left: var(--rank-w);
+  }
 }
 
 /* ---------- Virtual grid ------------------------------------------------- */
