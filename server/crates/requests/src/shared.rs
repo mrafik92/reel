@@ -101,19 +101,31 @@ impl Shared {
         self.last_emit.insert(p.request_id, (now, p));
     }
 
-    /// Persist a state transition (if it is one) and publish progress.
+    /// Persist a state transition from the status `req` was read with, and publish progress.
+    /// If the row has since moved to another state, the update is stale and does nothing.
     /// Returns whether the persisted status changed.
     pub async fn transition(&self, req: &RequestRecord, p: Progress) -> Result<bool> {
         let changed = sqlx::query(
-            "UPDATE requests SET status = ?, updated_at = unixepoch() WHERE id = ? AND status != ?",
+            "UPDATE requests SET status = ?1, updated_at = unixepoch()
+             WHERE id = ?2 AND status = ?3 AND status != ?1",
         )
         .bind(state_str(p.state))
         .bind(req.id)
-        .bind(state_str(p.state))
+        .bind(state_str(req.status))
         .execute(&self.pool)
         .await?
         .rows_affected()
             > 0;
+        if !changed {
+            let current: Option<String> =
+                sqlx::query_scalar("SELECT status FROM requests WHERE id = ?")
+                    .bind(req.id)
+                    .fetch_optional(&self.pool)
+                    .await?;
+            if current.as_deref() != Some(state_str(p.state)) {
+                return Ok(false);
+            }
+        }
         let state = p.state;
         self.publish(p, changed);
         if changed {

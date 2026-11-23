@@ -91,6 +91,7 @@ Reel Web for Android (epic #225), the WebView client, has its shell built (#226)
   (`admin_source_responses_never_contain_provider_credentials`,
   `discover_cards_link_only_library_items_the_viewer_can_open`, the downloads test), not yet deployed.
 - **Notifications** (Discord/Telegram/webhook).
+- **Repeated *available* notifications** (#276): fix built and covered by unit tests, not yet deployed. A stale tracker or webhook update can no longer move an `available` request back in flight, which is what re-sent the notification on later imports.
 - **Player menus in full screen** (#94, not yet deployed). Checked 2026-11-15 with Playwright in mock mode: in real
   browser full screen (Chrome) the speed, audio, subtitle and "Play on…" sheets open over the video, work with
   mouse and keys, and close without leaving full screen; a toast shows too. Leaving full screen with a sheet open
