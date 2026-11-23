@@ -5910,7 +5910,7 @@
           },
           "password": {
             "type": "string",
-            "description": "At least 8 characters."
+            "description": "At least 12 characters, and not a common password."
           },
           "username": {
             "type": "string"
@@ -8857,13 +8857,18 @@
         "required": [
           "token",
           "expires_at",
-          "user"
+          "user",
+          "password_weak"
         ],
         "properties": {
           "expires_at": {
             "type": "integer",
             "format": "int64",
             "description": "Session expiry (unix seconds); extended on use."
+          },
+          "password_weak": {
+            "type": "boolean",
+            "description": "The password used still works but wouldn't be accepted as a new one: suggest changing it."
           },
           "token": {
             "type": "string",
@@ -9085,7 +9090,7 @@
           },
           "new_password": {
             "type": "string",
-            "description": "At least 8 characters."
+            "description": "At least 12 characters, and not a common password."
           }
         }
       },
@@ -10205,7 +10210,7 @@
           },
           "password": {
             "type": "string",
-            "description": "At least 8 characters."
+            "description": "At least 12 characters, and not a common password."
           },
           "setup_token": {
             "type": [

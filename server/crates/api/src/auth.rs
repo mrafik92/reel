@@ -525,6 +525,8 @@ pub struct LoginResponse {
     /// Session expiry (unix seconds); extended on use.
     pub expires_at: i64,
     pub user: Me,
+    /// The password used still works but wouldn't be accepted as a new one: suggest changing it.
+    pub password_weak: bool,
 }
 
 async fn login_response(
@@ -538,6 +540,7 @@ async fn login_response(
         user: me_dto(st, &o.user).await?,
         token: o.token,
         expires_at: o.expires_at,
+        password_weak: o.password_weak,
     })
 }
 
@@ -560,7 +563,7 @@ pub async fn setup_status(State(st): State<AppState>) -> ApiResult<Json<SetupSta
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SetupBody {
     pub username: String,
-    /// At least 8 characters.
+    /// At least 12 characters, and not a common password.
     pub password: String,
     pub device_id: Option<String>,
     pub device_name: Option<String>,
@@ -759,7 +762,7 @@ pub async fn revoke_my_session(
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PasswordBody {
     pub current_password: String,
-    /// At least 8 characters.
+    /// At least 12 characters, and not a common password.
     pub new_password: String,
 }
 
@@ -845,7 +848,7 @@ pub async fn invite_info(
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AcceptInviteBody {
     pub username: String,
-    /// At least 8 characters.
+    /// At least 12 characters, and not a common password.
     pub password: String,
     pub device_id: Option<String>,
     pub device_name: Option<String>,

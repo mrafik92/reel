@@ -2227,6 +2227,8 @@ export interface components {
             username: string;
         };
         LoginResponse: {
+            /** @description The password used still works but wouldn't be accepted as a new one: suggest changing it. */
+            password_weak?: boolean;
             /**
              * Format: int64
              * @description Session expiry (unix seconds); extended on use.

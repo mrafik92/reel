@@ -1311,3 +1311,113 @@ async fn a_client_cannot_claim_an_admin_network_with_proxy_headers() {
         assert_eq!(s, StatusCode::FORBIDDEN, "peer {peer}, xff {xff}: {b}");
     }
 }
+
+// ───────────── password policy (#148) ─────────────
+
+#[tokio::test]
+async fn weak_passwords_are_refused_everywhere_a_password_is_set() {
+    let e = env_with(|_| {}, opts(50, 500), false).await;
+    let lan = "192.168.1.2";
+    for weak in ["elevenchars", "password1234"] {
+        let (s, b) = call(
+            &e.raw,
+            lan,
+            "POST",
+            "/api/v1/setup",
+            Some(json!({"username": "admin", "password": weak})),
+            &[],
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "setup {weak}: {b}");
+    }
+    let (s, setup) = call(
+        &e.raw,
+        lan,
+        "POST",
+        "/api/v1/setup",
+        Some(json!({"username": "admin", "password": PW})),
+        &[],
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{setup}");
+    let bearer = format!("Bearer {}", setup["token"].as_str().unwrap());
+    let auth = [("authorization", bearer.as_str())];
+
+    let (_, inv) = call(
+        &e.raw,
+        lan,
+        "POST",
+        "/api/v1/admin/invites",
+        Some(json!({})),
+        &auth,
+    )
+    .await;
+    let accept = format!(
+        "/api/v1/auth/invite/{}/accept",
+        inv["code"].as_str().unwrap()
+    );
+    for weak in ["elevenchars", "qwerty123456"] {
+        let (s, b) = call(
+            &e.raw,
+            lan,
+            "POST",
+            &accept,
+            Some(json!({"username": "newuser", "password": weak})),
+            &[],
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "invite {weak}: {b}");
+        let (s, b) = call(
+            &e.raw,
+            lan,
+            "POST",
+            "/api/v1/me/password",
+            Some(json!({"current_password": PW, "new_password": weak})),
+            &auth,
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "change {weak}: {b}");
+        let (s, b) = call(
+            &e.raw,
+            lan,
+            "POST",
+            "/api/v1/admin/users",
+            Some(json!({"username": "newuser", "password": weak})),
+            &auth,
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "create {weak}: {b}");
+    }
+    let (s, b) = call(
+        &e.raw,
+        lan,
+        "POST",
+        &accept,
+        Some(json!({"username": "newuser", "password": "a calm violet harbour"})),
+        &[],
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "a good password is accepted: {b}");
+}
+
+#[tokio::test]
+async fn an_existing_short_password_still_signs_in_and_is_flagged() {
+    let e = env_with(|_| {}, opts(50, 500), true).await;
+    let old = reel_auth::password::hash("oldpass8", fast()).unwrap();
+    sqlx::query("UPDATE users SET password_hash = ? WHERE username = 'admin'")
+        .bind(old)
+        .execute(&e.state.db)
+        .await
+        .unwrap();
+    let (s, b) = call(
+        &e.raw,
+        "192.168.1.2",
+        "POST",
+        "/api/v1/auth/login",
+        Some(json!({"username": "admin", "password": "oldpass8"})),
+        &[],
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["password_weak"], true);
+}

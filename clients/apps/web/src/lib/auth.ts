@@ -4,6 +4,7 @@ import { deviceFields } from "./device";
 import { MOCK } from "./mode";
 import { needsServerSetup } from "@reel/ui";
 import { autoRetry } from "./connection";
+import { toast } from "./toast";
 
 export type AuthStatus = "checking" | "offline" | "needs_server" | "needs_setup" | "anon" | "authed";
 
@@ -17,6 +18,9 @@ export { status as authStatus, user as currentUser, bootError };
 export const isAdmin = () => user()?.role === "admin" && user()?.admin_powers !== false;
 /** Admins and auto-approve users get "Add" (immediate); everyone else "Request". */
 export const canAutoAdd = () => isAdmin() || !!user()?.limits?.auto_approve;
+
+/** Shortest new password the server accepts (#148). It also refuses common ones. */
+export const MIN_PASSWORD = 12;
 
 const listeners = new Set<(u: Me | null) => void>();
 /** Subscribe to sign-in / sign-out (used to (re)connect the events socket). */
@@ -116,7 +120,9 @@ async function resolve(quiet: boolean): Promise<void> {
 }
 
 export async function login(username: string, password: string): Promise<Me> {
-  return accept(await api.login(withDevice({ username, password })));
+  const r = await api.login(withDevice({ username, password }));
+  if (r.password_weak) toast("Your password is weaker than Reel now requires. Change it in Settings → Account.", "info", 8000);
+  return accept(r);
 }
 
 export async function createAdmin(username: string, password: string): Promise<Me> {

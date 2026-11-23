@@ -46,6 +46,8 @@ pub struct LoginOutcome {
     pub token: String,
     pub user: User,
     pub expires_at: i64,
+    /// The password that just signed in wouldn't be accepted today (#148): nudge a change.
+    pub password_weak: bool,
 }
 
 #[derive(Clone)]
@@ -133,18 +135,6 @@ fn validate_username(u: &str) -> AuthResult<String> {
             "username must be 3-32 characters: letters, digits, '.', '_' or '-'".into(),
         ))
     }
-}
-
-fn validate_password(p: &str) -> AuthResult<()> {
-    if p.chars().count() < 8 {
-        return Err(AuthError::BadRequest(
-            "password must be at least 8 characters".into(),
-        ));
-    }
-    if p.len() > 256 {
-        return Err(AuthError::BadRequest("password is too long".into()));
-    }
-    Ok(())
 }
 
 const USER_SELECT: &str = "SELECT u.id, u.username, u.role, u.disabled, u.created_at, \
@@ -357,7 +347,7 @@ impl AuthService {
             return Err(AuthError::Conflict("setup was already completed".into()));
         }
         let username = validate_username(username)?;
-        validate_password(password)?;
+        password::check_policy(password, Some(&username))?;
         let hash = self.hash_pw(password).await?;
         let claimed = sqlx::query(
             "UPDATE users SET username = ?, password_hash = ?, role = 'admin', disabled = 0 \
@@ -526,10 +516,12 @@ impl AuthService {
                 self.limiter.clear(&user_key);
                 self.limiter.clear(&global_key);
                 let (token, expires_at) = self.create_session(u.id, &dev).await?;
+                let password_weak = password::check_policy(password, Some(&u.username)).is_err();
                 Ok(LoginOutcome {
                     token,
                     user: u,
                     expires_at,
+                    password_weak,
                 })
             }
             _ => {
@@ -647,12 +639,13 @@ impl AuthService {
         new: &str,
         keep_session: Option<i64>,
     ) -> AuthResult<()> {
-        validate_password(new)?;
-        let phc: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
-            .bind(user_id)
-            .fetch_optional(&self.pool)
-            .await?
-            .ok_or(AuthError::NotFound)?;
+        let (username, phc): (String, String) =
+            sqlx::query_as("SELECT username, password_hash FROM users WHERE id = ?")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await?
+                .ok_or(AuthError::NotFound)?;
+        password::check_policy(new, Some(&username))?;
         if !self.verify_pw(current, &phc).await? {
             return Err(AuthError::InvalidCredentials);
         }
@@ -764,7 +757,7 @@ impl AuthService {
 
     pub async fn create_user(&self, nu: NewUser) -> AuthResult<User> {
         let username = validate_username(&nu.username)?;
-        validate_password(&nu.password)?;
+        password::check_policy(&nu.password, Some(&username))?;
         let hash = self.hash_pw(&nu.password).await?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let id = self
@@ -835,7 +828,7 @@ impl AuthService {
         };
         let hash = match &p.password {
             Some(pw) => {
-                validate_password(pw)?;
+                password::check_policy(pw, Some(&username))?;
                 Some(self.hash_pw(pw).await?)
             }
             None => None,
@@ -1059,7 +1052,7 @@ impl AuthService {
             return Err(AuthError::NotFound);
         }
         let username = validate_username(username)?;
-        validate_password(password)?;
+        password::check_policy(password, Some(&username))?;
         let row = sqlx::query("SELECT * FROM invites WHERE code = ?")
             .bind(code)
             .fetch_optional(&self.pool)
@@ -1125,6 +1118,7 @@ impl AuthService {
             token,
             user,
             expires_at,
+            password_weak: false,
         })
     }
 

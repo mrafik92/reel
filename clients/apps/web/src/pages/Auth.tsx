@@ -2,7 +2,7 @@ import { createResource, createSignal, For, Match, onMount, Show, Switch, type J
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import { focusFirst, getServerUrl, Icon, isFileOrigin, setServerUrl } from "@reel/ui";
 import { api, ApiError } from "../api";
-import { acceptInvite, authStatus, bootstrap, createAdmin, login } from "../lib/auth";
+import { acceptInvite, authStatus, bootstrap, createAdmin, login, MIN_PASSWORD } from "../lib/auth";
 import { Field, PasswordField, useCountdown } from "../components/Form";
 import { href } from "../lib/mode";
 
@@ -97,14 +97,14 @@ export function Setup(): JSX.Element {
   const [confirm, setConfirm] = createSignal("");
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal(false);
-  const tooShort = () => password().length > 0 && password().length < 8;
+  const tooShort = () => password().length > 0 && password().length < MIN_PASSWORD;
   const mismatch = () => confirm().length > 0 && confirm() !== password();
 
   const submit = async (e: Event) => {
     e.preventDefault();
     if (busy()) return;
     if (!username().trim()) return setError("Pick a username.");
-    if (password().length < 8) return setError("The password needs at least 8 characters.");
+    if (password().length < MIN_PASSWORD) return setError(`The password needs at least ${MIN_PASSWORD} characters.`);
     if (password() !== confirm()) return setError("The passwords don't match.");
     setBusy(true);
     setError(undefined);
@@ -136,7 +136,7 @@ export function Setup(): JSX.Element {
     >
       <form class="auth__form" onSubmit={submit} novalidate>
         <Field label="Admin username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocomplete="username" autocapitalize="off" spellcheck={false} data-autofocus />
-        <PasswordField label="Password" hint="At least 8 characters" error={tooShort() && "At least 8 characters"} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
+        <PasswordField label="Password" hint={`At least ${MIN_PASSWORD} characters`} error={tooShort() && `At least ${MIN_PASSWORD} characters`} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
         <PasswordField label="Confirm password" error={mismatch() && "Doesn't match"} value={confirm()} onInput={(e) => setConfirm(e.currentTarget.value)} autocomplete="new-password" />
         <Show when={error()}>
           <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
@@ -162,7 +162,7 @@ export function Invite(): JSX.Element {
     e.preventDefault();
     if (busy()) return;
     if (!username().trim()) return setError("Pick a username.");
-    if (password().length < 8) return setError("The password needs at least 8 characters.");
+    if (password().length < MIN_PASSWORD) return setError(`The password needs at least ${MIN_PASSWORD} characters.`);
     setBusy(true);
     setError(undefined);
     try {
@@ -211,7 +211,7 @@ export function Invite(): JSX.Element {
           >
             <form class="auth__form" onSubmit={submit} novalidate>
               <Field label="Choose a username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocomplete="username" autocapitalize="off" spellcheck={false} data-autofocus />
-              <PasswordField label="Choose a password" hint="At least 8 characters" value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
+              <PasswordField label="Choose a password" hint={`At least ${MIN_PASSWORD} characters`} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
               <Show when={error()}>
                 <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
               </Show>

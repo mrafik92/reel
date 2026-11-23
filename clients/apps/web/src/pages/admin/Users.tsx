@@ -3,6 +3,7 @@ import { Icon } from "@reel/ui";
 import { api, type InviteDto, type Limits, type UserDto } from "../../api";
 import { currentUser } from "../../lib/auth";
 import { toast } from "../../lib/toast";
+import { MIN_PASSWORD } from "../../lib/auth";
 import { Field, PasswordField } from "../../components/Form";
 import { ConfirmButton, DEFAULT_LIMITS, LibraryPicker, LimitsForm, limitsSummary, Panel, Select, Toggle, timeAgo } from "../../components/AdminKit";
 import { ErrorState } from "../../components/States";
@@ -224,7 +225,7 @@ function UserEditor(props: {
   const submit = async (e: Event) => {
     e.preventDefault();
     if (busy()) return;
-    if (!u && (!username().trim() || password().length < 8)) return toast("Username and a password of 8+ characters are needed", "error");
+    if (!u && (!username().trim() || password().length < MIN_PASSWORD)) return toast(`Username and a password of ${MIN_PASSWORD}+ characters are needed`, "error");
     setBusy(true);
     try {
       const role = admin() ? "admin" : "user";
@@ -244,7 +245,7 @@ function UserEditor(props: {
     <form class="subform" onSubmit={submit} novalidate>
       <div class="form-grid">
         <Field label="Username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocapitalize="off" spellcheck={false} data-autofocus />
-        <PasswordField label={u ? "New password" : "Password"} hint={u ? "Leave blank to keep the current one" : "At least 8 characters"} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
+        <PasswordField label={u ? "New password" : "Password"} hint={u ? "Leave blank to keep the current one" : `At least ${MIN_PASSWORD} characters`} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
       </div>
       <div class="toggles">
         <Toggle label="Admin" hint="Can change server settings and approve requests" checked={admin()} onChange={setAdmin} disabled={self()} />
