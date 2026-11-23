@@ -72,8 +72,7 @@ CT 113:  deploy/ct113/deploy.py on the Mac  (ssh minix-local → pct exec 113 �
   curl -s https://reel.rafikii.co/api/v1/health   # {"status":"ok"} (version only when signed in)
   ```
 - **Normal deploy: `deploy/ct113/deploy.py` from the Mac** (`--dry-run` first). There is no deploy workflow
-  since #268 (the repo is public, so no self-hosted runner); the image run summary only reminds you of this
-  command. It needs `ssh minix-local` and `gh` with the `project` scope. It pulls the latest successful
+  since #268 (the repo is public, so no self-hosted runner). It needs `ssh minix-local` and `gh` with the `project` scope. It pulls the latest successful
   image, restarts, runs a health check, then finds tickets referenced in the commits since the previously
   deployed build. Each gets a comment "🚀 Deployed to CT 113 — build `abc1234`" and moves to **Deployed** on
   the project board. It refuses to deploy while a newer image build is still running. Recovery:
