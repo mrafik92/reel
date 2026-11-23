@@ -13,6 +13,9 @@ use crate::{
     signing::{UrlSigner, now_unix},
 };
 
+mod mfa;
+pub use mfa::{MfaChallenge, MfaProof, MfaStatus, PasskeyInfo, TotpEnrollment};
+
 /// Don't rewrite the session row more often than this.
 const TOUCH_INTERVAL: i64 = 60;
 
@@ -26,6 +29,8 @@ pub struct AuthOptions {
     pub max_concurrent_hashes: usize,
     /// Sessions end this long after login no matter how often they are used.
     pub absolute_session_ttl: Duration,
+    /// Public base URL; its host is the WebAuthn relying party. `None` turns passkeys off.
+    pub public_url: Option<String>,
 }
 
 impl Default for AuthOptions {
@@ -36,6 +41,7 @@ impl Default for AuthOptions {
             limiter: LimiterConfig::default(),
             max_concurrent_hashes: 4,
             absolute_session_ttl: Duration::from_secs(90 * 24 * 3600),
+            public_url: None,
         }
     }
 }
@@ -63,6 +69,7 @@ pub struct AuthService {
     /// One-time token printed at first boot: required for `/setup` from non-LAN clients.
     setup_token: Arc<std::sync::Mutex<Option<String>>>,
     audit_seen: Arc<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>>,
+    mfa: Arc<mfa::MfaState>,
 }
 
 /// Rate-limit bucket of a client address: IPv6 clients share a /64.
@@ -195,6 +202,7 @@ impl AuthService {
             hash_slots: Arc::new(tokio::sync::Semaphore::new(
                 opts.max_concurrent_hashes.max(1),
             )),
+            mfa: Arc::new(mfa::MfaState::new(opts.public_url.as_deref())),
             opts: Arc::new(opts),
             dummy: Arc::default(),
             epochs: Arc::default(),
@@ -413,8 +421,8 @@ impl AuthService {
 
     /// Audit a failed login at most once a minute per (username, ip): a guessing run must not
     /// flood the audit table.
-    async fn audit_failure(&self, name: &str, ip: Option<&str>) {
-        let key = format!("{name}|{}", ip_bucket(ip));
+    async fn audit_failure(&self, action: &str, name: &str, ip: Option<&str>) {
+        let key = format!("{action}|{name}|{}", ip_bucket(ip));
         {
             let mut m = self.audit_seen.lock().unwrap();
             let now = std::time::Instant::now();
@@ -431,7 +439,7 @@ impl AuthService {
             }
             m.insert(key, now);
         }
-        self.audit(None, Some(name), "login_failure", None, Value::Null, ip)
+        self.audit(None, Some(name), action, None, Value::Null, ip)
             .await;
     }
 
@@ -513,10 +521,15 @@ impl AuthService {
         match user {
             Some(u) if ok && !u.disabled => {
                 give_back();
+                let password_weak = password::check_policy(password, Some(&u.username)).is_err();
+                if self.has_second_factor(u.id).await? {
+                    // failure counters are cleared only once the second factor passes too
+                    let c = self.issue_challenge(&u, &dev, password_weak).await?;
+                    return Err(AuthError::SecondFactorRequired(c));
+                }
                 self.limiter.clear(&user_key);
                 self.limiter.clear(&global_key);
                 let (token, expires_at) = self.create_session(u.id, &dev).await?;
-                let password_weak = password::check_policy(password, Some(&u.username)).is_err();
                 Ok(LoginOutcome {
                     token,
                     user: u,
@@ -527,7 +540,8 @@ impl AuthService {
             _ => {
                 // the attempt was already counted
                 self.limiter.soft_fail(&global_key);
-                self.audit_failure(&name, dev.ip.as_deref()).await;
+                self.audit_failure("login_failure", &name, dev.ip.as_deref())
+                    .await;
                 Err(AuthError::InvalidCredentials)
             }
         }
@@ -660,6 +674,7 @@ impl AuthService {
             .bind(keep_session.unwrap_or(-1))
             .execute(&self.pool)
             .await?;
+        self.drop_pending_logins(user_id);
         self.bump_epoch(user_id).await?;
         Ok(())
     }
@@ -887,6 +902,9 @@ impl AuthService {
                 || (cur.perms.can_cast && !n.can_cast)
         });
         // links already handed out must not outlive the access they were issued under
+        if hash.is_some() || p.disabled == Some(true) {
+            self.drop_pending_logins(id);
+        }
         if hash.is_some() || p.disabled == Some(true) || lost_perm {
             self.bump_epoch(id).await?;
         }

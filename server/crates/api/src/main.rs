@@ -39,6 +39,12 @@ async fn main() -> anyhow::Result<()> {
             );
         }
     }
+    state.auth.set_require_admin_2fa(config.require_admin_2fa);
+    if !config.require_admin_2fa {
+        tracing::warn!(
+            "REEL_REQUIRE_ADMIN_2FA is off: admins have admin powers without a second factor"
+        );
+    }
     // signed-URL revocation epochs survive restarts
     state.auth.load_epochs().await?;
     // first boot: only the LAN (or whoever has this token) may claim the server

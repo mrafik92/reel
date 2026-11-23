@@ -1452,6 +1452,39 @@
         }
       }
     },
+    "/api/v1/admin/users/{id}/second-factor": {
+      "delete": {
+        "summary": "Remove all of a user's second factors and sign them out (they lost their device).",
+        "operationId": "admin_reset_second_factor",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Reset"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/users/{id}/sessions": {
       "delete": {
         "summary": "Sign a user out of every device.",
@@ -1614,6 +1647,16 @@
               }
             }
           },
+          "202": {
+            "description": "Password accepted; finish at `/auth/login/mfa`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MfaChallengeDto"
+                }
+              }
+            }
+          },
           "401": {
             "description": "",
             "content": {
@@ -1626,6 +1669,108 @@
           },
           "429": {
             "description": "Locked out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/login/mfa": {
+      "post": {
+        "summary": "Finish signing in with a second factor. Failures count towards the account's lockout.",
+        "operationId": "login_mfa",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfaLoginBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Wrong code, or the challenge expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Locked out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/login/mfa/passkey": {
+      "post": {
+        "summary": "WebAuthn options for the passkey option of login step two.",
+        "operationId": "login_mfa_passkey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfaPasskeyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3662,6 +3807,198 @@
         }
       }
     },
+    "/api/v1/me/passkeys/finish": {
+      "post": {
+        "summary": "Store the new passkey.",
+        "operationId": "passkey_finish",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyFinishBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodesDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/passkeys/start": {
+      "post": {
+        "summary": "Start adding a passkey: options for `navigator.credentials.create()`.",
+        "operationId": "passkey_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/passkeys/{id}": {
+      "patch": {
+        "summary": "Rename a passkey.",
+        "operationId": "passkey_rename",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Passkey id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyRenameBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Renamed"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/passkeys/{id}/remove": {
+      "post": {
+        "summary": "Remove a passkey.",
+        "operationId": "passkey_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Passkey id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/password": {
       "post": {
         "summary": "Change the password; all other sessions are signed out.",
@@ -3681,17 +4018,7 @@
             "description": "Changed"
           },
           "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
+            "description": "Weak new password or wrong current password",
             "content": {
               "application/json": {
                 "schema": {
@@ -3757,6 +4084,62 @@
         }
       }
     },
+    "/api/v1/me/recovery-codes": {
+      "post": {
+        "summary": "Replace all recovery codes.",
+        "operationId": "new_recovery_codes",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodesDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/security": {
+      "get": {
+        "summary": "The current user's sign-in methods.",
+        "operationId": "security",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/sessions": {
       "get": {
         "summary": "Devices signed in as the current user.",
@@ -3799,6 +4182,133 @@
             "description": "Revoked"
           },
           "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/totp/confirm": {
+      "post": {
+        "summary": "Activate the authenticator app with its first code.",
+        "operationId": "totp_confirm",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpConfirmBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodesDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/totp/remove": {
+      "post": {
+        "summary": "Remove the authenticator app.",
+        "operationId": "totp_remove",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/totp/start": {
+      "post": {
+        "summary": "Start adding an authenticator app. It's active once `/me/totp/confirm` gets a valid code.",
+        "operationId": "totp_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpStartDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
             "description": "",
             "content": {
               "application/json": {
@@ -8903,6 +9413,8 @@
           "username",
           "role",
           "admin_powers",
+          "second_factor",
+          "must_enroll_second_factor",
           "limits",
           "permissions",
           "direct_live"
@@ -8934,12 +9446,20 @@
           "limits": {
             "$ref": "#/components/schemas/LimitsDto"
           },
+          "must_enroll_second_factor": {
+            "type": "boolean",
+            "description": "An admin who must add a second factor before getting admin powers."
+          },
           "permissions": {
             "$ref": "#/components/schemas/PermissionsDto",
             "description": "Effective permissions (all true for admins)."
           },
           "role": {
             "$ref": "#/components/schemas/RoleDto"
+          },
+          "second_factor": {
+            "type": "boolean",
+            "description": "The account has a passkey or authenticator app."
           },
           "username": {
             "type": "string"
@@ -9016,6 +9536,76 @@
           "tv"
         ]
       },
+      "MfaChallengeDto": {
+        "type": "object",
+        "description": "Returned with 202 by `/auth/login` when the account has a second factor.",
+        "required": [
+          "mfa_token",
+          "methods",
+          "expires_in_s"
+        ],
+        "properties": {
+          "expires_in_s": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Available methods: `totp`, `passkey`, `recovery`."
+          },
+          "mfa_token": {
+            "type": "string",
+            "description": "Send to `/auth/login/mfa`. It can't be used as a session."
+          }
+        }
+      },
+      "MfaLoginBody": {
+        "type": "object",
+        "required": [
+          "mfa_token"
+        ],
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "6-digit authenticator code."
+          },
+          "mfa_token": {
+            "type": "string"
+          },
+          "passkey": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The browser's WebAuthn assertion."
+          },
+          "recovery_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Single-use recovery code."
+          }
+        }
+      },
+      "MfaPasskeyBody": {
+        "type": "object",
+        "required": [
+          "mfa_token"
+        ],
+        "properties": {
+          "mfa_token": {
+            "type": "string"
+          }
+        }
+      },
       "NotificationDto": {
         "type": "object",
         "required": [
@@ -9075,6 +9665,73 @@
                 "$ref": "#/components/schemas/Program"
               }
             ]
+          }
+        }
+      },
+      "PasskeyDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "PasskeyFinishBody": {
+        "type": "object",
+        "required": [
+          "credential"
+        ],
+        "properties": {
+          "credential": {
+            "type": "object",
+            "description": "The browser's WebAuthn attestation."
+          }
+        }
+      },
+      "PasskeyRenameBody": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "PasskeyStartBody": {
+        "type": "object",
+        "required": [
+          "password",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Label shown in the list, e.g. \"MacBook\"."
+          },
+          "password": {
+            "type": "string"
           }
         }
       },
@@ -9711,6 +10368,34 @@
           }
         }
       },
+      "ReauthBody": {
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "The account's current password."
+          }
+        }
+      },
+      "RecoveryCodesDto": {
+        "type": "object",
+        "description": "Recovery codes, shown once.",
+        "properties": {
+          "recovery_codes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when new codes were generated. They can't be read again."
+          }
+        }
+      },
       "RequestDto": {
         "type": "object",
         "required": [
@@ -9995,6 +10680,40 @@
               "$ref": "#/components/schemas/VodCard"
             },
             "description": "Xtream VOD movies and series matching the text."
+          }
+        }
+      },
+      "SecurityDto": {
+        "type": "object",
+        "required": [
+          "totp",
+          "passkeys",
+          "recovery_codes_left",
+          "passkeys_available",
+          "must_enroll"
+        ],
+        "properties": {
+          "must_enroll": {
+            "type": "boolean",
+            "description": "This admin has to add a factor before getting admin powers."
+          },
+          "passkeys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PasskeyDto"
+            }
+          },
+          "passkeys_available": {
+            "type": "boolean",
+            "description": "The server can do passkeys (`REEL_PUBLIC_URL` is set)."
+          },
+          "recovery_codes_left": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "totp": {
+            "type": "boolean",
+            "description": "An authenticator app is active."
           }
         }
       },
@@ -10795,6 +11514,34 @@
               "type": "string"
             },
             "description": "Text formats the client can render natively: vtt, srt, ass."
+          }
+        }
+      },
+      "TotpConfirmBody": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          }
+        }
+      },
+      "TotpStartDto": {
+        "type": "object",
+        "required": [
+          "secret",
+          "otpauth_uri"
+        ],
+        "properties": {
+          "otpauth_uri": {
+            "type": "string",
+            "description": "`otpauth://` link, shown as a QR code."
+          },
+          "secret": {
+            "type": "string",
+            "description": "Base32 secret, for typing into an authenticator app."
           }
         }
       },

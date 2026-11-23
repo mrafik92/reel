@@ -1,10 +1,11 @@
 import { createSignal } from "solid-js";
-import { api, ApiError, getToken, onUnauthorized, setToken, invalidate, type Credentials, type LoginResponse, type Me } from "../api";
+import { api, ApiError, getToken, onUnauthorized, setToken, invalidate, type Credentials, type LoginResponse, type Me, type MfaChallenge, type MfaLogin } from "../api";
 import { deviceFields } from "./device";
 import { MOCK } from "./mode";
 import { needsServerSetup } from "@reel/ui";
 import { autoRetry } from "./connection";
 import { toast } from "./toast";
+import { usePasskey } from "./webauthn";
 
 export type AuthStatus = "checking" | "offline" | "needs_server" | "needs_setup" | "anon" | "authed";
 
@@ -97,9 +98,11 @@ async function resolve(quiet: boolean): Promise<void> {
   }
   if (getToken()) {
     try {
-      setUser(await api.me());
+      const me = await api.me();
+      setUser(me);
       setStatus("authed");
       emit();
+      if (me.must_enroll_second_factor && !quiet) toast(ENROLL_NOTICE, "info", 8000);
       return;
     } catch (e) {
       if (!(e instanceof ApiError) || e.status !== 401) {
@@ -119,10 +122,31 @@ async function resolve(quiet: boolean): Promise<void> {
   }
 }
 
-export async function login(username: string, password: string): Promise<Me> {
-  const r = await api.login(withDevice({ username, password }));
+const ENROLL_NOTICE = "Admin actions are off until you add a second factor in Settings → Account.";
+
+function finishLogin(r: LoginResponse): Me {
   if (r.password_weak) toast("Your password is weaker than Reel now requires. Change it in Settings → Account.", "info", 8000);
   return accept(r);
+}
+
+/** Where to land after signing in: an admin without a second factor goes to set one up. */
+export function afterLogin(me: Me, next: string): string {
+  return me.must_enroll_second_factor ? "/settings/account" : next;
+}
+
+/** Password step. Returns a challenge when the account has a second factor. */
+export async function login(username: string, password: string): Promise<{ me: Me } | { challenge: MfaChallenge }> {
+  const r = await api.login(withDevice({ username, password }));
+  return "mfa_token" in r ? { challenge: r } : { me: finishLogin(r) };
+}
+
+export async function completeMfa(b: MfaLogin): Promise<Me> {
+  return finishLogin(await api.loginMfa(b));
+}
+
+export async function completeMfaWithPasskey(mfaToken: string): Promise<Me> {
+  const options = await api.loginMfaPasskey(mfaToken);
+  return completeMfa({ mfa_token: mfaToken, passkey: await usePasskey(options) });
 }
 
 export async function createAdmin(username: string, password: string): Promise<Me> {

@@ -2255,6 +2255,10 @@ export interface components {
             /** @description This session can use admin actions right now. False for an admin on a public address: they
              *     keep every library and feature, but admin actions need the LAN or Tailscale. */
             admin_powers?: boolean;
+            /** @description The account has a passkey or authenticator app. */
+            second_factor?: boolean;
+            /** @description An admin who must add a second factor before getting admin powers. */
+            must_enroll_second_factor?: boolean;
             /** @description The server lets this user play Live TV directly from the provider
              *     (`REEL_ALLOW_DIRECT_LIVE` and IPTV access). */
             direct_live?: boolean;

@@ -5,6 +5,10 @@ use std::time::Duration;
 pub enum AuthError {
     #[error("invalid credentials")]
     InvalidCredentials,
+    /// The password was right, and the account has a second factor. An error rather than a
+    /// value, so a caller that doesn't handle it can never treat this as a finished login.
+    #[error("a second factor is required")]
+    SecondFactorRequired(crate::MfaChallenge),
     #[error("invalid or expired token")]
     Unauthorized,
     #[error("forbidden")]

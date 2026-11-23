@@ -52,8 +52,8 @@ impl FromRequestParts<AppState> for AuthUser {
         let token = bearer(&parts.headers)
             .ok_or_else(|| ApiError::Unauthorized("authentication required".into()))?;
         let (mut user, session) = st.auth.authenticate(token).await?;
-        user.admin_powers =
-            on_admin_network(&st.config, peer_of(&parts.extensions), &parts.headers);
+        st.grant_admin_powers(&mut user, peer_of(&parts.extensions), &parts.headers)
+            .await?;
         check_feature(&user, feature_of_path(parts.uri.path()))?;
         Ok(AuthUser {
             user,
@@ -111,9 +111,14 @@ impl FromRequestParts<AppState> for AdminUser {
     async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, ApiError> {
         let u = AuthUser::from_request_parts(parts, st).await?;
         if u.user.has_admin_role() && !u.is_admin() {
-            return Err(ApiError::Forbidden(
-                "admin actions are only available from the home network or Tailscale".into(),
-            ));
+            let on_network =
+                on_admin_network(&st.config, peer_of(&parts.extensions), &parts.headers);
+            return Err(ApiError::Forbidden(if on_network {
+                "add a passkey or authenticator app in Settings → Account to use admin actions"
+                    .into()
+            } else {
+                "admin actions are only available from the home network or Tailscale".into()
+            }));
         }
         if !u.is_admin() {
             return Err(ApiError::Forbidden("admin access required".into()));
@@ -231,6 +236,20 @@ pub struct SignedQuery {
 }
 
 impl AppState {
+    /// Decide whether this request may use admin powers (#127, #146): an admin role, from an
+    /// admin network, with a second factor when that's required.
+    pub async fn grant_admin_powers(
+        &self,
+        user: &mut User,
+        peer: Option<std::net::IpAddr>,
+        headers: &HeaderMap,
+    ) -> ApiResult<()> {
+        user.admin_powers = user.has_admin_role()
+            && on_admin_network(&self.config, peer, headers)
+            && !self.auth.must_enroll(user).await?;
+        Ok(())
+    }
+
     /// URL signer for `user_id`.
     pub fn signer(&self, user_id: i64) -> reel_auth::UrlSigner {
         self.auth.signer(user_id)
@@ -281,7 +300,9 @@ impl AppState {
         };
         if let Some(t) = bearer(headers) {
             let mut user = self.auth.authenticate(t).await?.0;
-            user.admin_powers = allow_powers && on_admin_network(&self.config, peer, headers);
+            if allow_powers {
+                self.grant_admin_powers(&mut user, peer, headers).await?;
+            }
             check_feature(&user, feature)?;
             return Ok(user);
         }
@@ -493,6 +514,10 @@ pub struct Me {
     /// This session can use admin actions right now. False for an admin on a public address: they
     /// keep every library and feature, but admin actions need the LAN or Tailscale.
     pub admin_powers: bool,
+    /// The account has a passkey or authenticator app.
+    pub second_factor: bool,
+    /// An admin who must add a second factor before getting admin powers.
+    pub must_enroll_second_factor: bool,
     pub limits: LimitsDto,
     /// Effective permissions (all true for admins).
     pub permissions: PermissionsDto,
@@ -510,6 +535,8 @@ async fn me_dto(st: &AppState, u: &User) -> ApiResult<Me> {
         username: u.username.clone(),
         role: u.role.into(),
         admin_powers: u.is_admin(),
+        second_factor: st.auth.has_second_factor(u.id).await?,
+        must_enroll_second_factor: st.auth.must_enroll(u).await?,
         limits: u.limits.clone().into(),
         permissions: effective(u),
         direct_live: st.config.allow_direct_live && u.can_iptv(),
@@ -529,13 +556,13 @@ pub struct LoginResponse {
     pub password_weak: bool,
 }
 
-async fn login_response(
+pub(crate) async fn login_response(
     st: &AppState,
     mut o: reel_auth::LoginOutcome,
     peer: Option<std::net::IpAddr>,
     headers: &HeaderMap,
 ) -> ApiResult<LoginResponse> {
-    o.user.admin_powers = on_admin_network(&st.config, peer, headers);
+    st.grant_admin_powers(&mut o.user, peer, headers).await?;
     Ok(LoginResponse {
         user: me_dto(st, &o.user).await?,
         token: o.token,
@@ -667,6 +694,7 @@ pub struct LoginBody {
     request_body = LoginBody,
     responses(
         (status = 200, body = LoginResponse),
+        (status = 202, description = "Password accepted; finish at `/auth/login/mfa`", body = crate::mfa::MfaChallengeDto),
         (status = 401, body = ErrorBody),
         (status = 429, description = "Locked out", body = ErrorBody)
     )
@@ -677,7 +705,8 @@ pub async fn login(
     Peer(peer): Peer,
     headers: HeaderMap,
     Json(b): Json<LoginBody>,
-) -> ApiResult<Json<LoginResponse>> {
+) -> ApiResult<axum::response::Response> {
+    use axum::response::IntoResponse;
     let out = st
         .auth
         .login(
@@ -690,8 +719,16 @@ pub async fn login(
                 ip,
             },
         )
-        .await?;
-    Ok(Json(login_response(&st, out, peer, &headers).await?))
+        .await;
+    match out {
+        Ok(o) => Ok(Json(login_response(&st, o, peer, &headers).await?).into_response()),
+        Err(reel_auth::AuthError::SecondFactorRequired(c)) => Ok((
+            StatusCode::ACCEPTED,
+            Json(crate::mfa::MfaChallengeDto::from(c)),
+        )
+            .into_response()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Revoke the current token.
@@ -771,7 +808,7 @@ pub struct PasswordBody {
     post,
     path = "/me/password",
     request_body = PasswordBody,
-    responses((status = 204, description = "Changed"), (status = 400, body = ErrorBody), (status = 401, body = ErrorBody))
+    responses((status = 204, description = "Changed"), (status = 400, description = "Weak new password or wrong current password", body = ErrorBody))
 )]
 pub async fn change_password(
     State(st): State<AppState>,
@@ -794,9 +831,8 @@ pub async fn change_password(
     {
         Err(reel_auth::AuthError::InvalidCredentials) => {
             st.auth.limiter().fail_user(&key);
-            Err(ApiError::Unauthorized(
-                "current password is incorrect".into(),
-            ))
+            // not a 401: clients read that as "your session ended" and sign out
+            Err(ApiError::BadRequest("current password is incorrect".into()))
         }
         r => {
             r?;

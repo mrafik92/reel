@@ -2,7 +2,7 @@ import { createSignal, For, lazy, Match, onCleanup, Show, Switch, type JSX } fro
 import { useParams } from "@solidjs/router";
 import { Icon, type IconName } from "@reel/ui";
 import { href } from "../../lib/mode";
-import { isAdmin } from "../../lib/auth";
+import { currentUser, isAdmin } from "../../lib/auth";
 import { usePageFocus } from "../../lib/focus";
 
 const Libraries = lazy(() => import("./Libraries"));
@@ -14,6 +14,7 @@ const Sessions = lazy(() => import("./Sessions"));
 const Hardware = lazy(() => import("./Hardware"));
 const Iptv = lazy(() => import("./Iptv"));
 const Playback = lazy(() => import("../SettingsPlayback"));
+const Account = lazy(() => import("../SettingsAccount"));
 import About from "./About";
 
 const SECTIONS: { id: string; label: string; icon: IconName; blurb: string }[] = [
@@ -75,6 +76,13 @@ export default function Admin(props: { section?: string }): JSX.Element {
       <div class="admin__layout">
         <nav class="admin__nav" aria-label="Settings sections" data-nav-group data-nav-lateral={beside() ? "" : undefined}>
           <PlaybackLink current={section() === "playback"} />
+          <a class="admin__link" href={href("/settings/account")} aria-current={section() === "account" ? "page" : undefined} data-autofocus={section() === "account" ? "" : undefined}>
+            <Icon name="key" />
+            <span>
+              <strong>Account</strong>
+              <small>Password, passkeys, devices</small>
+            </span>
+          </a>
           <Show when={isAdmin()}>
             <p class="admin__navhead">Server</p>
             <For each={SECTIONS}>
@@ -94,8 +102,15 @@ export default function Admin(props: { section?: string }): JSX.Element {
         <div class="admin__content" classList={{ "admin__content--wide": section() === "playback" }} data-nav-group>
           <Switch fallback={<p>Unknown section.</p>}>
             <Match when={section() === "playback"}><Playback /></Match>
+            <Match when={section() === "account"}><Account /></Match>
             <Match when={!isAdmin()}>
-              <p class="state__body">Only admins can change server settings.</p>
+              <p class="state__body">
+                {currentUser()?.must_enroll_second_factor
+                  ? "Add a passkey or authenticator app in Account to use server settings."
+                  : currentUser()?.role === "admin"
+                    ? "Server settings are available from your home network or Tailscale."
+                    : "Only admins can change server settings."}
+              </p>
             </Match>
             <Match when={section() === "libraries"}><Libraries /></Match>
             <Match when={section() === "users"}><Users /></Match>

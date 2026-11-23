@@ -3,7 +3,7 @@ import { ApiError } from "../http";
 import type { ItemSummary } from "@reel/ui";
 import type { ReelEvent } from "@reel/sdk";
 import type {
-  AdminSession, ArrServer, DecideResponse, DiscoverCard, DownloadClient, InviteDto, Me, NotificationTarget,
+  AccountSecurity, AdminSession, ArrServer, DecideResponse, DiscoverCard, DownloadClient, InviteDto, Me, NotificationTarget,
   ProgressDto, RequestDto, RequestState, UserDto,
 } from "../types";
 import { buildDb, detail, home, importTitle, tmdbIndex, SAMPLE_VIDEO } from "./fixtures";
@@ -27,6 +27,14 @@ const lim = (p: Partial<Limits> = {}): Limits => ({
   auto_approve: false, max_bitrate_kbps: null, max_streams: null, max_transcodes: null,
   quota_window_days: 7, request_quota_movies: null, request_quota_tv: null, ...p,
 });
+
+const mockSecurity: AccountSecurity = {
+  totp: false,
+  passkeys: [{ id: 1, name: "MacBook", created_at: Math.floor(Date.now() / 1000) - 86400 * 12, last_used_at: Math.floor(Date.now() / 1000) - 3600 }],
+  recovery_codes_left: 8,
+  passkeys_available: true,
+  must_enroll: false,
+};
 
 const ADMIN: Me = {
   id: 1, username: "rafik", role: "admin",
@@ -241,6 +249,28 @@ export function createMockApi(): MockApi {
       if (c.password.length < 3) throw new ApiError(401, "Wrong username or password");
       return { token: "mock", expires_at: nowS() + 86400 * 30, user: { ...ADMIN, username: c.username } };
     },
+    loginMfa: async () => ({ token: "mock", expires_at: nowS() + 86400 * 30, user: ADMIN, password_weak: false }),
+    loginMfaPasskey: async () => ({ publicKey: {} }),
+    security: async () => ({ ...mockSecurity, passkeys: [...mockSecurity.passkeys] }),
+    totpStart: async () => ({ secret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", otpauth_uri: "otpauth://totp/Reel:rafik?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Reel" }),
+    totpConfirm: async (code) => {
+      if (!/^\d{6}$/.test(code)) throw new ApiError(400, "that password or code isn't right");
+      mockSecurity.totp = true;
+      mockSecurity.recovery_codes_left = 10;
+      return { recovery_codes: ["m2abc-7defg", "h3jkm-9npqr", "s4tuv-6wxyz", "a5bcd-8efgh", "j6kmn-2pqrs", "t7uvw-3xyza", "b8cde-4fghj", "k9mnp-5qrst", "u2vwx-6yzab", "c3def-7ghjk"] };
+    },
+    totpRemove: async () => { mockSecurity.totp = false; },
+    newRecoveryCodes: async () => ({ recovery_codes: ["m2abc-7defg", "h3jkm-9npqr"] }),
+    passkeyStart: async () => { throw new ApiError(409, "passkeys need a real server"); },
+    passkeyFinish: async () => ({ recovery_codes: null }),
+    passkeyRemove: async (id) => { mockSecurity.passkeys = mockSecurity.passkeys.filter((k) => k.id !== id); },
+    changePassword: ok,
+    mySessions: async () => [
+      { id: 1, device_name: "Chrome on Mac", client: "web", ip: "192.168.1.20", last_seen: nowS(), current: true },
+      { id: 2, device_name: "Living Room TV", client: "webos", ip: "192.168.1.40", last_seen: nowS() - 7200, current: false },
+    ],
+    revokeMySession: ok,
+    resetSecondFactor: ok,
     logout: ok,
     me: async () => ADMIN,
     inviteInfo: async (code) => ({ valid: code.length > 3, library_names: ["Films", "Series"], expires_at: nowS() + 86400 * 3 }),

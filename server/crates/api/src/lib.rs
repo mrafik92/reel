@@ -8,6 +8,7 @@ pub mod enrich;
 pub mod error;
 mod extras;
 mod iptv;
+pub mod mfa;
 pub mod netutil;
 
 /// Test hook for the profile sanitizer.
@@ -119,6 +120,7 @@ impl AppState {
                 session_ttl: Duration::from_secs(
                     u64::from(config.session_ttl_days.max(1)) * 86_400,
                 ),
+                public_url: config.public_url.clone(),
                 ..Default::default()
             },
             key,
@@ -179,7 +181,8 @@ impl AppState {
     }
 
     /// Replace the auth options (session lifetime, rate-limit thresholds), keeping the signing key.
-    pub fn with_auth_options(mut self, opts: AuthOptions) -> Self {
+    pub fn with_auth_options(mut self, mut opts: AuthOptions) -> Self {
+        opts.public_url = opts.public_url.or_else(|| self.config.public_url.clone());
         self.auth = AuthService::new(self.db.clone(), opts, self.auth.signing_key().to_vec());
         self
     }
@@ -522,7 +525,7 @@ pub async fn events(
         (user, s.id)
     };
     // judged where the socket connects: a ticket issued on the LAN carries no powers elsewhere
-    user.admin_powers = auth::on_admin_network(&st.config, peer, &headers);
+    st.grant_admin_powers(&mut user, peer, &headers).await?;
     let slot = st.ws.acquire(user.id).ok_or_else(|| {
         error::ApiError::TooManyRequests("too many open event streams for this account".into())
     })?;
@@ -654,6 +657,18 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(auth::my_sessions))
         .routes(routes!(auth::revoke_my_session))
         .routes(routes!(auth::change_password))
+        .routes(routes!(mfa::login_mfa))
+        .routes(routes!(mfa::login_mfa_passkey))
+        .routes(routes!(mfa::security))
+        .routes(routes!(mfa::totp_start))
+        .routes(routes!(mfa::totp_confirm))
+        .routes(routes!(mfa::totp_remove))
+        .routes(routes!(mfa::new_recovery_codes))
+        .routes(routes!(mfa::passkey_start))
+        .routes(routes!(mfa::passkey_finish))
+        .routes(routes!(mfa::passkey_rename))
+        .routes(routes!(mfa::passkey_remove))
+        .routes(routes!(mfa::admin_reset_second_factor))
         .routes(routes!(auth::invite_info))
         .routes(routes!(auth::accept_invite))
         .routes(routes!(auth::list_users, auth::create_user))

@@ -147,3 +147,47 @@ export interface LibraryFilters {
   max_runtime_min?: number;
   unwatched?: boolean;
 }
+
+// ---- second factor (#146) ----------------------------------------------------------------------
+/** `POST /auth/login` answers with this (202) when the account has a second factor. */
+export interface MfaChallenge {
+  mfa_token: string;
+  methods: string[];
+  expires_in_s: number;
+}
+export interface MfaLogin {
+  mfa_token: string;
+  code?: string;
+  recovery_code?: string;
+  passkey?: unknown;
+}
+export interface PasskeyInfo {
+  id: number;
+  name: string;
+  created_at: number;
+  last_used_at?: number | null;
+}
+export interface AccountSecurity {
+  totp: boolean;
+  passkeys: PasskeyInfo[];
+  recovery_codes_left: number;
+  passkeys_available: boolean;
+  must_enroll: boolean;
+}
+export interface TotpEnrollment {
+  secret: string;
+  otpauth_uri: string;
+}
+export interface RecoveryCodes {
+  recovery_codes?: string[] | null;
+}
+export interface DeviceSession {
+  id: number;
+  device_id?: string | null;
+  device_name?: string | null;
+  client?: string | null;
+  ip?: string | null;
+  last_seen: number;
+  expires_at?: number | null;
+  current: boolean;
+}

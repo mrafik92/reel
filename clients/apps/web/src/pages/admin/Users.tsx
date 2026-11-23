@@ -100,6 +100,14 @@ export default function Users(): JSX.Element {
                       </span>
                     </div>
                     <div class="list__actions">
+                      <ConfirmButton label="Reset 2FA" confirm="Remove their second factor and sign them out?" onConfirm={async () => {
+                        try {
+                          await api.resetSecondFactor(u.id);
+                          toast(`Second factor reset for ${u.username}`, "success");
+                        } catch (e) {
+                          toast(e instanceof Error ? e.message : "Couldn't reset it", "error");
+                        }
+                      }} />
                       <button type="button" class="btn btn--sm" aria-expanded={editing() === u.id} onClick={() => setEditing(editing() === u.id ? null : u.id)}>
                         <Icon name="gear" /> <span>{editing() === u.id ? "Close" : "Edit"}</span>
                       </button>

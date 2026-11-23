@@ -8,6 +8,7 @@ import type {
   DiscoverList, DiscoverPage, DownloadClient, HwAccelStatus, InviteDto, InviteInfo, LoginResponse, Me, MediaType,
   NotificationTarget, PatchUser, ProgressDto, RequestDto, RequestState, SetupStatus, UpdateArrServer, UserDto,
   DiscoverDetailWithCast, PersonDetail, Reviews, DownloadItem, GenreCount, LibraryFilters, BrowseLane, SearchAll,
+  AccountSecurity, DeviceSession, MfaChallenge, MfaLogin, RecoveryCodes, TotpEnrollment,
 } from "./types";
 
 export { ApiError, isAborted, getToken, setToken, onUnauthorized } from "./http";
@@ -29,7 +30,22 @@ export interface Api {
   // Auth
   setupStatus(): Promise<SetupStatus>;
   setup(c: Credentials): Promise<LoginResponse>;
-  login(c: Credentials): Promise<LoginResponse>;
+  /** A challenge instead of a session when the account has a second factor. */
+  login(c: Credentials): Promise<LoginResponse | MfaChallenge>;
+  loginMfa(b: MfaLogin): Promise<LoginResponse>;
+  loginMfaPasskey(mfaToken: string): Promise<unknown>;
+  security(): Promise<AccountSecurity>;
+  totpStart(password: string): Promise<TotpEnrollment>;
+  totpConfirm(code: string): Promise<RecoveryCodes>;
+  totpRemove(password: string): Promise<void>;
+  newRecoveryCodes(password: string): Promise<RecoveryCodes>;
+  passkeyStart(password: string, name: string): Promise<unknown>;
+  passkeyFinish(credential: unknown): Promise<RecoveryCodes>;
+  passkeyRemove(id: number, password: string): Promise<void>;
+  changePassword(current: string, next: string): Promise<void>;
+  mySessions(): Promise<DeviceSession[]>;
+  revokeMySession(id: number): Promise<void>;
+  resetSecondFactor(userId: number): Promise<void>;
   logout(): Promise<void>;
   me(): Promise<Me>;
   inviteInfo(code: string): Promise<InviteInfo>;
@@ -129,6 +145,20 @@ const httpApi: Api = {
   setupStatus: () => http.get("/setup", undefined, noAuth),
   setup: (c) => http.post("/setup", c, noAuth),
   login: (c) => http.post("/auth/login", c, noAuth),
+  loginMfa: (b) => http.post("/auth/login/mfa", b, noAuth),
+  loginMfaPasskey: (mfa_token) => http.post("/auth/login/mfa/passkey", { mfa_token }, noAuth),
+  security: () => http.get("/me/security"),
+  totpStart: (password) => http.post("/me/totp/start", { password }),
+  totpConfirm: (code) => http.post("/me/totp/confirm", { code }),
+  totpRemove: (password) => http.post("/me/totp/remove", { password }),
+  newRecoveryCodes: (password) => http.post("/me/recovery-codes", { password }),
+  passkeyStart: (password, name) => http.post("/me/passkeys/start", { password, name }),
+  passkeyFinish: (credential) => http.post("/me/passkeys/finish", { credential }),
+  passkeyRemove: (id, password) => http.post(`/me/passkeys/${id}/remove`, { password }),
+  changePassword: (current_password, new_password) => http.post("/me/password", { current_password, new_password }),
+  mySessions: () => http.get("/me/sessions"),
+  revokeMySession: (id) => http.del(`/me/sessions/${id}`),
+  resetSecondFactor: (id) => http.del(`/admin/users/${id}/second-factor`),
   logout: () => http.post("/auth/logout"),
   me: () => http.get("/me"),
   inviteInfo: (code) => http.get(`/auth/invite/${encodeURIComponent(code)}`, undefined, noAuth),

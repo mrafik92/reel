@@ -56,6 +56,7 @@ function Routes() {
       <Route path="/vod/series/:id" component={VodSeries} />
       <Route path="/vod/play/:kind/:id" component={VodPlayer} />
       <Route path="/settings/playback" component={() => <Admin section="playback" />} />
+      <Route path="/settings/account" component={() => <Admin section="account" />} />
       <Route path="/admin/:section?" component={Admin} />
       <Route path="/dev/rings" component={DevRings} />
       <Route path="*" component={NotFound} />

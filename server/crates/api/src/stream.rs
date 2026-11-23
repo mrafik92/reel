@@ -83,11 +83,10 @@ pub async fn stream_guard(State(st): State<AppState>, req: Request, next: Next) 
             Ok((u, _)) => u,
             Err(e) => return ApiError::from(e).into_response(),
         };
-        user.admin_powers = crate::auth::on_admin_network(
-            &st.config,
-            crate::auth::peer_of(req.extensions()),
-            req.headers(),
-        );
+        let peer = crate::auth::peer_of(req.extensions());
+        if let Err(e) = st.grant_admin_powers(&mut user, peer, req.headers()).await {
+            return e.into_response();
+        }
         // an unknown session is a 404, never a way past the owner check
         match st.playback.session(&sid).await {
             Ok(info) if info.user_id == user.id || user.is_admin() => {}
