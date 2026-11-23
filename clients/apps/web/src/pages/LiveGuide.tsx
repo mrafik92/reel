@@ -9,7 +9,7 @@ import { ErrorState } from "../components/States";
 import { ChannelLogo } from "../components/live/ChannelLogo";
 import { Filters } from "../components/live/Filters";
 import {
-  channelById, channelByNumber, channelsError, clock, filter, filterKey, filteredList, loadAll, loadState, fmtDay, fmtRange, fmtTime, loadChannels, nowSec, progressOf, setFilter, getBrowsingChannel, setBrowsingChannel,
+  channelById, channelByNumber, channelsError, clock, filter, filterKey, filteredList, loadAll, loadState, fmtDay, fmtRange, fmtTime, loadChannels, nowSec, progressOf, setFilter,
 } from "../components/live/store";
 
 // Geometry (rem) — converted to px with the live root font size (TV scales rem with the viewport).
@@ -350,7 +350,6 @@ function Grid(): JSX.Element {
     if (need > span()) setSpan(need);
     ensureVisible(c, row, lateral);
     setFocused(c);
-    setBrowsingChannel(c.ch);
     const el = scroller.querySelector<HTMLElement>(`[data-fid="${cssEsc(c.key)}"]`);
     if (el) el.focus({ preventScroll: true });
     else requestAnimationFrame(() => scroller.querySelector<HTMLElement>(`[data-fid="${cssEsc(c.key)}"]`)?.focus({ preventScroll: true }));
@@ -489,7 +488,7 @@ function Grid(): JSX.Element {
       setPx(rootPx());
       scroller.scrollLeft = (Math.floor(nowSec() / HALF) * HALF - origin) * pps();
       measure();
-      focusRowAt(rowIndex().get(getBrowsingChannel() ?? -1) ?? 0, nowSec());
+      focusRowAt(0, nowSec());
     };
     requestAnimationFrame(place);
     const onResize = () => {
@@ -614,7 +613,6 @@ function Grid(): JSX.Element {
                 onOpen={setDetail}
                 onFocusCell={(c) => {
                   setFocused(c);
-                  setBrowsingChannel(c.ch);
                   if (!(c.start <= cursorT && c.stop > cursorT)) cursorT = Math.max(c.start, timeRange()[0]);
                 }}
               />

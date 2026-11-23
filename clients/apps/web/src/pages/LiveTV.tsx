@@ -8,14 +8,15 @@ import { isAdmin } from "../lib/auth";
 import { toast } from "../lib/toast";
 import { ErrorState } from "../components/States";
 import { ChannelList, type ChannelListApi } from "../components/live/ChannelList";
+import { ChannelRail } from "../components/live/ChannelRail";
 import { ChannelLogo } from "../components/live/ChannelLogo";
 import { NowPlaying, NumberEntry, ZapStats } from "../components/live/Overlays";
-import { ChannelSearch, GroupPicker } from "../components/live/Filters";
+import { ChannelSearch, Filters } from "../components/live/Filters";
 import { createTuner, forgetSession, ownSession, type TuneError } from "../components/live/tuner";
 import {
   allChannels, channelById, channelByNumber, channelsError, current, favourites, filter, filtered, filterLabel, fmtRange, fmtTime,
   lastChannel, loadAll, loadChannels, loadState, query, rememberChannel, setQuery, toggleFavorite, nowSec, clock, ensureNow, filterKey,
-  totalChannels, noteWatched, nowNext, progressOf, getBrowsingChannel, setBrowsingChannel, setFilter,
+  totalChannels, noteWatched, nowNext, progressOf,
 } from "../components/live/store";
 import { currentUser } from "../lib/auth";
 import { createTapToggle } from "../lib/tap";
@@ -67,7 +68,6 @@ function Watch(): JSX.Element {
   const tuner = createTuner(() => video);
   const [tunedCh, setTunedCh] = createSignal<IptvChannel>();
   const [numWait, setNumWait] = createSignal(false);
-  const [focusedChannel, setFocusedChannel] = createSignal<number | undefined>(getBrowsingChannel());
 
   const tuned = () => channelById(tuner.channelId()) ?? tunedCh();
   /**
@@ -137,10 +137,7 @@ function Watch(): JSX.Element {
 
   const pick = (c: IptvChannel) => {
     if (c.id === tuner.channelId() && tuner.phase() !== "error") enterFull();
-    else {
-      tuneNow(c);
-      enterFull();
-    }
+    else tuneNow(c);
   };
 
   // ---- number entry ----------------------------------------------------------------
@@ -200,7 +197,7 @@ function Watch(): JSX.Element {
     setMini(false);
     setOsd(false);
     if (tuner.nativePlane()) tuner.stop();
-    const id = focusedChannel() ?? tuner.channelId();
+    const id = tuner.channelId();
     requestAnimationFrame(() => id != null && listApi?.reveal(id, true));
   };
   // Where focus goes back to when the mini guide closes: the "Channel list" button when it
@@ -261,7 +258,11 @@ function Watch(): JSX.Element {
       requestAnimationFrame(() => {
         const a = document.activeElement;
         if (isFull() || (a && a !== document.body && a.tagName !== "MAIN")) return;
-        const id = focusedChannel() ?? tuner.channelId() ?? tunedCh()?.id;
+        if (idle()) {
+          const w = document.querySelector<HTMLElement>(".live__watch");
+          if (w) return w.focus({ preventScroll: true });
+        }
+        const id = tuner.channelId() ?? tunedCh()?.id;
         listApi?.reveal(id != null && l.some((c) => c.id === id) ? id : l[0]!.id, true);
       }),
     );
@@ -281,7 +282,6 @@ function Watch(): JSX.Element {
   // ---- keys ------------------------------------------------------------------------------
   onMount(() => {
     const offKeys = onRemoteKey((e) => {
-      if (document.querySelector("[data-nav-trap]") && !mini()) return false;
       const k = e.key;
       if (k === "digit") {
         pushDigit(e.digit ?? 0);
@@ -317,7 +317,7 @@ function Watch(): JSX.Element {
         case "right": showOsd(8000); return true;
         case "enter":
           // With an error card up, OK goes to its buttons.
-          if (tuner.error() || document.activeElement?.closest("button, a")) return false;
+          if (tuner.error()) return false;
           openMini();
           return true;
         case "stop": exitFull(); return true;
@@ -347,7 +347,6 @@ function Watch(): JSX.Element {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
-      if (t?.closest("[data-nav-trap]")) return;
       if (e.key === "f" || e.key === "F") (isFull() ? exitFull() : enterFull());
       else if (e.key === "i" || e.key === "I") toggleStats();
       else if (e.key === "g" || e.key === "G") navigate("/live/guide");
@@ -422,12 +421,13 @@ function Watch(): JSX.Element {
 
   return (
     <div class="live live--rows" classList={{ "is-full": isFull(), "is-native": tuner.nativePlane(), "has-mini": mini() }}>
-      <section class="live__hero" inert={!isFull()} aria-hidden={!isFull()}>
+      <section class="live__hero">
         <div
           ref={screen}
           class="live__screen"
           classList={{ "is-osd": osd() || !!pending(), "is-error": !!tuner.error(), "is-limit": tuner.error()?.kind === "limit" }}
-          tabindex={-1}
+          tabindex={isFull() ? -1 : 0}
+          data-focusable={isFull() ? undefined : ""}
           aria-label={isFull() ? `Watching ${tuned()?.name ?? ""}` : "Watch full screen"}
           onPointerDown={tap.onPointerDown}
           onClick={tap.onClick}
@@ -497,8 +497,6 @@ function Watch(): JSX.Element {
                 <span><kbd>0–9</kbd> number</span>
               </span>
               <button type="button" class="iconbtn" aria-label="Channel list" onClick={openMini}><Icon name="layers" /></button>
-              <button type="button" class="iconbtn" aria-label={tuned()?.favorite ? "Remove from favourites" : "Add to favourites"} aria-pressed={!!tuned()?.favorite} onClick={() => void fav()}><Icon name="star" /></button>
-              <button type="button" class="iconbtn" aria-label="Zap timing" aria-pressed={stats()} onClick={toggleStats}><Icon name="activity" /></button>
               <a class="iconbtn" aria-label="Guide" href={href("/live/guide")}><Icon name="grid" /></a>
             </div>
             <Show when={(osd() || pending()) && shown()}>
@@ -548,26 +546,22 @@ function Watch(): JSX.Element {
       </section>
 
       <section class="live__rows" aria-label="Channels">
-        <div class="live__browser-head">
-          <h1>Live TV</h1>
-          <a class="btn btn--sm" href={href("/live/guide")} onClick={() => { const id = focusedChannel(); if (id != null && !filtered()?.some((c) => c.id === id)) setFilter({ kind: "all" }); }}><Icon name="grid" /> <span>Guide</span></a>
-        </div>
-        <div class="live__browse-controls"><GroupPicker /><ChannelSearch class="livesearch--row" /></div>
+        <Filters />
         <div class="chanrow">
           <div class="rowlabel rowlabel--split">
             <p class="rowlabel__title">
               <span dir="auto">{query() ? "Search results" : filterLabel()}</span>{" "}
               <small>{shownList() ? shownList()!.length.toLocaleString() : "…"}</small>
             </p>
+            <ChannelSearch class="livesearch--row" />
           </div>
           <Show when={shownList()} fallback={<RailLoading />}>
-            <ChannelList
+            <ChannelRail
               channels={shownList()!}
               resetKey={`${filterKey(filter())}|${query()}`}
               activeId={tuner.phase() === "error" ? undefined : tuner.channelId()}
               pendingId={pending()?.id ?? digitTarget()?.id}
               onPick={pick}
-              onFocusChannel={(c) => { setFocusedChannel(c.id); setBrowsingChannel(c.id); }}
               controller={(a) => (listApi = a)}
               empty={
                 <>
@@ -584,9 +578,6 @@ function Watch(): JSX.Element {
             />
           </Show>
         </div>
-        <Show when={focusedChannel() != null && shownList()?.some((c) => c.id === focusedChannel()) && nowNext(focusedChannel()!)?.next}>
-          {(next) => <div class="live__next"><span>Next on {channelById(focusedChannel())?.name}</span><strong>{fmtTime(next().start)} · {next().title}</strong></div>}
-        </Show>
       </section>
 
       <Show when={mini()}>

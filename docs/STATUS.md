@@ -1,8 +1,8 @@
-# Status: 2026-11-23
+# Status: 2026-11-24
 
 The repo is public (#268) so GitHub-hosted Actions minutes are free again; private-repo minutes ran out on 2026-11-18, which stopped CI and image builds. The self-hosted deploy runner is gone: unregistered from GitHub, its deploy access removed, container CT 116 destroyed, and the `deploy` workflow removed, because fork PRs could run code on a self-hosted runner of a public repo. Deploys now run from the owner's Mac with `deploy/ct113/deploy.py`, which still moves shipped tickets to Deployed. `ci.yml` runs on PRs again and `image.yml` skips docs-only pushes. A full-history secrets scan found no live secrets, and the repo's unused Actions secrets are deleted. The default `GITHUB_TOKEN` is read-only and fork PR workflows from all external contributors need approval. Still to do: the owner revokes the old `PROJECT_TOKEN` PAT if it still exists.
 
-Live TV channel browsing (#254) is built around a vertical channel list and a group picker. Playback opens on selection and returns to the list. Playwright checks covered desktop, phone and 1920×1080 navigation in mock mode, plus desktop and 1920×1080 browsing against the live API without tuning. Real-device playback verification remains pending.
+The Live TV channel-list redesign (#254) is rolled back in the code to the player with horizontal channel rows, at the owner's request. The live build still runs the redesign until this change is deployed.
 
 The webOS direct-play audio selection fix (#255) is built: the player applies the selected audio after native tracks appear. Unit tests cover selection and incomplete track lists; verification on the LG TV and reported title remains pending.
 
