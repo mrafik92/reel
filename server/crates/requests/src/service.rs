@@ -667,9 +667,19 @@ impl RequestsService {
 impl Shared {
     /// Flip a request to `available` (persist, emit, notify). Returns whether it changed.
     pub(crate) async fn mark_available(&self, req: &RequestRecord) -> Result<bool> {
-        let p = Progress::basic(req, RequestState::Available);
-        let changed = self.transition(req, p).await?;
-        self.progress.remove(&req.id);
+        // Callers can hold a snapshot from before their own transition.
+        let current = self.get_request(req.id).await?;
+        if matches!(
+            current.status,
+            RequestState::Requested | RequestState::Declined | RequestState::Available
+        ) {
+            return Ok(false);
+        }
+        let p = Progress::basic(&current, RequestState::Available);
+        let changed = self.transition(&current, p).await?;
+        if changed {
+            self.progress.remove(&req.id);
+        }
         Ok(changed)
     }
 }
@@ -697,4 +707,99 @@ pub(crate) async fn library_item_ids(
     .bind(serde_json::to_string(tmdb_ids).unwrap_or_else(|_| "[]".into()))
     .fetch_all(pool)
     .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    use super::*;
+
+    async fn setup(status: &str) -> (RequestsService, RequestRecord, MockServer) {
+        let pool = reel_core::db::connect_url("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, role) VALUES (2, 'bob', '!', 'user')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let hook = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/hook"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&hook)
+            .await;
+        sqlx::query(
+            "INSERT INTO notification_targets (kind, config_json, events_json) VALUES ('webhook', ?, '[\"available\"]')",
+        )
+        .bind(json!({"url": format!("{}/hook", hook.uri())}).to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO requests (user_id, media_type, tmdb_id, status, title)
+             VALUES (2, 'tv', 100, ?, 'Show') RETURNING id",
+        )
+        .bind(status)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (events, _) = broadcast::channel(16);
+        let svc = RequestsService::with_options(pool, None, events, Options::default());
+        let req = svc.s.get_request(id).await.unwrap();
+        (svc, req, hook)
+    }
+
+    async fn deliveries(hook: &MockServer) -> usize {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        hook.received_requests().await.unwrap().len()
+    }
+
+    #[tokio::test]
+    async fn a_stale_update_cannot_reopen_an_available_request() {
+        let (svc, stale, hook) = setup("downloading").await;
+        assert!(svc.s.mark_available(&stale).await.unwrap());
+
+        for state in [RequestState::Downloading, RequestState::Importing] {
+            let changed = svc
+                .s
+                .transition(&stale, Progress::basic(&stale, state))
+                .await
+                .unwrap();
+            assert!(!changed);
+            assert_eq!(
+                svc.s.get_request(stale.id).await.unwrap().status,
+                RequestState::Available
+            );
+            assert!(!svc.s.progress.contains_key(&stale.id));
+        }
+
+        assert!(!svc.s.mark_available(&stale).await.unwrap());
+        assert_eq!(deliveries(&hook).await, 1);
+    }
+
+    #[tokio::test]
+    async fn mark_available_uses_the_current_status() {
+        let (svc, before_import, hook) = setup("downloading").await;
+        let importing = Progress::basic(&before_import, RequestState::Importing);
+        assert!(svc.s.transition(&before_import, importing).await.unwrap());
+
+        assert!(svc.s.mark_available(&before_import).await.unwrap());
+        assert_eq!(deliveries(&hook).await, 1);
+    }
+
+    #[tokio::test]
+    async fn mark_available_leaves_a_declined_request_alone() {
+        let (svc, req, hook) = setup("declined").await;
+        assert!(!svc.s.mark_available(&req).await.unwrap());
+        assert_eq!(
+            svc.s.get_request(req.id).await.unwrap().status,
+            RequestState::Declined
+        );
+        assert_eq!(deliveries(&hook).await, 0);
+    }
 }
