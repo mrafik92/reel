@@ -2250,6 +2250,9 @@ export interface components {
         };
         /** @description The signed-in user. */
         Me: {
+            /** @description This session can use admin actions right now. False for an admin on a public address: they
+             *     keep every library and feature, but admin actions need the LAN or Tailscale. */
+            admin_powers?: boolean;
             /** @description The server lets this user play Live TV directly from the provider
              *     (`REEL_ALLOW_DIRECT_LIVE` and IPTV access). */
             direct_live?: boolean;

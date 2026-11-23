@@ -13,7 +13,8 @@ const [bootError, setBootError] = createSignal<unknown>();
 
 export { status as authStatus, user as currentUser, bootError };
 
-export const isAdmin = () => user()?.role === "admin";
+/** Can use admin actions now: an admin on a public address keeps viewing, but not these (#127). */
+export const isAdmin = () => user()?.role === "admin" && user()?.admin_powers !== false;
 /** Admins and auto-approve users get "Add" (immediate); everyone else "Request". */
 export const canAutoAdd = () => isAdmin() || !!user()?.limits?.auto_approve;
 

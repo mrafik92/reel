@@ -175,6 +175,7 @@ fn user_from_row(r: &SqliteRow) -> User {
             can_request: r.get::<i64, _>("can_request") != 0,
             can_cast: r.get::<i64, _>("can_cast") != 0,
         },
+        admin_powers: false,
     }
 }
 
@@ -702,7 +703,7 @@ impl AuthService {
 
     /// Libraries visible to `user`: `None` = all (admins).
     pub async fn visible_libraries(&self, user: &User) -> AuthResult<Option<Vec<i64>>> {
-        if user.is_admin() {
+        if user.has_admin_role() {
             return Ok(None);
         }
         Ok(Some(self.library_ids(user.id).await?))
@@ -820,7 +821,7 @@ impl AuthService {
 
     pub async fn update_user(&self, id: i64, p: UserPatch) -> AuthResult<User> {
         let cur = self.get_user(id).await?.ok_or(AuthError::NotFound)?;
-        let loses_admin = cur.is_admin()
+        let loses_admin = cur.has_admin_role()
             && !cur.disabled
             && (p.role == Some(Role::User) || p.disabled == Some(true));
         if loses_admin && self.other_enabled_admins(id).await? == 0 {
@@ -901,7 +902,7 @@ impl AuthService {
 
     pub async fn delete_user(&self, id: i64) -> AuthResult<()> {
         let cur = self.get_user(id).await?.ok_or(AuthError::NotFound)?;
-        if cur.is_admin() && !cur.disabled && self.other_enabled_admins(id).await? == 0 {
+        if cur.has_admin_role() && !cur.disabled && self.other_enabled_admins(id).await? == 0 {
             return Err(AuthError::Conflict("cannot delete the last admin".into()));
         }
         sqlx::query("DELETE FROM users WHERE id = ?")

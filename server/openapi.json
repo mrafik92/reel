@@ -8897,11 +8897,16 @@
           "id",
           "username",
           "role",
+          "admin_powers",
           "limits",
           "permissions",
           "direct_live"
         ],
         "properties": {
+          "admin_powers": {
+            "type": "boolean",
+            "description": "This session can use admin actions right now. False for an admin on a public address: they\nkeep every library and feature, but admin actions need the LAN or Tailscale."
+          },
           "direct_live": {
             "type": "boolean",
             "description": "The server lets this user play Live TV directly from the provider\n(`REEL_ALLOW_DIRECT_LIVE` and IPTV access)."

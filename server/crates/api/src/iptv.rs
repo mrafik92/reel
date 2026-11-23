@@ -675,9 +675,12 @@ pub async fn live_file(
     State(st): State<AppState>,
     Path((sid, file)): Path<(String, String)>,
     Query(sq): Query<SignedQuery>,
+    crate::auth::Peer(peer): crate::auth::Peer,
     headers: HeaderMap,
 ) -> ApiResult<Response> {
-    let user = st.media_user(&headers, &sq, &format!("live:{sid}")).await?;
+    let user = st
+        .media_user_at(peer, &headers, &sq, &format!("live:{sid}"))
+        .await?;
     let info = st.iptv.live.session(&sid).ok_or(ApiError::NotFound)?;
     if info.user_id != user.id && !user.is_admin() {
         return Err(ApiError::NotFound);

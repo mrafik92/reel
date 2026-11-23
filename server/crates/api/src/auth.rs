@@ -51,7 +51,9 @@ impl FromRequestParts<AppState> for AuthUser {
     async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, ApiError> {
         let token = bearer(&parts.headers)
             .ok_or_else(|| ApiError::Unauthorized("authentication required".into()))?;
-        let (user, session) = st.auth.authenticate(token).await?;
+        let (mut user, session) = st.auth.authenticate(token).await?;
+        user.admin_powers =
+            on_admin_network(&st.config, peer_of(&parts.extensions), &parts.headers);
         check_feature(&user, feature_of_path(parts.uri.path()))?;
         Ok(AuthUser {
             user,
@@ -108,6 +110,11 @@ impl FromRequestParts<AppState> for AdminUser {
 
     async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, ApiError> {
         let u = AuthUser::from_request_parts(parts, st).await?;
+        if u.user.has_admin_role() && !u.is_admin() {
+            return Err(ApiError::Forbidden(
+                "admin actions are only available from the home network or Tailscale".into(),
+            ));
+        }
         if !u.is_admin() {
             return Err(ApiError::Forbidden("admin access required".into()));
         }
@@ -166,6 +173,30 @@ pub fn resolve_client_ip(
         .map(normalize)
 }
 
+/// May this request use admin powers (#127)? Only from the LAN or Tailscale. Fails closed when
+/// proxy headers arrive from a peer that isn't trusted: the real client is then unknown.
+pub fn on_admin_network(
+    cfg: &reel_core::Config,
+    peer: Option<std::net::IpAddr>,
+    headers: &HeaderMap,
+) -> bool {
+    let client = resolve_client_ip(cfg, peer, headers);
+    let forwarded = ["x-forwarded-for", "x-real-ip", "forwarded"]
+        .iter()
+        .any(|h| headers.contains_key(*h));
+    let unbelieved = forwarded && peer.map(crate::netutil::normalize) == client;
+    match client {
+        Some(c) => crate::netutil::is_admin_network(c) && !unbelieved,
+        None => peer.is_none(), // in-process (tests)
+    }
+}
+
+/// The socket peer recorded on a request.
+pub fn peer_of(ext: &axum::http::Extensions) -> Option<std::net::IpAddr> {
+    ext.get::<ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0.ip())
+}
+
 /// The socket peer (`None` without connection info, i.e. in-process tests).
 pub struct Peer(pub Option<std::net::IpAddr>);
 
@@ -173,12 +204,7 @@ impl FromRequestParts<AppState> for Peer {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _: &AppState) -> Result<Self, Self::Rejection> {
-        Ok(Peer(
-            parts
-                .extensions
-                .get::<ConnectInfo<std::net::SocketAddr>>()
-                .map(|c| c.0.ip()),
-        ))
+        Ok(Peer(peer_of(&parts.extensions)))
     }
 }
 
@@ -186,10 +212,7 @@ impl FromRequestParts<AppState> for ClientIp {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, Self::Rejection> {
-        let peer = parts
-            .extensions
-            .get::<ConnectInfo<std::net::SocketAddr>>()
-            .map(|c| c.0.ip());
+        let peer = peer_of(&parts.extensions);
         Ok(ClientIp(
             resolve_client_ip(&st.config, peer, &parts.headers).map(|i| i.to_string()),
         ))
@@ -219,8 +242,32 @@ impl AppState {
     }
 
     /// Resolve the caller of a media endpoint: bearer token, or a valid signature for `scope`.
+    /// The result never holds admin powers; see [`Self::media_user_from`].
     pub async fn media_user(
         &self,
+        headers: &HeaderMap,
+        q: &SignedQuery,
+        scope: &str,
+    ) -> ApiResult<User> {
+        self.media_user_from(None, false, headers, q, scope).await
+    }
+
+    /// [`Self::media_user`] for routes where an admin may open someone else's session: a bearer
+    /// token from an admin network keeps admin powers. A signed URL never carries them.
+    pub async fn media_user_at(
+        &self,
+        peer: Option<std::net::IpAddr>,
+        headers: &HeaderMap,
+        q: &SignedQuery,
+        scope: &str,
+    ) -> ApiResult<User> {
+        self.media_user_from(peer, true, headers, q, scope).await
+    }
+
+    async fn media_user_from(
+        &self,
+        peer: Option<std::net::IpAddr>,
+        allow_powers: bool,
         headers: &HeaderMap,
         q: &SignedQuery,
         scope: &str,
@@ -233,7 +280,8 @@ impl AppState {
             None
         };
         if let Some(t) = bearer(headers) {
-            let user = self.auth.authenticate(t).await?.0;
+            let mut user = self.auth.authenticate(t).await?.0;
+            user.admin_powers = allow_powers && on_admin_network(&self.config, peer, headers);
             check_feature(&user, feature)?;
             return Ok(user);
         }
@@ -269,7 +317,7 @@ impl AppState {
 
     /// 404 unless `user` may see `library_id`.
     pub async fn require_library(&self, user: &User, library_id: i64) -> ApiResult<()> {
-        if user.is_admin() {
+        if user.has_admin_role() {
             return Ok(());
         }
         let ok: Option<i64> =
@@ -429,7 +477,7 @@ impl From<PermissionsDto> for reel_auth::Permissions {
 }
 
 fn effective(u: &User) -> PermissionsDto {
-    if u.is_admin() {
+    if u.has_admin_role() {
         reel_auth::Permissions::all().into()
     } else {
         u.perms.into()
@@ -442,6 +490,9 @@ pub struct Me {
     pub id: i64,
     pub username: String,
     pub role: RoleDto,
+    /// This session can use admin actions right now. False for an admin on a public address: they
+    /// keep every library and feature, but admin actions need the LAN or Tailscale.
+    pub admin_powers: bool,
     pub limits: LimitsDto,
     /// Effective permissions (all true for admins).
     pub permissions: PermissionsDto,
@@ -458,6 +509,7 @@ async fn me_dto(st: &AppState, u: &User) -> ApiResult<Me> {
         id: u.id,
         username: u.username.clone(),
         role: u.role.into(),
+        admin_powers: u.is_admin(),
         limits: u.limits.clone().into(),
         permissions: effective(u),
         direct_live: st.config.allow_direct_live && u.can_iptv(),
@@ -475,7 +527,13 @@ pub struct LoginResponse {
     pub user: Me,
 }
 
-async fn login_response(st: &AppState, o: reel_auth::LoginOutcome) -> ApiResult<LoginResponse> {
+async fn login_response(
+    st: &AppState,
+    mut o: reel_auth::LoginOutcome,
+    peer: Option<std::net::IpAddr>,
+    headers: &HeaderMap,
+) -> ApiResult<LoginResponse> {
+    o.user.admin_powers = on_admin_network(&st.config, peer, headers);
     Ok(LoginResponse {
         user: me_dto(st, &o.user).await?,
         token: o.token,
@@ -580,7 +638,8 @@ pub async fn setup(
             },
         )
         .await?;
-    Ok((StatusCode::CREATED, Json(login_response(&st, out).await?)))
+    let res = login_response(&st, out, peer, &headers).await?;
+    Ok((StatusCode::CREATED, Json(res)))
 }
 
 // ───────────────────────── login / logout / me ─────────────────────────
@@ -612,6 +671,8 @@ pub struct LoginBody {
 pub async fn login(
     State(st): State<AppState>,
     ClientIp(ip): ClientIp,
+    Peer(peer): Peer,
+    headers: HeaderMap,
     Json(b): Json<LoginBody>,
 ) -> ApiResult<Json<LoginResponse>> {
     let out = st
@@ -627,7 +688,7 @@ pub async fn login(
             },
         )
         .await?;
-    Ok(Json(login_response(&st, out).await?))
+    Ok(Json(login_response(&st, out, peer, &headers).await?))
 }
 
 /// Revoke the current token.
@@ -809,6 +870,8 @@ pub struct AcceptInviteBody {
 pub async fn accept_invite(
     State(st): State<AppState>,
     ClientIp(ip): ClientIp,
+    Peer(peer): Peer,
+    headers: HeaderMap,
     Path(code): Path<String>,
     Json(b): Json<AcceptInviteBody>,
 ) -> ApiResult<(StatusCode, Json<LoginResponse>)> {
@@ -826,7 +889,8 @@ pub async fn accept_invite(
             },
         )
         .await?;
-    Ok((StatusCode::CREATED, Json(login_response(&st, out).await?)))
+    let res = login_response(&st, out, peer, &headers).await?;
+    Ok((StatusCode::CREATED, Json(res)))
 }
 
 // ───────────────────────── admin: users ─────────────────────────

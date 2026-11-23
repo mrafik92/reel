@@ -499,11 +499,12 @@ pub struct EventsQuery {
 pub async fn events(
     ws: WebSocketUpgrade,
     State(st): State<AppState>,
+    auth::Peer(peer): auth::Peer,
     headers: HeaderMap,
     Query(q): Query<EventsQuery>,
 ) -> Result<Response, error::ApiError> {
     let unauthorized = || error::ApiError::Unauthorized("authentication required".into());
-    let (user, session_id) = if let Some(t) = q.ticket.as_deref() {
+    let (mut user, session_id) = if let Some(t) = q.ticket.as_deref() {
         let (uid, sid) = st.ws.redeem(t).ok_or_else(unauthorized)?;
         let user = st
             .auth
@@ -520,6 +521,8 @@ pub async fn events(
         let (user, s) = st.auth.authenticate(token).await?;
         (user, s.id)
     };
+    // judged where the socket connects: a ticket issued on the LAN carries no powers elsewhere
+    user.admin_powers = auth::on_admin_network(&st.config, peer, &headers);
     let slot = st.ws.acquire(user.id).ok_or_else(|| {
         error::ApiError::TooManyRequests("too many open event streams for this account".into())
     })?;

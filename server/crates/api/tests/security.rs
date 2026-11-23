@@ -1030,6 +1030,7 @@ fn client_supplied_device_profiles_cannot_force_a_hevc_encode_for_non_admins() {
         created_at: 0,
         limits: Default::default(),
         perms: reel_auth::Permissions::all(),
+        admin_powers: true,
     };
     let mut p = reel_playback::DeviceProfile::preset("tizen").unwrap();
     p.video.retain(|v| v.codec == "hevc");
@@ -1218,4 +1219,95 @@ async fn websocket_rejects_session_token_in_url_but_accepts_tickets() {
         tokio_tungstenite::connect_async(req).await.is_ok(),
         "Authorization header works"
     );
+}
+
+// ───────────── admin powers need the LAN or Tailscale (#127) ─────────────
+
+const EDGE: &str = "10.10.10.73";
+
+fn behind_edge(c: &mut reel_core::Config) {
+    c.trusted_proxies = vec![EDGE.into()];
+}
+
+async fn edge_login(e: &Env, client: &str) -> (StatusCode, Value) {
+    call(
+        &e.raw,
+        EDGE,
+        "POST",
+        "/api/v1/auth/login",
+        Some(json!({"username": "admin", "password": PW})),
+        &[("x-forwarded-for", client)],
+    )
+    .await
+}
+
+#[tokio::test]
+async fn an_admin_on_a_public_address_can_watch_but_has_no_admin_powers() {
+    let e = env_with(behind_edge, opts(5, 50), true).await;
+    let (s, login) = edge_login(&e, "203.0.113.7").await;
+    assert_eq!(s, StatusCode::OK, "the password still signs in: {login}");
+    assert_eq!(login["user"]["admin_powers"], false);
+    let bearer = format!("Bearer {}", login["token"].as_str().unwrap());
+    let public = [
+        ("x-forwarded-for", "203.0.113.7"),
+        ("authorization", bearer.as_str()),
+    ];
+
+    let (s, me) = call(&e.raw, EDGE, "GET", "/api/v1/me", None, &public).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(me["role"], "admin");
+    assert_eq!(me["admin_powers"], false);
+    assert_eq!(
+        me["permissions"]["iptv_access"], true,
+        "viewing is unchanged"
+    );
+    assert!(me.get("library_ids").is_none(), "still sees every library");
+
+    for (method, uri, body) in [
+        ("GET", "/api/v1/admin/users", None),
+        (
+            "POST",
+            "/api/v1/libraries",
+            Some(json!({"name": "x", "kind": "movies", "paths": ["/tmp"]})),
+        ),
+        ("POST", "/api/v1/libraries/1/scan", None),
+        ("POST", "/api/v1/requests/1/approve", Some(json!({}))),
+        ("POST", "/api/v1/requests/1/decline", Some(json!({}))),
+    ] {
+        let (s, b) = call(&e.raw, EDGE, method, uri, body, &public).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{method} {uri}: {b}");
+    }
+
+    // the same token from home regains them, so no second account or re-login is needed
+    for client in ["192.168.1.5", "100.100.20.30"] {
+        let home = [
+            ("x-forwarded-for", client),
+            ("authorization", bearer.as_str()),
+        ];
+        let (s, me) = call(&e.raw, EDGE, "GET", "/api/v1/me", None, &home).await;
+        assert_eq!((s, &me["admin_powers"]), (StatusCode::OK, &json!(true)));
+        let (s, _) = call(&e.raw, EDGE, "GET", "/api/v1/admin/users", None, &home).await;
+        assert_eq!(s, StatusCode::OK, "{client}");
+    }
+}
+
+#[tokio::test]
+async fn a_client_cannot_claim_an_admin_network_with_proxy_headers() {
+    let e = env_with(behind_edge, opts(5, 50), true).await;
+    let (_, login) = edge_login(&e, "192.168.1.5").await;
+    assert_eq!(login["user"]["admin_powers"], true);
+    let bearer = format!("Bearer {}", login["token"].as_str().unwrap());
+    let cases: [(&str, &str); 3] = [
+        // straight from the internet, spoofing a LAN address
+        ("203.0.113.7", "192.168.1.5"),
+        // through the edge: the right-most untrusted entry is the real client
+        (EDGE, "192.168.1.5, 203.0.113.7"),
+        // a private peer that isn't the trusted proxy: the real client is unknown, so refuse
+        ("172.18.0.9", "192.168.1.5"),
+    ];
+    for (peer, xff) in cases {
+        let h = [("x-forwarded-for", xff), ("authorization", bearer.as_str())];
+        let (s, b) = call(&e.raw, peer, "GET", "/api/v1/admin/users", None, &h).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "peer {peer}, xff {xff}: {b}");
+    }
 }
