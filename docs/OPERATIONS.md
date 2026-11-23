@@ -16,8 +16,8 @@
 | Firewall | CT 113 Proxmox firewall drops LAN egress apart from the Arr ports and **qBittorrent :8200** (added for Reel) | Backup: `/root/113.fw.bak-*` |
 | Remote access | Tailscale; OPNsense has a static-port outbound NAT + WAN UDP 41641 pass (Firewall → Automation, "Tailscale: …") | Config backup `/conf/backup/config-pre-tailscale-static-port-20261103T165802Z.xml` |
 | Image registry | `ghcr.io/mrafik92/reel` (private) | CT 113 is logged in with a **pull-only** PAT (`read:packages`) |
-| Deploys | The owner's Mac: `deploy/ct113/deploy.py` over `ssh minix-local` | No self-hosted runner: the repo is public, and a runner would let fork PRs run code on the LAN (#268, ARCHITECTURE A73). The former runner, **CT 116** `gh-runner` (10.10.10.196, `gh-runner-ct116`, label `homelab`), is unregistered, its service is removed and its deploy key is deleted. The container still exists, with the idle runner directory `/home/runner/actions-runner` (no credentials) |
-| Former runner deploy access | Removed on 2026-11-23 (#268) | The `gh-runner-reel-deploy` line in minix `/root/.ssh/authorized_keys`, `/usr/local/bin/reel-deploy`, the `host.fw` SSH rule for 10.10.10.196 and the private key on CT 116 are gone. Pre-change copies of the minix files (no private key) are in `/root/reel-268-backup-20261123T131551` |
+| Deploys | The owner's Mac: `deploy/ct113/deploy.py` over `ssh minix-local` | No self-hosted runner: the repo is public, and a runner would let fork PRs run code on the LAN (#268, ARCHITECTURE A73). The former runner, **CT 116** `gh-runner` (10.10.10.196, `gh-runner-ct116`, label `homelab`), was unregistered and the container was destroyed on 2026-11-23 |
+| Former runner deploy access | Removed on 2026-11-23 (#268) | The `gh-runner-reel-deploy` line in minix `/root/.ssh/authorized_keys`, `/usr/local/bin/reel-deploy`, the `host.fw` SSH rule for 10.10.10.196 and the private key (with CT 116) are gone. Pre-change copies of the minix files (no private key) are in `/root/reel-268-backup-20261123T131551` |
 
 ### Credentials and where they live
 
@@ -199,7 +199,7 @@ the container (`sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' /config/config.xml`)
 
 **Self-hosted runners**
 - None. The repo is public, and a self-hosted runner would let fork PRs run code on the homelab, so don't
-  register one (the CT 116 runner was decommissioned in #268). GitHub → Settings → Actions → Runners
+  register one (the CT 116 runner was removed and its container destroyed in #268). GitHub → Settings → Actions → Runners
   should stay empty.
 
 **Bootstrap a fresh instance**
