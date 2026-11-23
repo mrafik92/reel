@@ -372,7 +372,7 @@ html[data-input="pointer"] .gchip[aria-pressed="true"]:focus:not(:hover) {
 }
 .picker__found {
   margin-right: 0.9rem;
-  font: 750 1.1rem/1 var(--font-display);
+  font: 700 1.1rem/1 var(--font-display);
   letter-spacing: -0.01em;
 }
 .fchip {
@@ -437,7 +437,7 @@ html.tv .library__lanes .row {
 .lane-cta strong {
   margin-right: 0.4rem;
   color: var(--ink);
-  font: 750 1.15rem/1.2 var(--font-display);
+  font: 700 1.15rem/1.2 var(--font-display);
 }
 
 /* ---------- Filter panel ------------------------------------------------- */
@@ -449,7 +449,7 @@ html.tv .library__lanes .row {
 }
 .fpanel__head h2 {
   margin: 0.35rem 0 0;
-  font: 750 2rem/1.1 var(--font-display);
+  font: 700 2rem/1.1 var(--font-display);
   letter-spacing: -0.025em;
 }
 .fpanel__body {
@@ -598,7 +598,7 @@ html[data-input="key"] .switch:focus {
 }
 .spot__title {
   margin: 1.4rem 0 1rem;
-  font: 780 5.4rem/0.92 var(--font-display);
+  font: 800 5.4rem/0.92 var(--font-display);
   letter-spacing: -0.045em;
   text-shadow: 0 0.2rem 2.5rem rgba(0, 0, 0, 0.4);
 }

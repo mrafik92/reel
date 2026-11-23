@@ -113,9 +113,9 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   min-width: 0;
 }
 .field__label {
-  margin-bottom: 0.45rem;
-  font: 700 0.85rem/1.2 var(--font-body);
-  color: var(--ink-2);
+  margin-bottom: 0.4rem;
+  font: 600 0.82rem/1.2 var(--font-body);
+  color: var(--ink-3);
 }
 .field__row {
   display: flex;
@@ -132,30 +132,31 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   margin-top: 0.5rem;
 }
 .field__input {
-  height: 3.25rem;
-  padding: 0 1rem;
-  border: 2px solid var(--ink-4);
+  height: 3.1rem;
+  padding: 2px 1rem 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
   border-radius: var(--radius);
-  background: rgba(var(--bg-1-rgb), 0.9);
+  background: var(--fill-input);
   color: var(--ink);
-  font: 400 1.05rem/1 var(--font-body);
+  font: 400 1.02rem/1 var(--font-body);
   transition: border-color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
   -webkit-appearance: none;
 }
 .field__input::placeholder {
-  color: var(--ink-4);
+  color: var(--ink-3);
 }
 .field__input:hover {
-  border-color: var(--ink-3);
+  background: rgba(var(--ink-rgb), 0.14);
 }
 .field__input:focus {
-  border-color: var(--accent);
-  background: var(--bg-2);
+  border-bottom-color: var(--ink);
+  background: rgba(var(--ink-rgb), 0.14);
   box-shadow: none !important;
 }
 .field__select {
   padding-right: 2.5rem;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f2e6d3' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 0.9rem center;
   background-size: 1.1rem;
@@ -170,14 +171,14 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   color: var(--ink-3);
 }
 .field.has-error .field__input {
-  border-color: var(--danger);
+  border-bottom-color: var(--danger);
 }
 .field__error {
   color: var(--danger);
 }
 .field__eye {
-  width: 3.25rem;
-  height: 3.25rem;
+  width: 3.1rem;
+  height: 3.1rem;
   border-radius: var(--radius);
   font-size: 1.25rem;
 }
@@ -340,7 +341,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
 }
 .auth__title {
   margin: 0.6rem 0 1rem;
-  font: 780 4.4rem/0.92 var(--font-display);
+  font: 800 4.4rem/0.92 var(--font-display);
   letter-spacing: -0.04em;
 }
 .auth__lede {
@@ -559,7 +560,7 @@ html.tv .discover__rows .row {
 }
 .dsheet__title {
   margin: 0.4rem 0 0.4rem;
-  font: 780 2.5rem/0.98 var(--font-display);
+  font: 800 2.5rem/0.98 var(--font-display);
   letter-spacing: -0.035em;
 }
 .dsheet__status {
@@ -578,7 +579,7 @@ html.tv .discover__rows .row {
 }
 .dsheet__progress strong {
   display: block;
-  font: 750 1.15rem/1.2 var(--font-display);
+  font: 700 1.15rem/1.2 var(--font-display);
 }
 .dsheet__progress span {
   color: var(--ink-3);
@@ -669,7 +670,7 @@ html[data-input="key"] .req__main:focus {
   flex-direction: column;
 }
 .req__title {
-  font: 750 1.2rem/1.2 var(--font-display);
+  font: 700 1.2rem/1.2 var(--font-display);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -792,7 +793,7 @@ html.reel-avplay-active .subs__text {
 .stream-info header strong {
   display: block;
   margin: 0.3rem 0 0.9rem;
-  font: 750 1.6rem/1.1 var(--font-display);
+  font: 700 1.6rem/1.1 var(--font-display);
 }
 .stream-info dl {
   display: grid;
@@ -907,7 +908,7 @@ html[data-input="key"] .admin__link:focus {
 .panel__title {
   display: flex;
   align-items: center;
-  font: 750 1.45rem/1.2 var(--font-display);
+  font: 700 1.45rem/1.2 var(--font-display);
   letter-spacing: -0.015em;
 }
 .panel__title .icon {
@@ -1021,7 +1022,7 @@ html[data-input="key"] .admin__link:focus {
   margin-right: 1rem;
   border-radius: 50%;
   background: var(--bg-3);
-  font: 750 1.05rem/1 var(--font-display);
+  font: 700 1.05rem/1 var(--font-display);
 }
 .brand {
   display: inline-flex;
@@ -1125,7 +1126,7 @@ html[data-input="key"] .admin__link:focus {
 .hw__name {
   display: block;
   margin: 0.2rem 0 0.3rem;
-  font: 750 1.6rem/1.1 var(--font-display);
+  font: 700 1.6rem/1.1 var(--font-display);
 }
 .kv {
   display: grid;

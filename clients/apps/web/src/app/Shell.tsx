@@ -372,7 +372,6 @@ export function Shell(props: ParentProps): JSX.Element {
         </Match>
       </Switch>
       <Toaster />
-      <div class="grain" aria-hidden="true" />
     </div>
   );
 }

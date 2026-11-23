@@ -45,7 +45,7 @@
 }
 .live__title {
   margin-top: 0.25rem;
-  font: 780 2.5rem/1 var(--font-display);
+  font: 800 2.5rem/1 var(--font-display);
   letter-spacing: -0.04em;
 }
 .live__count {
@@ -230,7 +230,7 @@ html[data-input="pointer"] .chrow.is-live:focus:not(:hover) {
 .chrow__num {
   flex-shrink: 0;
   width: 2.4rem;
-  font: 750 1rem/1 var(--font-display);
+  font: 700 1rem/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   text-align: right;
   color: var(--ink-3);
@@ -454,7 +454,7 @@ html[data-input="key"] .live__screen:focus {
 }
 .live__error h2 {
   margin: 0.5rem 0 0.4rem;
-  font: 750 1.45rem/1.15 var(--font-display);
+  font: 700 1.45rem/1.15 var(--font-display);
   letter-spacing: -0.02em;
 }
 .live__error p {
@@ -550,7 +550,7 @@ html[data-input="key"] .live__screen:focus {
   margin-right: 0.4rem;
 }
 .live__clock {
-  font: 750 1.6rem/1 var(--font-display);
+  font: 700 1.6rem/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
   text-shadow: 0 1px 10px rgba(0, 0, 0, 0.6);
@@ -606,7 +606,7 @@ html[data-input="pointer"] .live__hints {
   letter-spacing: -0.03em;
 }
 .nowp__name {
-  font: 750 1.3rem/1.15 var(--font-display);
+  font: 700 1.3rem/1.15 var(--font-display);
   letter-spacing: -0.015em;
 }
 .nowp__fav {
@@ -647,7 +647,7 @@ html[data-input="pointer"] .live__hints {
   margin-top: 1.1rem;
 }
 .nowp__title {
-  font: 780 2rem/1.05 var(--font-display);
+  font: 800 2rem/1.05 var(--font-display);
   letter-spacing: -0.035em;
 }
 .nowp__subtitle {
@@ -940,7 +940,7 @@ html[data-input="pointer"] .live__hints {
 .zapstats__sum dd {
   white-space: nowrap;
   margin: 0.2rem 0 0;
-  font: 750 1rem/1.1 var(--font-display);
+  font: 700 1rem/1.1 var(--font-display);
   font-variant-numeric: tabular-nums;
 }
 .zapstats__sum dd.is-hero {
@@ -1030,7 +1030,7 @@ html[data-input="pointer"] .live__hints {
   right: 0.9rem;
 }
 .miniguide__head strong {
-  font: 780 1.8rem/1.1 var(--font-display);
+  font: 800 1.8rem/1.1 var(--font-display);
   letter-spacing: -0.03em;
 }
 .miniguide__head span {
@@ -1186,7 +1186,7 @@ html[data-input="pointer"] .live__hints {
 }
 .guide__preview-title {
   margin-top: 0.25rem;
-  font: 780 2rem/1.1 var(--font-display);
+  font: 800 2rem/1.1 var(--font-display);
   letter-spacing: -0.035em;
   overflow: hidden;
   white-space: nowrap;
@@ -1342,7 +1342,7 @@ html[data-input="pointer"] .grow__ch:focus:not(:hover) {
 .grow__num {
   flex-shrink: 0;
   width: 2rem;
-  font: 750 0.95rem/1 var(--font-display);
+  font: 700 0.95rem/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   text-align: right;
   color: var(--ink-3);
@@ -1539,7 +1539,7 @@ html[data-input="pointer"] .gcell:focus:not(:hover) .gcell__time {
 }
 .gdetail__title {
   margin-top: 1.4rem;
-  font: 780 2.4rem/1.05 var(--font-display);
+  font: 800 2.4rem/1.05 var(--font-display);
   letter-spacing: -0.035em;
 }
 .gdetail__sub {
@@ -1723,7 +1723,7 @@ html[data-input="pointer"] .gcell:focus:not(:hover) .gcell__time {
   flex-shrink: 0;
   width: 3rem;
   margin-right: 0.8rem;
-  font: 750 1.1rem/1 var(--font-display);
+  font: 700 1.1rem/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   text-align: right;
   color: var(--ink-3);
@@ -1766,7 +1766,7 @@ html[data-input="pointer"] .gcell:focus:not(:hover) .gcell__time {
 }
 .hub__h {
   margin: 1.4rem 0 0.6rem;
-  font: 750 1.05rem/1.2 var(--font-display);
+  font: 700 1.05rem/1.2 var(--font-display);
 }
 .hub__tablewrap {
   overflow-x: auto;
@@ -2152,7 +2152,7 @@ html[data-input="pointer"] .livechip--picker:focus:not(:hover) {
   padding: 0 1.5rem 1rem 1.8rem;
 }
 .gpick__title {
-  font: 780 2rem/1.05 var(--font-display);
+  font: 800 2rem/1.05 var(--font-display);
   letter-spacing: -0.035em;
 }
 .gpick__sub {
@@ -2260,7 +2260,7 @@ html[data-input="pointer"] .gpick__item[aria-current="true"]:focus:not(:hover) {
 }
 .guide__empty h2 {
   margin: 0.6rem 0 0.5rem;
-  font: 750 1.6rem/1.15 var(--font-display);
+  font: 700 1.6rem/1.15 var(--font-display);
   letter-spacing: -0.02em;
 }
 .guide__empty p {
@@ -2387,7 +2387,7 @@ html[data-input="pointer"] .gpick__item[aria-current="true"]:focus:not(:hover) {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font: 780 1.35rem/1.2 var(--font-display);
+  font: 800 1.35rem/1.2 var(--font-display);
   letter-spacing: -0.02em;
   color: var(--ink);
 }
@@ -2764,7 +2764,7 @@ html[data-input="pointer"] .rowlabel__hint {
 }
 .gbrowse__title {
   margin-top: 0.2rem;
-  font: 780 2.8rem/1 var(--font-display);
+  font: 800 2.8rem/1 var(--font-display);
   letter-spacing: -0.04em;
 }
 .gbrowse__sub {
@@ -3175,7 +3175,7 @@ html[data-input="pointer"] .gmenu__item:focus:not(:hover) {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font: 780 2.1rem/1.1 var(--font-display);
+  font: 800 2.1rem/1.1 var(--font-display);
   letter-spacing: -0.035em;
 }
 .live__idle-num {

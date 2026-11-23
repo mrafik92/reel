@@ -203,7 +203,7 @@ html[data-input="pointer"] .cchip:focus:not(:hover):not([aria-pressed="true"]) .
 }
 .csheet__head h2 {
   margin: 0.35rem 0 1.1rem;
-  font: 750 1.9rem/1.1 var(--font-display);
+  font: 700 1.9rem/1.1 var(--font-display);
   letter-spacing: -0.02em;
 }
 .csheet__count {
@@ -544,7 +544,7 @@ html[data-input="pointer"] .btn--iptv:focus:not(:hover) {
   position: absolute;
   left: 1rem;
   bottom: 0.4rem;
-  font: 780 4rem/1 var(--font-display);
+  font: 800 4rem/1 var(--font-display);
   letter-spacing: -0.05em;
   color: var(--ink-4);
 }
