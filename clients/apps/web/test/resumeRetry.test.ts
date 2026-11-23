@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { uiMock } from "./uiMock";
 
-// The real @reel/ui barrel pulls in Solid components; http.ts only needs serverUrl.
-mock.module("@reel/ui", () => ({ serverUrl: (p: string) => `http://reel.test${p}` }));
+mock.module("@reel/ui", uiMock);
 const { ApiError } = await import("../src/api/http");
 const { isResumeNetworkFailure, waitForNetwork, withResumeRetry } = await import("../src/components/live/resumeRetry");
 

@@ -1,8 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
+import { uiMock } from "./uiMock";
 
-// The real @reel/ui barrel pulls in Solid components; abr.ts only needs the server URL. Module
-// mocks are shared by every test file in the run, so keep what http.test.ts needs too.
-mock.module("@reel/ui", () => ({ getServerUrl: () => "https://reel.test", serverUrl: (p: string) => `http://reel.test${p}` }));
+mock.module("@reel/ui", uiMock);
 const store = new Map<string, string>();
 (globalThis as { localStorage?: unknown }).localStorage = {
   getItem: (k: string) => store.get(k) ?? null,
