@@ -175,6 +175,9 @@ export function Login(): JSX.Element {
         <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() || left() > 0 ? "true" : undefined}>
           <span>{busy() ? "Signing in…" : "Sign in"}</span>
         </button>
+        <a class="btn btn--block" href={href("/login/device")}>
+          <Icon name="tv" /> <span>Sign in with your phone</span>
+        </a>
         <p class="auth__foot">Got an invite link? Open it on this device to create your account.</p>
         <Show when={isFileOrigin()}>
           <a class="btn btn--quiet btn--sm" href={href("/connect")}>

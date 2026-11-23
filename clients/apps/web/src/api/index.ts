@@ -8,7 +8,7 @@ import type {
   DiscoverList, DiscoverPage, DownloadClient, HwAccelStatus, InviteDto, InviteInfo, LoginResponse, Me, MediaType,
   NotificationTarget, PatchUser, ProgressDto, RequestDto, RequestState, SetupStatus, UpdateArrServer, UserDto,
   DiscoverDetailWithCast, PersonDetail, Reviews, DownloadItem, GenreCount, LibraryFilters, BrowseLane, SearchAll,
-  AccountSecurity, DeviceSession, MfaChallenge, MfaLogin, RecoveryCodes, TotpEnrollment,
+  AccountSecurity, DeviceLinkInfo, DevicePairing, DeviceSession, MfaChallenge, MfaLogin, RecoveryCodes, TotpEnrollment,
 } from "./types";
 
 export { ApiError, isAborted, getToken, setToken, onUnauthorized } from "./http";
@@ -46,6 +46,12 @@ export interface Api {
   mySessions(): Promise<DeviceSession[]>;
   revokeMySession(id: number): Promise<void>;
   resetSecondFactor(userId: number): Promise<void>;
+  deviceStart(d: Omit<Credentials, "username" | "password">): Promise<DevicePairing>;
+  /** A session once approved, `{ status: "pending" }` until then. */
+  devicePoll(deviceCode: string): Promise<LoginResponse | { status: string }>;
+  linkLookup(userCode: string): Promise<DeviceLinkInfo>;
+  linkApprove(userCode: string): Promise<void>;
+  linkDeny(userCode: string): Promise<void>;
   logout(): Promise<void>;
   me(): Promise<Me>;
   inviteInfo(code: string): Promise<InviteInfo>;
@@ -159,6 +165,11 @@ const httpApi: Api = {
   mySessions: () => http.get("/me/sessions"),
   revokeMySession: (id) => http.del(`/me/sessions/${id}`),
   resetSecondFactor: (id) => http.del(`/admin/users/${id}/second-factor`),
+  deviceStart: (d) => http.post("/auth/device/start", d, noAuth),
+  devicePoll: (device_code) => http.post("/auth/device/poll", { device_code }, noAuth),
+  linkLookup: (user_code) => http.post("/me/device-link/lookup", { user_code }),
+  linkApprove: (user_code) => http.post("/me/device-link/approve", { user_code }),
+  linkDeny: (user_code) => http.post("/me/device-link/deny", { user_code }),
   logout: () => http.post("/auth/logout"),
   me: () => http.get("/me"),
   inviteInfo: (code) => http.get(`/auth/invite/${encodeURIComponent(code)}`, undefined, noAuth),

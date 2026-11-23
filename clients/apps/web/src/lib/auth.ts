@@ -140,6 +140,11 @@ export async function login(username: string, password: string): Promise<{ me: M
   return "mfa_token" in r ? { challenge: r } : { me: finishLogin(r) };
 }
 
+/** A TV's poll came back approved (#147). */
+export function finishDeviceLogin(r: LoginResponse): Me {
+  return accept(r);
+}
+
 export async function completeMfa(b: MfaLogin): Promise<Me> {
   return finishLogin(await api.loginMfa(b));
 }

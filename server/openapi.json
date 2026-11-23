@@ -1518,6 +1518,108 @@
         }
       }
     },
+    "/api/v1/auth/device/poll": {
+      "post": {
+        "summary": "Poll for approval. The session is delivered once.",
+        "operationId": "device_poll",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DevicePollBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Still waiting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevicePendingDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown, expired, refused or already used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Polling too fast",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/device/start": {
+      "post": {
+        "summary": "Start signing in a TV: returns a code to show and a secret to poll with.",
+        "operationId": "device_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceStartDto"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many pairings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
     "/api/v1/auth/invite/{code}": {
       "get": {
         "summary": "Check an invite code (for the landing page).",
@@ -3795,6 +3897,126 @@
             }
           },
           "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/device-link/approve": {
+      "post": {
+        "summary": "Approve the code: that device gets its own session on this account.",
+        "operationId": "link_approve",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceLinkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Approved"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/device-link/deny": {
+      "post": {
+        "summary": "Refuse the code.",
+        "operationId": "link_deny",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceLinkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Refused"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/device-link/lookup": {
+      "post": {
+        "summary": "What's asking to sign in with this code.",
+        "operationId": "link_lookup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceLinkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceLinkInfoDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
             "description": "",
             "content": {
               "application/json": {
@@ -7864,6 +8086,74 @@
           }
         }
       },
+      "DeviceLinkBody": {
+        "type": "object",
+        "required": [
+          "user_code"
+        ],
+        "properties": {
+          "user_code": {
+            "type": "string",
+            "description": "The code shown on the TV."
+          }
+        }
+      },
+      "DeviceLinkInfoDto": {
+        "type": "object",
+        "required": [
+          "expires_in_s"
+        ],
+        "properties": {
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_in_s": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "ip": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Address the request came from, so the person can spot one that isn't theirs."
+          }
+        }
+      },
+      "DevicePendingDto": {
+        "type": "object",
+        "description": "Returned with 202 while nobody has approved the code yet.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Always `pending`."
+          }
+        }
+      },
+      "DevicePollBody": {
+        "type": "object",
+        "required": [
+          "device_code"
+        ],
+        "properties": {
+          "device_code": {
+            "type": "string"
+          }
+        }
+      },
       "DeviceProfile": {
         "type": "object",
         "required": [
@@ -7922,6 +8212,70 @@
             "items": {
               "$ref": "#/components/schemas/VideoCodecSupport"
             }
+          }
+        }
+      },
+      "DeviceStartBody": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Shown to the person approving, e.g. \"Living Room TV\"."
+          }
+        }
+      },
+      "DeviceStartDto": {
+        "type": "object",
+        "required": [
+          "device_code",
+          "user_code",
+          "verification_uri",
+          "verification_uri_complete",
+          "expires_in_s",
+          "interval_s"
+        ],
+        "properties": {
+          "device_code": {
+            "type": "string",
+            "description": "Secret to poll with. Don't display it."
+          },
+          "expires_in_s": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "interval_s": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds to wait between polls.",
+            "minimum": 0
+          },
+          "user_code": {
+            "type": "string",
+            "description": "Short code to display, e.g. `BCDF-GHJK`."
+          },
+          "verification_uri": {
+            "type": "string",
+            "description": "Page where the code is approved."
+          },
+          "verification_uri_complete": {
+            "type": "string",
+            "description": "The same page with the code filled in, for a QR code."
           }
         }
       },

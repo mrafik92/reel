@@ -321,8 +321,9 @@ impl AuthService {
         })
     }
 
-    /// Forget half-finished logins, e.g. after a password change.
+    /// Forget half-finished logins and uncollected TV approvals, e.g. after a password change.
     pub(super) fn drop_pending_logins(&self, user_id: i64) {
+        self.drop_device_approvals(user_id);
         self.mfa
             .logins
             .lock()

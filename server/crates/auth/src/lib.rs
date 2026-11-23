@@ -16,7 +16,7 @@ pub use model::{
 };
 pub use ratelimit::{LimiterConfig, RateLimiter};
 pub use service::{
-    AuthOptions, AuthService, LoginOutcome, MfaChallenge, MfaProof, MfaStatus, PasskeyInfo,
-    TotpEnrollment, ip_bucket, load_or_create_signing_key,
+    AuthOptions, AuthService, DevicePairing, LoginOutcome, MfaChallenge, MfaProof, MfaStatus,
+    PairingInfo, PasskeyInfo, TotpEnrollment, ip_bucket, load_or_create_signing_key,
 };
 pub use signing::UrlSigner;

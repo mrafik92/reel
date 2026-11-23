@@ -191,3 +191,19 @@ export interface DeviceSession {
   expires_at?: number | null;
   current: boolean;
 }
+
+// ---- TV sign-in by code (#147) ------------------------------------------------------------------
+export interface DevicePairing {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete: string;
+  expires_in_s: number;
+  interval_s: number;
+}
+export interface DeviceLinkInfo {
+  device_name?: string | null;
+  client?: string | null;
+  ip?: string | null;
+  expires_in_s: number;
+}

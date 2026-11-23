@@ -3,6 +3,7 @@
 pub mod auth;
 mod browse;
 pub mod cast;
+pub mod device_link;
 pub mod dto;
 pub mod enrich;
 pub mod error;
@@ -657,6 +658,11 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(auth::my_sessions))
         .routes(routes!(auth::revoke_my_session))
         .routes(routes!(auth::change_password))
+        .routes(routes!(device_link::device_start))
+        .routes(routes!(device_link::device_poll))
+        .routes(routes!(device_link::link_lookup))
+        .routes(routes!(device_link::link_approve))
+        .routes(routes!(device_link::link_deny))
         .routes(routes!(mfa::login_mfa))
         .routes(routes!(mfa::login_mfa_passkey))
         .routes(routes!(mfa::security))

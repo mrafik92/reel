@@ -1163,7 +1163,7 @@ pub struct InviteDto {
     pub status: String,
 }
 
-fn base_url(st: &AppState, headers: &HeaderMap) -> String {
+pub(crate) fn base_url(st: &AppState, headers: &HeaderMap) -> String {
     if let Some(u) = st.config.public_url.as_deref().filter(|u| !u.is_empty()) {
         return u.trim_end_matches('/').to_string();
     }

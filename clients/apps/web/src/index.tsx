@@ -22,6 +22,8 @@ const Requests = lazy(() => import("./pages/Requests"));
 const Downloads = lazy(() => import("./pages/Downloads"));
 const Person = lazy(() => import("./pages/Person"));
 const Admin = lazy(() => import("./pages/admin/Admin"));
+const DeviceLogin = lazy(() => import("./pages/DeviceLink").then((m) => ({ default: m.DeviceLogin })));
+const DeviceLink = lazy(() => import("./pages/DeviceLink").then((m) => ({ default: m.DeviceLink })));
 const LiveTV = lazy(() => import("./pages/LiveTV"));
 const LiveGuide = lazy(() => import("./pages/LiveGuide"));
 const VodMovie = lazy(() => import("./pages/VodMovie"));
@@ -37,6 +39,8 @@ function Routes() {
   return (
     <>
       <Route path="/login" component={Login} />
+      <Route path="/login/device" component={DeviceLogin} />
+      <Route path="/link" component={DeviceLink} />
       <Route path="/setup" component={Setup} />
       <Route path="/connect" component={Connect} />
       <Route path="/invite/:code" component={Invite} />

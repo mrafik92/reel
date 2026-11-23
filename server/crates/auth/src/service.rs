@@ -13,7 +13,9 @@ use crate::{
     signing::{UrlSigner, now_unix},
 };
 
+mod device;
 mod mfa;
+pub use device::{DevicePairing, PairingInfo};
 pub use mfa::{MfaChallenge, MfaProof, MfaStatus, PasskeyInfo, TotpEnrollment};
 
 /// Don't rewrite the session row more often than this.
@@ -31,6 +33,10 @@ pub struct AuthOptions {
     pub absolute_session_ttl: Duration,
     /// Public base URL; its host is the WebAuthn relying party. `None` turns passkeys off.
     pub public_url: Option<String>,
+    /// How long a TV's sign-in code stays valid.
+    pub device_code_ttl: Duration,
+    /// Shortest time between a TV's polls.
+    pub device_poll_interval: Duration,
 }
 
 impl Default for AuthOptions {
@@ -42,6 +48,8 @@ impl Default for AuthOptions {
             max_concurrent_hashes: 4,
             absolute_session_ttl: Duration::from_secs(90 * 24 * 3600),
             public_url: None,
+            device_code_ttl: Duration::from_secs(10 * 60),
+            device_poll_interval: Duration::from_secs(4),
         }
     }
 }
@@ -70,6 +78,7 @@ pub struct AuthService {
     setup_token: Arc<std::sync::Mutex<Option<String>>>,
     audit_seen: Arc<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>>,
     mfa: Arc<mfa::MfaState>,
+    devices: Arc<device::DeviceState>,
 }
 
 /// Rate-limit bucket of a client address: IPv6 clients share a /64.
@@ -203,6 +212,7 @@ impl AuthService {
                 opts.max_concurrent_hashes.max(1),
             )),
             mfa: Arc::new(mfa::MfaState::new(opts.public_url.as_deref())),
+            devices: Arc::default(),
             opts: Arc::new(opts),
             dummy: Arc::default(),
             epochs: Arc::default(),
@@ -642,6 +652,7 @@ impl AuthService {
             .execute(&self.pool)
             .await?
             .rows_affected();
+        self.drop_pending_logins(user_id);
         self.bump_epoch(user_id).await?;
         Ok(n)
     }

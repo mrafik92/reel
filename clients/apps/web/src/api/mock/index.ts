@@ -271,6 +271,14 @@ export function createMockApi(): MockApi {
     ],
     revokeMySession: ok,
     resetSecondFactor: ok,
+    deviceStart: async () => ({ device_code: "mock", user_code: "BCDF-GHJK", verification_uri: `${location.origin}/link`, verification_uri_complete: `${location.origin}/link?code=BCDF-GHJK&mock=1`, expires_in_s: 600, interval_s: 4 }),
+    devicePoll: async () => ({ status: "pending" }),
+    linkLookup: async (code) => {
+      if (code.replace(/[^a-z]/gi, "").length !== 8) throw new ApiError(404, "that code isn't valid or has expired");
+      return { device_name: "Living Room TV", client: "webos", ip: "192.168.1.40", expires_in_s: 540 };
+    },
+    linkApprove: ok,
+    linkDeny: ok,
     logout: ok,
     me: async () => ADMIN,
     inviteInfo: async (code) => ({ valid: code.length > 3, library_names: ["Films", "Series"], expires_at: nowS() + 86400 * 3 }),
