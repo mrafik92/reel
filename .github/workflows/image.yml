@@ -60,11 +60,6 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
 
-      - name: Deploy hint
+      - name: Image summary
         if: github.ref == 'refs/heads/main'
-        run: |
-          {
-            echo "### Image \`${GITHUB_SHA::7}\` is ready"
-            echo
-            echo "Deploy it to CT 113 from the owner's Mac: \`deploy/ct113/deploy.py\` (\`--dry-run\` first)."
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: echo "### Image \`${GITHUB_SHA::7}\` is ready" >> "$GITHUB_STEP_SUMMARY"
