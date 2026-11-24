@@ -65,6 +65,14 @@ pub fn is_private(ip: IpAddr) -> bool {
     }
 }
 
+/// Where admin powers may be used (#127): the LAN, or Tailscale's CGNAT range `100.64.0.0/10`.
+/// Tailscale's IPv6 range is unique-local, so [`is_private`] already covers it.
+pub fn is_admin_network(ip: IpAddr) -> bool {
+    let ip = normalize(ip);
+    is_private(ip)
+        || matches!(ip, IpAddr::V4(a) if a.octets()[0] == 100 && (a.octets()[1] & 0xc0) == 64)
+}
+
 pub fn parse_cidrs(list: &[String]) -> Vec<Cidr> {
     list.iter().filter_map(|s| Cidr::parse(s)).collect()
 }
@@ -72,6 +80,31 @@ pub fn parse_cidrs(list: &[String]) -> Vec<Cidr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn admin_network_is_lan_and_tailscale_only() {
+        for ip in [
+            "10.10.10.5",
+            "192.168.1.2",
+            "127.0.0.1",
+            "100.64.0.1",
+            "100.127.255.254",
+            "fd7a:115c:a1e0::1",
+            "::ffff:100.100.1.1",
+        ] {
+            assert!(is_admin_network(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in [
+            "100.63.255.255",
+            "100.128.0.1",
+            "8.8.8.8",
+            "203.0.113.9",
+            "2001:4860:4860::8888",
+            "::ffff:8.8.8.8",
+        ] {
+            assert!(!is_admin_network(ip.parse().unwrap()), "{ip}");
+        }
+    }
 
     #[test]
     fn cidr_and_private() {

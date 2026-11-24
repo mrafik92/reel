@@ -1,10 +1,13 @@
 import { For, Match, Show, Switch, createEffect, createSignal, onCleanup, onMount, type JSX, type ParentProps } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
-import { Icon, Sheet, initTvNavigation, isFileOrigin, onBack, type IconName, type SheetOption } from "@reel/ui";
+import { Icon, Sheet, focusElement, initTvNavigation, isFileOrigin, onBack, type IconName, type SheetOption } from "@reel/ui";
 import { MOCK, TV, href } from "../lib/mode";
-import { authStatus, bootError, bootstrap, currentUser, isAdmin, logout, onAuthChange } from "../lib/auth";
+import { afterLogin, authStatus, bootError, bootstrap, currentUser, finishedSigningIn, isAdmin, isSigningIn, logout, onAuthChange } from "../lib/auth";
+import { safeNext } from "../pages/Auth";
 import { connectEvents, disconnectEvents, downloads, queueSummary } from "../lib/downloads";
 import { Toaster } from "../components/Toaster";
+import { TopBar } from "../components/TopBar";
+import { PreviewLayer } from "../components/PreviewCard";
 import { api, invalidate } from "../api";
 import { hadNetworkFailure, onConnectionRestored } from "../api/http";
 import { onResume } from "../lib/connection";
@@ -24,7 +27,7 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  // Search leads the rail (accent-ringed) so it's the first thing the D-pad meets.
+  // The phone bottom bar's order; the top bar lists TOPBAR_PATHS instead.
   { path: "/search", label: "Search", icon: "search", match: (p) => p.indexOf("/search") === 0 },
   { path: "/", label: "Home", icon: "home", match: (p) => p === "/" },
   { path: "/movies", label: "Movies", icon: "film", match: (p) => p.indexOf("/movies") === 0 },
@@ -35,19 +38,26 @@ const NAV: NavItem[] = [
   { path: "/downloads", label: "Downloads", icon: "download", match: (p) => p.indexOf("/downloads") === 0, more: true },
 ];
 
-/** Pages behind the phone bar's More tab that aren't NAV items (they live in the rail's foot). */
+/** The top bar's primary links, in order. Search and Downloads are icons in its right cluster. */
+const TOPBAR_PATHS = ["/", "/shows", "/movies", "/live", "/discover", "/requests"];
+
+/** Pages behind the phone bar's More tab that aren't NAV items (Settings, the design lab). */
 const MORE_EXTRA = /^\/(settings|admin|dev)(\/|$)/;
 const LOGOUT = "logout";
 
 /** Routes reachable without a session. */
 const PUBLIC = /^\/(login|setup|invite\/|connect)/;
 
+/** The pages in NAV, except Live TV, which keeps its own Back. */
+function isTopLevel(path: string): boolean {
+  return path.indexOf("/live") !== 0 && NAV.some((n) => n.match(path));
+}
+
 export function Shell(props: ParentProps): JSX.Element {
   const loc = useLocation();
   const navigate = useNavigate();
   const immersive = () => loc.pathname.indexOf("/play/") === 0;
   const isPublic = () => PUBLIC.test(loc.pathname);
-  const [railOpen, setRailOpen] = createSignal(false);
   // Phone bottom bar: the destinations that don't fit sit in a sheet behind "More" (#180).
   const [moreOpen, setMoreOpen] = createSignal(false);
 
@@ -81,6 +91,13 @@ export function Shell(props: ParentProps): JSX.Element {
     // redirects back to the same page), let the platform handle it: TVs and Reel Web for Android
     // leave the app (#227).
     const off = onBack(() => {
+      // TV: with no rail to reach sideways, Back on a scrolled top-level page returns to the top bar.
+      if (TV && window.pageYOffset > 0 && isTopLevel(loc.pathname)) {
+        window.scrollTo(0, 0);
+        const link = document.querySelector<HTMLElement>('.topbar [aria-current="page"]') ?? document.querySelector<HTMLElement>(".topbar__link");
+        if (link) focusElement(link, { smooth: false });
+        return true;
+      }
       if (loc.pathname === "/" || (isPublic() && authStatus() !== "authed")) return false;
       if (window.history.length > 1) window.history.back();
       else navigate("/");
@@ -97,16 +114,20 @@ export function Shell(props: ParentProps): JSX.Element {
   createEffect(() => {
     const s = authStatus();
     const path = loc.pathname;
+    if (!/^\/(login|setup)/.test(path)) finishedSigningIn();
     if (s === "needs_server" && path !== "/connect") navigate("/connect", { replace: true });
     else if (s === "needs_setup" && path !== "/setup" && path.indexOf("/invite/") !== 0) navigate("/setup", { replace: true });
     else if (s === "anon" && !isPublic()) navigate(`/login${path !== "/" ? `?next=${encodeURIComponent(path + loc.search)}` : ""}`, { replace: true });
-    else if (s === "authed" && /^\/(login|setup)/.test(path)) navigate("/", { replace: true });
+    // /login/oidc stays: a signed-in user lands there when linking a provider (#149)
+    else if (s === "authed" && /^\/(login|setup)/.test(path) && path !== "/login/oidc" && !isSigningIn()) {
+      // keep ?next=: a phone that scanned a QR code still has a device to approve (#287)
+      const next = path === "/login" ? safeNext(new URLSearchParams(loc.search).get("next") ?? undefined) : "/";
+      const me = currentUser();
+      navigate(me ? afterLogin(me, next) : next, { replace: true });
+    }
   });
 
   // Global search shortcuts: "/" (when not typing) and Ctrl/Cmd+K (always).
-  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-  // The floating search pill tucks away once the page scrolls under it.
-  const [tucked, setTucked] = createSignal(false);
   const openSearch = () => {
     if (loc.pathname.indexOf("/search") === 0) {
       const input = document.querySelector<HTMLInputElement>(".search__input");
@@ -130,13 +151,8 @@ export function Shell(props: ParentProps): JSX.Element {
       e.preventDefault();
       openSearch();
     };
-    const onScroll = () => setTucked(window.pageYOffset > 90);
     document.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    onCleanup(() => {
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onScroll);
-    });
+    onCleanup(() => document.removeEventListener("keydown", onKey));
   });
 
   // Requests badge: active downloads of this user.
@@ -183,6 +199,16 @@ export function Shell(props: ParentProps): JSX.Element {
   };
   // Same signal as the Downloads tab it stands in for: active downloads, or "!" when only failures.
   const moreBadge = () => queueSummary().count || (queueSummary().failed > 0 ? "!" : "");
+  const signOut = () => void logout().then(() => navigate("/login"));
+  const topLinks = () =>
+    TOPBAR_PATHS.map((p) => NAV.find((n) => n.path === p)!)
+      .filter((n) => !n.hidden)
+      .map((n) => ({
+        path: n.path,
+        label: n.label,
+        current: n.match(loc.pathname),
+        count: n.path === "/requests" ? activeCount() : undefined,
+      }));
 
   return (
     <div class="app" classList={{ "is-immersive": immersive() || isPublic() }}>
@@ -225,111 +251,56 @@ export function Shell(props: ParentProps): JSX.Element {
           </main>
         </Match>
         <Match when={authStatus() === "authed"}>
-          <nav
-            class="rail"
-            classList={{ "is-open": railOpen() }}
-            aria-label="Main"
-            data-nav-group
-            data-nav-lateral
-            data-nav-fixed
-            onFocusIn={() => setRailOpen(true)}
-            onFocusOut={(e) => {
-              const next = e.relatedTarget as Node | null;
-              if (!next || !(e.currentTarget as HTMLElement).contains(next)) setRailOpen(false);
-            }}
-          >
-            <div class="rail__bg" aria-hidden="true" />
-            <a class="rail__brand" href={href("/")} tabindex="-1" data-nav-skip aria-label="Reel home">
-              <span class="logo">
-                <span class="logo__mark" aria-hidden="true">
-                  <i />
-                </span>
-                <span class="logo__word">reel</span>
-              </span>
-            </a>
-            <ul class="rail__list">
-              <For each={NAV.filter((n) => !n.hidden)}>
-                {(n) => (
-                  <li classList={{ "rail__item--more": !!n.more }}>
-                    <a
-                      class="rail__link"
-                      classList={{ "rail__link--search": n.path === "/search" }}
-                      href={href(n.path)}
-                      aria-current={n.match(loc.pathname) ? "page" : undefined}
-                      aria-keyshortcuts={n.path === "/search" && !TV ? "/ Control+K Meta+K" : undefined}
-                    >
-                      <Icon name={n.icon} class="rail__icon" />
-                      <Show when={n.path === "/downloads" && queueSummary().active}>
-                        {(a) => <MiniRing progress={a().progress} state={a().state} />}
-                      </Show>
-                      <span class="rail__label">
-                        {n.label}
-                        <Show when={n.path === "/downloads" && queueSummary().active}>
-                          {(a) => <small class="rail__sub">{Math.floor(a().progress * 100)}% · {queueSummary().count} active</small>}
-                        </Show>
+          <TopBar
+            links={topLinks()}
+            overHero={loc.pathname === "/"}
+            searchCurrent={loc.pathname.indexOf("/search") === 0}
+            downloadsCurrent={loc.pathname.indexOf("/downloads") === 0}
+            downloads={queueSummary()}
+            username={currentUser()?.username}
+            settingsPath={settingsPath()}
+            onSignOut={signOut}
+          />
+          {/* The phone bottom bar. Width isn't a constant, so CSS picks it or the top bar; TV has only the top bar. */}
+          <Show when={!TV}>
+            <nav class="rail" aria-label="Main" data-nav-group data-nav-lateral data-nav-fixed>
+              <ul class="rail__list">
+                <For each={NAV.filter((n) => !n.hidden && !n.more)}>
+                  {(n) => (
+                    <li>
+                      <a
+                        class="rail__link"
+                        href={href(n.path)}
+                        aria-current={n.match(loc.pathname) ? "page" : undefined}
+                        aria-keyshortcuts={n.path === "/search" ? "/ Control+K Meta+K" : undefined}
+                      >
+                        <Icon name={n.icon} class="rail__icon" />
+                        <span class="rail__label">{n.label}</span>
+                      </a>
+                    </li>
+                  )}
+                </For>
+                <li>
+                  <button
+                    type="button"
+                    class="rail__link"
+                    aria-haspopup="dialog"
+                    aria-expanded={moreOpen() ? "true" : "false"}
+                    aria-current={inMore() ? "true" : undefined}
+                    onClick={() => setMoreOpen(true)}
+                  >
+                    <Icon name="more" class="rail__icon" />
+                    <span class="rail__label">More</span>
+                    <Show when={moreBadge()}>
+                      <span class="rail__count" classList={{ "rail__count--bad": moreBadge() === "!" }} aria-hidden="true">
+                        {moreBadge()}
                       </span>
-                      <Show when={n.path === "/requests" && activeCount()}>
-                        <span class="rail__count" aria-label={`${activeCount()} active`}>{activeCount()}</span>
-                      </Show>
-                      <Show when={n.path === "/downloads" && queueSummary().count + queueSummary().failed}>
-                        <span class="rail__count" classList={{ "rail__count--bad": !queueSummary().count && queueSummary().failed > 0 }} aria-label={`${queueSummary().count} downloading`}>
-                          {queueSummary().count || "!"}
-                        </span>
-                      </Show>
-                    </a>
-                  </li>
-                )}
-              </For>
-              {/* Phone only (hidden on desktop and TV by CSS): opens the rest of the destinations. */}
-              <li class="rail__item--morebtn">
-                <button
-                  type="button"
-                  class="rail__link"
-                  aria-haspopup="dialog"
-                  aria-expanded={moreOpen() ? "true" : "false"}
-                  aria-current={inMore() ? "true" : undefined}
-                  onClick={() => setMoreOpen(true)}
-                >
-                  <Icon name="more" class="rail__icon" />
-                  <span class="rail__label">More</span>
-                  <Show when={moreBadge()}>
-                    <span class="rail__count" classList={{ "rail__count--bad": moreBadge() === "!" }} aria-hidden="true">
-                      {moreBadge()}
-                    </span>
-                  </Show>
-                </button>
-              </li>
-            </ul>
-            <div class="rail__foot">
-              {/* Everyone has their own settings (Playback); admins land on the server sections (#88). */}
-              <a
-                class="rail__link"
-                href={href(settingsPath())}
-                aria-current={loc.pathname.indexOf("/admin") === 0 || loc.pathname.indexOf("/settings") === 0 ? "page" : undefined}
-              >
-                <Icon name="gear" class="rail__icon" />
-                <span class="rail__label">Settings</span>
-              </a>
-              <Show when={MOCK || import.meta.env.DEV}>
-                <a class="rail__link rail__link--quiet" href={href("/dev/rings")} aria-current={loc.pathname.indexOf("/dev") === 0 ? "page" : undefined}>
-                  <Icon name="layers" class="rail__icon" />
-                  <span class="rail__label">Design lab</span>
-                </a>
-              </Show>
-              <button
-                type="button"
-                class="rail__link rail__link--quiet"
-                onClick={() => void logout().then(() => navigate("/login"))}
-                title={currentUser() ? `Signed in as ${currentUser()!.username}` : undefined}
-              >
-                <Icon name="logout" class="rail__icon" />
-                <span class="rail__label">Sign out{currentUser() ? ` (${currentUser()!.username})` : ""}</span>
-              </button>
-              <Show when={MOCK}>
-                <span class="rail__badge" title="Showing built-in sample data (?mock=0 to turn off)">Sample data</span>
-              </Show>
-            </div>
-          </nav>
+                    </Show>
+                  </button>
+                </li>
+              </ul>
+            </nav>
+          </Show>
           <Show when={moreOpen()}>
             <Sheet
               title="More"
@@ -337,32 +308,13 @@ export function Shell(props: ParentProps): JSX.Element {
               selected={moreSelected()}
               onClose={() => setMoreOpen(false)}
               onSelect={(v) => {
-                if (v === LOGOUT) void logout().then(() => navigate("/login"));
+                if (v === LOGOUT) signOut();
                 else navigate(v);
               }}
               footer={<>Signed in as {currentUser()?.username ?? "…"}</>}
             />
           </Show>
-          <Show when={loc.pathname.indexOf("/search") !== 0}>
-            <a
-              class="topsearch"
-              classList={{ "is-tucked": tucked() }}
-              href={href("/search")}
-              data-nav-fixed
-              data-nav-skip={tucked() ? "" : undefined}
-              tabindex={tucked() ? -1 : undefined}
-              aria-keyshortcuts={TV ? undefined : "/ Control+K Meta+K"}
-            >
-              <Icon name="search" class="topsearch__icon" />
-              <span class="topsearch__label">Search</span>
-              <Show when={!TV}>
-                <span class="topsearch__keys" aria-hidden="true">
-                  <span class="keycap">{isMac ? "⌘" : "Ctrl"}</span>
-                  <span class="keycap">K</span>
-                </span>
-              </Show>
-            </a>
-          </Show>
+          <PreviewLayer />
           <main class="main" data-nav-group>
             {/* Re-mounted when the connection comes back after a page's load failed (#81). */}
             <Show when={pageEpoch()} keyed>
@@ -372,18 +324,6 @@ export function Shell(props: ParentProps): JSX.Element {
         </Match>
       </Switch>
       <Toaster />
-      <div class="grain" aria-hidden="true" />
     </div>
-  );
-}
-
-/** Aggregate download progress drawn around the nav icon. */
-function MiniRing(props: { progress: number; state: string }): JSX.Element {
-  const C = 2 * Math.PI * 21;
-  return (
-    <svg class={`rail__ring rail__ring--${props.state}`} viewBox="0 0 48 48" aria-hidden="true">
-      <circle cx="24" cy="24" r="21" class="rail__ring-track" />
-      <circle cx="24" cy="24" r="21" class="rail__ring-arc" stroke-dasharray={`${C} ${C}`} stroke-dashoffset={C * (1 - props.progress)} transform="rotate(-90 24 24)" />
-    </svg>
   );
 }

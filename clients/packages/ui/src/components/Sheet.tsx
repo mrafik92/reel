@@ -27,6 +27,8 @@ export interface SheetProps<V> {
   children?: JSX.Element;
   /** Replaces the "Back to close" hint. */
   footer?: JSX.Element;
+  /** `pop`: a compact panel in the bottom corner, over a picture that stays visible (player menus). */
+  variant?: "side" | "pop";
 }
 
 /**
@@ -86,6 +88,7 @@ export function Sheet<V>(props: SheetProps<V>): JSX.Element {
     <Portal mount={overlayMount()}>
       <div
         class="sheet"
+        classList={{ "sheet--pop": props.variant === "pop" }}
         data-nav-trap
         data-nav-fixed
         onKeyDown={(e) => {

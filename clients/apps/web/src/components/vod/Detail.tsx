@@ -3,6 +3,7 @@ import { Portal } from "solid-js/web";
 import { focusElement, Icon, onBack } from "@reel/ui";
 import { vod, type VodId, type VodKind } from "../../api/vod";
 import { CategoryLabel } from "./Categories";
+import { TitleSheet } from "../TitleSheet";
 import "../../styles/vod.css";
 
 /** "IPTV · Film · AR | Egyptian Movies" — where this title comes from. */
@@ -72,12 +73,19 @@ export function VodFineprint(props: { local?: boolean }): JSX.Element {
 
 export function VodSkeleton(): JSX.Element {
   return (
-    <section class="detail__hero" aria-busy="true" aria-label="Loading">
-      <span class="skel skel--text" style={{ width: "8rem" }} />
-      <span class="skel skel--title" />
-      <span class="skel skel--text" style={{ width: "22rem" }} />
-      <span class="skel skel--text" style={{ width: "34rem" }} />
-      <span class="skel skel--text" style={{ width: "30rem" }} />
-    </section>
+    <TitleSheet head={
+      <div aria-busy="true" aria-label="Loading">
+        <span class="skel skel--title" />
+        <span class="skel skel--text" style={{ width: "14rem", height: "3.25rem" }} />
+      </div>
+    }>
+      <section class="tinfo">
+        <div class="tinfo__main">
+          <span class="skel skel--text" style={{ width: "60%" }} />
+          <span class="skel skel--text" style={{ width: "90%" }} />
+          <span class="skel skel--text" style={{ width: "80%" }} />
+        </div>
+      </section>
+    </TitleSheet>
   );
 }

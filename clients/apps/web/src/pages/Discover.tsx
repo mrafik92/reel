@@ -15,7 +15,6 @@ const ROWS: { title: string; list: DiscoverList; media: "movie" | "tv" | "all" }
   { title: "Coming soon", list: "upcoming", media: "movie" },
 ];
 
-const pad = (n: number) => (n < 10 ? "0" + n : String(n));
 
 export default function Discover(): JSX.Element {
   const [rows, { refetch }] = createResource(async () => {
@@ -64,7 +63,7 @@ export default function Discover(): JSX.Element {
           <div class="discover__rows">
             <For each={rows()}>
               {(r, i) => (
-                <Row title={r.title} index={pad(i() + 1)} class="row--discover">
+                <Row title={r.title} class="row--discover">
                   <For each={r.cards}>{(c, j) => <DiscoverTile card={c} onOpen={sheet.open} autofocus={i() === 0 && j() === 0} />}</For>
                 </Row>
               )}

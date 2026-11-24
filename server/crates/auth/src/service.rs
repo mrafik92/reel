@@ -13,6 +13,15 @@ use crate::{
     signing::{UrlSigner, now_unix},
 };
 
+mod device;
+mod identity;
+mod mfa;
+pub use device::{DevicePairing, PairingInfo};
+pub use identity::{
+    LinkedIdentity, NewOidcProvider, OidcProvider, OidcProviderPatch, VerifiedIdentity,
+};
+pub use mfa::{MfaChallenge, MfaProof, MfaStatus, PasskeyInfo, TotpEnrollment};
+
 /// Don't rewrite the session row more often than this.
 const TOUCH_INTERVAL: i64 = 60;
 
@@ -26,6 +35,12 @@ pub struct AuthOptions {
     pub max_concurrent_hashes: usize,
     /// Sessions end this long after login no matter how often they are used.
     pub absolute_session_ttl: Duration,
+    /// Public base URL; its host is the WebAuthn relying party. `None` turns passkeys off.
+    pub public_url: Option<String>,
+    /// How long a TV's sign-in code stays valid.
+    pub device_code_ttl: Duration,
+    /// Shortest time between a TV's polls.
+    pub device_poll_interval: Duration,
 }
 
 impl Default for AuthOptions {
@@ -36,6 +51,9 @@ impl Default for AuthOptions {
             limiter: LimiterConfig::default(),
             max_concurrent_hashes: 4,
             absolute_session_ttl: Duration::from_secs(90 * 24 * 3600),
+            public_url: None,
+            device_code_ttl: Duration::from_secs(10 * 60),
+            device_poll_interval: Duration::from_secs(4),
         }
     }
 }
@@ -46,6 +64,8 @@ pub struct LoginOutcome {
     pub token: String,
     pub user: User,
     pub expires_at: i64,
+    /// The password that just signed in wouldn't be accepted today (#148): nudge a change.
+    pub password_weak: bool,
 }
 
 #[derive(Clone)]
@@ -61,6 +81,8 @@ pub struct AuthService {
     /// One-time token printed at first boot: required for `/setup` from non-LAN clients.
     setup_token: Arc<std::sync::Mutex<Option<String>>>,
     audit_seen: Arc<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>>,
+    mfa: Arc<mfa::MfaState>,
+    devices: Arc<device::DeviceState>,
 }
 
 /// Rate-limit bucket of a client address: IPv6 clients share a /64.
@@ -135,18 +157,6 @@ fn validate_username(u: &str) -> AuthResult<String> {
     }
 }
 
-fn validate_password(p: &str) -> AuthResult<()> {
-    if p.chars().count() < 8 {
-        return Err(AuthError::BadRequest(
-            "password must be at least 8 characters".into(),
-        ));
-    }
-    if p.len() > 256 {
-        return Err(AuthError::BadRequest("password is too long".into()));
-    }
-    Ok(())
-}
-
 const USER_SELECT: &str = "SELECT u.id, u.username, u.role, u.disabled, u.created_at, \
     l.max_streams, l.max_transcodes, l.max_bitrate_kbps, l.request_quota_movies, \
     l.request_quota_tv, l.quota_window_days, l.auto_approve, \
@@ -175,6 +185,7 @@ fn user_from_row(r: &SqliteRow) -> User {
             can_request: r.get::<i64, _>("can_request") != 0,
             can_cast: r.get::<i64, _>("can_cast") != 0,
         },
+        admin_powers: false,
     }
 }
 
@@ -204,6 +215,8 @@ impl AuthService {
             hash_slots: Arc::new(tokio::sync::Semaphore::new(
                 opts.max_concurrent_hashes.max(1),
             )),
+            mfa: Arc::new(mfa::MfaState::new(opts.public_url.as_deref())),
+            devices: Arc::default(),
             opts: Arc::new(opts),
             dummy: Arc::default(),
             epochs: Arc::default(),
@@ -356,7 +369,7 @@ impl AuthService {
             return Err(AuthError::Conflict("setup was already completed".into()));
         }
         let username = validate_username(username)?;
-        validate_password(password)?;
+        password::check_policy(password, Some(&username))?;
         let hash = self.hash_pw(password).await?;
         let claimed = sqlx::query(
             "UPDATE users SET username = ?, password_hash = ?, role = 'admin', disabled = 0 \
@@ -422,8 +435,8 @@ impl AuthService {
 
     /// Audit a failed login at most once a minute per (username, ip): a guessing run must not
     /// flood the audit table.
-    async fn audit_failure(&self, name: &str, ip: Option<&str>) {
-        let key = format!("{name}|{}", ip_bucket(ip));
+    async fn audit_failure(&self, action: &str, name: &str, ip: Option<&str>) {
+        let key = format!("{action}|{name}|{}", ip_bucket(ip));
         {
             let mut m = self.audit_seen.lock().unwrap();
             let now = std::time::Instant::now();
@@ -440,7 +453,7 @@ impl AuthService {
             }
             m.insert(key, now);
         }
-        self.audit(None, Some(name), "login_failure", None, Value::Null, ip)
+        self.audit(None, Some(name), action, None, Value::Null, ip)
             .await;
     }
 
@@ -510,6 +523,13 @@ impl AuthService {
             ),
             None => (None, self.dummy_hash().await),
         };
+        // an account without a password costs the same as a wrong guess, and can never match
+        let has_password = phc != password::NO_PASSWORD;
+        let phc = if has_password {
+            phc
+        } else {
+            self.dummy_hash().await
+        };
         // Always verify (against a dummy hash for unknown users) to equalize timing.
         let ok = match self.verify_pw(password, &phc).await {
             Ok(v) => v,
@@ -520,8 +540,14 @@ impl AuthService {
             }
         };
         match user {
-            Some(u) if ok && !u.disabled => {
+            Some(u) if ok && has_password && !u.disabled => {
                 give_back();
+                let password_weak = password::check_policy(password, Some(&u.username)).is_err();
+                if self.has_second_factor(u.id).await? {
+                    // failure counters are cleared only once the second factor passes too
+                    let c = self.issue_challenge(&u, &dev, password_weak).await?;
+                    return Err(AuthError::SecondFactorRequired(c));
+                }
                 self.limiter.clear(&user_key);
                 self.limiter.clear(&global_key);
                 let (token, expires_at) = self.create_session(u.id, &dev).await?;
@@ -529,12 +555,14 @@ impl AuthService {
                     token,
                     user: u,
                     expires_at,
+                    password_weak,
                 })
             }
             _ => {
                 // the attempt was already counted
                 self.limiter.soft_fail(&global_key);
-                self.audit_failure(&name, dev.ip.as_deref()).await;
+                self.audit_failure("login_failure", &name, dev.ip.as_deref())
+                    .await;
                 Err(AuthError::InvalidCredentials)
             }
         }
@@ -635,6 +663,7 @@ impl AuthService {
             .execute(&self.pool)
             .await?
             .rows_affected();
+        self.drop_pending_logins(user_id);
         self.bump_epoch(user_id).await?;
         Ok(n)
     }
@@ -646,12 +675,16 @@ impl AuthService {
         new: &str,
         keep_session: Option<i64>,
     ) -> AuthResult<()> {
-        validate_password(new)?;
-        let phc: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
-            .bind(user_id)
-            .fetch_optional(&self.pool)
-            .await?
-            .ok_or(AuthError::NotFound)?;
+        let (username, phc): (String, String) =
+            sqlx::query_as("SELECT username, password_hash FROM users WHERE id = ?")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await?
+                .ok_or(AuthError::NotFound)?;
+        if phc == password::NO_PASSWORD {
+            return Err(AuthError::Conflict("this account has no password".into()));
+        }
+        password::check_policy(new, Some(&username))?;
         if !self.verify_pw(current, &phc).await? {
             return Err(AuthError::InvalidCredentials);
         }
@@ -666,6 +699,7 @@ impl AuthService {
             .bind(keep_session.unwrap_or(-1))
             .execute(&self.pool)
             .await?;
+        self.drop_pending_logins(user_id);
         self.bump_epoch(user_id).await?;
         Ok(())
     }
@@ -702,7 +736,7 @@ impl AuthService {
 
     /// Libraries visible to `user`: `None` = all (admins).
     pub async fn visible_libraries(&self, user: &User) -> AuthResult<Option<Vec<i64>>> {
-        if user.is_admin() {
+        if user.has_admin_role() {
             return Ok(None);
         }
         Ok(Some(self.library_ids(user.id).await?))
@@ -763,7 +797,7 @@ impl AuthService {
 
     pub async fn create_user(&self, nu: NewUser) -> AuthResult<User> {
         let username = validate_username(&nu.username)?;
-        validate_password(&nu.password)?;
+        password::check_policy(&nu.password, Some(&username))?;
         let hash = self.hash_pw(&nu.password).await?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let id = self
@@ -820,7 +854,7 @@ impl AuthService {
 
     pub async fn update_user(&self, id: i64, p: UserPatch) -> AuthResult<User> {
         let cur = self.get_user(id).await?.ok_or(AuthError::NotFound)?;
-        let loses_admin = cur.is_admin()
+        let loses_admin = cur.has_admin_role()
             && !cur.disabled
             && (p.role == Some(Role::User) || p.disabled == Some(true));
         if loses_admin && self.other_enabled_admins(id).await? == 0 {
@@ -834,7 +868,12 @@ impl AuthService {
         };
         let hash = match &p.password {
             Some(pw) => {
-                validate_password(pw)?;
+                if !self.has_password(id).await? {
+                    return Err(AuthError::Conflict(
+                        "this account signs in through its provider and has no password".into(),
+                    ));
+                }
+                password::check_policy(pw, Some(&username))?;
                 Some(self.hash_pw(pw).await?)
             }
             None => None,
@@ -893,6 +932,9 @@ impl AuthService {
                 || (cur.perms.can_cast && !n.can_cast)
         });
         // links already handed out must not outlive the access they were issued under
+        if hash.is_some() || p.disabled == Some(true) {
+            self.drop_pending_logins(id);
+        }
         if hash.is_some() || p.disabled == Some(true) || lost_perm {
             self.bump_epoch(id).await?;
         }
@@ -901,7 +943,7 @@ impl AuthService {
 
     pub async fn delete_user(&self, id: i64) -> AuthResult<()> {
         let cur = self.get_user(id).await?.ok_or(AuthError::NotFound)?;
-        if cur.is_admin() && !cur.disabled && self.other_enabled_admins(id).await? == 0 {
+        if cur.has_admin_role() && !cur.disabled && self.other_enabled_admins(id).await? == 0 {
             return Err(AuthError::Conflict("cannot delete the last admin".into()));
         }
         sqlx::query("DELETE FROM users WHERE id = ?")
@@ -1049,6 +1091,19 @@ impl AuthService {
         password: &str,
         dev: Device,
     ) -> AuthResult<LoginOutcome> {
+        self.accept_invite_with(code, username, Some(password), dev, None)
+            .await
+    }
+
+    /// [`Self::accept_invite`], also linking a verified provider sign-in to the new account (#149).
+    pub async fn accept_invite_with(
+        &self,
+        code: &str,
+        username: &str,
+        password: Option<&str>,
+        dev: Device,
+        identity: Option<&VerifiedIdentity>,
+    ) -> AuthResult<LoginOutcome> {
         let ip_key = format!("ip:{}", ip_bucket(dev.ip.as_deref()));
         if let Err(wait) = self.limiter.check(&ip_key) {
             return Err(AuthError::Locked(wait));
@@ -1058,7 +1113,15 @@ impl AuthService {
             return Err(AuthError::NotFound);
         }
         let username = validate_username(username)?;
-        validate_password(password)?;
+        // a provider sign-in means no password is stored at all (#287)
+        let new_password = match (identity, password) {
+            (Some(_), _) => None,
+            (None, Some(p)) => {
+                password::check_policy(p, Some(&username))?;
+                Some(p)
+            }
+            (None, None) => return Err(AuthError::BadRequest("a password is required".into())),
+        };
         let row = sqlx::query("SELECT * FROM invites WHERE code = ?")
             .bind(code)
             .fetch_optional(&self.pool)
@@ -1070,7 +1133,10 @@ impl AuthService {
                 return Err(AuthError::NotFound);
             }
         };
-        let hash = self.hash_pw(password).await?;
+        let hash = match new_password {
+            Some(p) => self.hash_pw(p).await?,
+            None => password::NO_PASSWORD.to_string(),
+        };
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let uid = self
             .insert_user(
@@ -1092,6 +1158,9 @@ impl AuthService {
         .bind(uid)
         .execute(&mut *tx)
         .await?;
+        if let Some(i) = identity {
+            Self::insert_identity(&mut tx, uid, i).await?;
+        }
         // Single use: only one concurrent accept can flip `used_by`.
         let claimed = sqlx::query(
             "UPDATE invites SET used_by = ?, used_at = ? WHERE id = ? AND used_by IS NULL \
@@ -1124,6 +1193,7 @@ impl AuthService {
             token,
             user,
             expires_at,
+            password_weak: false,
         })
     }
 

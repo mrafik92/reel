@@ -23,7 +23,8 @@
 
 | Secret | Location |
 |---|---|
-| Reel admin (`rafik`) | minix `/root/.reel-admin` (root-only). Change the password in Settings |
+| Reel admin (`rafik`) | minix `/root/.reel-admin` (root-only). Change the password in Settings. Use 16+ random characters. Once the account has a second factor, this password alone no longer signs in, so `deploy/ct113/bootstrap.py` and `add_xtream.py` stop working for it (#146) |
+| TOTP secrets, OpenID Connect client secrets | Reel DB, encrypted with a key derived from `/appdata/signing.key`. **Replacing that key makes them unreadable**: everyone with an authenticator app has to enroll again, and provider secrets have to be re-entered |
 | TMDB key, webhook secret, (OMDb, Trakt) | CT 113 `/root/reel/.env` |
 | IPTV provider login, qBittorrent password, Arr API keys | Reel DB (entered in Settings) |
 | Former `PROJECT_TOKEN` (classic PAT: `repo`, `project`) | The GitHub repo secret was deleted on 2026-11-23 (#268). The PAT itself must be revoked by the owner in GitHub → Settings → Developer settings. Ticket updates on deploy use the Mac's `gh` login (needs the `project` scope) |
@@ -34,7 +35,7 @@
 ## Build & deploy pipeline
 
 ```
-git push main ──► GitHub Actions
+merge to main ──► GitHub Actions
                    ├── ci.yml:    cargo fmt/clippy/nextest (rustc 1.86, ffmpeg, mold), bun typecheck/build
                    └── image.yml: docker buildx (deploy/Dockerfile) → ghcr.io/mrafik92/reel:latest + :sha-xxxx
                                   build args GIT_SHA / BUILD_DATE → shown in Settings → About
@@ -95,7 +96,10 @@ CT 113:  deploy/ct113/deploy.py on the Mac  (ssh minix-local → pct exec 113 �
   `clients/android-web/README.md`. `--dry-run` builds but only prints the Taildrop and GitHub commands.
   Passwords: see Credentials. The Compose app's old `android-v0.1.0`–`0.3.0` releases stay on GitHub. Sideloading:
   `clients/android-web/README.md` → Install a release.
-- Rollback: pin `image: ghcr.io/mrafik92/reel:sha-<previous>` in the compose file and run `up -d`.
+- Rollback: pin `image: ghcr.io/mrafik92/reel:sha-<previous>` in the compose file and run `up -d`. A build older than
+  `c03f32b` also needs the database from before migrations 0017 and 0018: stop Reel, restore
+  `/root/reel-backups/reel.db.pre-150-20261124T001917Z` (CT 113, root-only) over `/opt/appdata/reel/reel.db`, remove
+  the `-wal` and `-shm` files, and keep the owner uid and `0600`. Anything written since that backup is lost.
 
 ### Ticket flow (GitHub Project #1)
 
@@ -109,7 +113,8 @@ Backlog → To do → Implementing → Reviewing → **Deployed** (automatic, `d
 | Var | Value | Purpose |
 |---|---|---|
 | `REEL_DATA_DIR` | `/appdata` | DB, caches, signing key |
-| `REEL_PUBLIC_URL` | `https://reel.rafikii.co` | Invite links; never derive URLs from Host |
+| `REEL_PUBLIC_URL` | `https://reel.rafikii.co` | Invite links; never derive URLs from Host. Also the passkey relying party and the provider redirect URI: **changing the hostname invalidates every passkey** |
+| `REEL_REQUIRE_ADMIN_2FA` | unset (on) | An admin needs a passkey or authenticator app for admin actions (#146). `false`/`0` is the recovery lever if an admin can't enroll; it doesn't remove a factor from login |
 | `REEL_CAST_BASE_URL` | `http://10.10.10.207:8420` | Absolute LAN URLs for TVs/Chromecast |
 | `REEL_ALLOW_DIRECT_LIVE` | unset (`false`) | Lets devices play Live TV straight from the provider (opt-in per device). Turning it on sends the provider login (it is part of the stream URL) to those devices. On CT 113 it goes in `/root/reel/.env` (the compose loads it with `env_file`) |
 | `REEL_MAX_TRANSCODES` / `REEL_MAX_USER_TRANSCODES` | `3` / `2` | Transcode caps, shared by playback and live TV: a live channel whose video is re-encoded counts once per viewer for the user and once per channel server-wide |
@@ -128,6 +133,32 @@ Backlog → To do → Implementing → Reviewing → **Deployed** (automatic, `d
 | Container limits | `mem_limit 3g`, `pids_limit 512`, `cpus 3.0`, `read_only`, `cap_drop ALL`, `no-new-privileges` | |
 
 ## Runbooks
+
+**First deploy of the sign-in epic (#150)**
+Admin actions turn off until the admin account has a second factor, so do this right after deploying, from the LAN or
+Tailscale: Settings → Account → add a passkey or authenticator app, and store the recovery codes in Proton Pass. Packaged
+TV apps need a rebuild before they can use the phone code or sign in to an account with a second factor. Sessions they
+already hold keep working.
+
+**Someone lost their second factor**
+Use a recovery code. Otherwise an admin uses Settings → Users & invites → Reset 2FA, which removes their factors and signs
+them out. If the **only admin** is locked out, stop Reel, back up the database, and on CT 113 remove the factors with
+`DELETE FROM user_totp WHERE user_id = 1; DELETE FROM user_passkeys WHERE user_id = 1; DELETE FROM user_recovery_codes WHERE user_id = 1;`
+(check the id in `users` first), start Reel, sign in with the password and enroll again.
+
+**Passwordless sign-in (#287)**
+The live provider is WorkOS Production (issuer `https://therapeutic-terrain-48.authkit.app`, Connect app *Reel*); its client
+secret is only in Reel's database, encrypted. Each person links it in Settings → Account, which deletes their stored
+password. **An admin's password is deleted only after they also add a Reel passkey**: that passkey is the way in if WorkOS is
+down (login page → *Emergency passkey*, LAN or Tailscale only). Keep it. If an admin loses both, follow *Someone lost their
+second factor*, and restore a password from the pre-deploy database backup or by resetting `password_hash` with the server
+stopped.
+
+**Add Google or Microsoft sign-in (#149)**
+In the provider's console, create a web OAuth client with the redirect URI `https://reel.rafikii.co/api/v1/auth/oidc/callback`.
+Google: keep the app in **testing** with the household listed as test users. Microsoft: choose **personal Microsoft accounts
+only**. Then Settings → Sign-in providers → add it from the LAN or Tailscale, and have each person link it in Settings →
+Account. The client secret is stored encrypted and can't be read back.
 
 **Logs**
 ```sh
@@ -200,6 +231,18 @@ the container (`sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' /config/config.xml`)
 - None. The repo is public, and a self-hosted runner would let fork PRs run code on the homelab, so don't
   register one (the CT 116 runner was removed and its container destroyed in #268). GitHub → Settings → Actions → Runners
   should stay empty.
+
+**Branch protection (`main`)**
+- The active ruleset *Protect main* (id `27947506`, GitHub → Settings → Rules → Rulesets) requires a PR and
+  passing `changes`, `server`, `clients`, `android-web` and `docs` checks from GitHub Actions. It blocks
+  force-pushes and deletion, requires no approval, and has no bypass actors, so it also applies to the owner.
+- Jobs skipped by their `if:` count as passing, so a docs-only PR can still merge. Renaming or removing a required
+  job leaves PRs waiting for a check that never arrives, so update the ruleset in the same change.
+- If Actions is down and a merge can't wait, the owner can turn the ruleset off and back on:
+  ```sh
+  gh api -X PUT repos/mrafik92/reel/rulesets/27947506 -f enforcement=disabled
+  gh api -X PUT repos/mrafik92/reel/rulesets/27947506 -f enforcement=active
+  ```
 
 **Bootstrap a fresh instance**
 `deploy/ct113/bootstrap.py` (on minix) creates the admin, libraries, Arr servers and webhooks. It's idempotent and never prints keys.

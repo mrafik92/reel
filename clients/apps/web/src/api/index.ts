@@ -8,6 +8,8 @@ import type {
   DiscoverList, DiscoverPage, DownloadClient, HwAccelStatus, InviteDto, InviteInfo, LoginResponse, Me, MediaType,
   NotificationTarget, PatchUser, ProgressDto, RequestDto, RequestState, SetupStatus, UpdateArrServer, UserDto,
   DiscoverDetailWithCast, PersonDetail, Reviews, DownloadItem, GenreCount, LibraryFilters, BrowseLane, SearchAll,
+  CreateOidcProvider, LinkedIdentity, LoginOptions, OidcProviderAdmin, OidcProviderPublic, PatchOidcProvider,
+  AccountSecurity, DeviceLinkInfo, DevicePairing, DeviceSession, MfaChallenge, MfaLogin, RecoveryCodes, TotpEnrollment,
 } from "./types";
 
 export { ApiError, isAborted, getToken, setToken, onUnauthorized } from "./http";
@@ -20,7 +22,13 @@ export interface Credentials {
   device_id?: string;
   device_name?: string;
   client?: string;
+  /** Link a provider sign-in while accepting an invite (#149). */
+  oidc_ticket?: string;
+  oidc_binding?: string;
 }
+
+/** An invite accepted through a provider stores no password (#287). */
+export type InviteCredentials = Omit<Credentials, "password"> & { password?: string };
 
 /** Typed access to every endpoint the web client uses. HTTP by default, fixtures with `?mock=1`. */
 export interface Api {
@@ -29,11 +37,45 @@ export interface Api {
   // Auth
   setupStatus(): Promise<SetupStatus>;
   setup(c: Credentials): Promise<LoginResponse>;
-  login(c: Credentials): Promise<LoginResponse>;
+  /** A challenge instead of a session when the account has a second factor. */
+  login(c: Credentials): Promise<LoginResponse | MfaChallenge>;
+  loginMfa(b: MfaLogin): Promise<LoginResponse>;
+  loginMfaPasskey(mfaToken: string): Promise<unknown>;
+  security(): Promise<AccountSecurity>;
+  totpStart(password: string): Promise<TotpEnrollment>;
+  totpConfirm(code: string): Promise<RecoveryCodes>;
+  totpRemove(password: string): Promise<void>;
+  newRecoveryCodes(password: string): Promise<RecoveryCodes>;
+  passkeyStart(password: string, name: string): Promise<unknown>;
+  passkeyFinish(credential: unknown): Promise<RecoveryCodes>;
+  passkeyRemove(id: number, password: string): Promise<void>;
+  changePassword(current: string, next: string): Promise<void>;
+  mySessions(): Promise<DeviceSession[]>;
+  revokeMySession(id: number): Promise<void>;
+  resetSecondFactor(userId: number): Promise<void>;
+  deviceStart(d: Omit<Credentials, "username" | "password">): Promise<DevicePairing>;
+  /** A session once approved, `{ status: "pending" }` until then. */
+  devicePoll(deviceCode: string): Promise<LoginResponse | { status: string }>;
+  linkLookup(userCode: string): Promise<DeviceLinkInfo>;
+  linkApprove(userCode: string): Promise<void>;
+  linkDeny(userCode: string): Promise<void>;
+  loginOptions(): Promise<LoginOptions>;
+  passkeyLogin(b: { username: string; device_id?: string; device_name?: string; client?: string }): Promise<{ mfa_token: string; options: unknown }>;
+  oidcProviders(): Promise<OidcProviderPublic[]>;
+  oidcStart(slug: string, b: { binding_hash: string; purpose: string; device_id?: string; device_name?: string; client?: string }): Promise<{ authorization_url: string }>;
+  oidcExchange(ticket: string, binding: string): Promise<LoginResponse | MfaChallenge>;
+  myIdentities(): Promise<LinkedIdentity[]>;
+  identityStart(slug: string, password: string, bindingHash: string): Promise<{ authorization_url: string }>;
+  identityComplete(ticket: string, binding: string): Promise<void>;
+  identityRemove(id: number, password: string): Promise<void>;
+  adminOidcProviders(): Promise<OidcProviderAdmin[]>;
+  adminCreateOidcProvider(b: CreateOidcProvider): Promise<OidcProviderAdmin>;
+  adminPatchOidcProvider(id: number, b: PatchOidcProvider): Promise<OidcProviderAdmin>;
+  adminDeleteOidcProvider(id: number): Promise<void>;
   logout(): Promise<void>;
   me(): Promise<Me>;
   inviteInfo(code: string): Promise<InviteInfo>;
-  acceptInvite(code: string, c: Credentials): Promise<LoginResponse>;
+  acceptInvite(code: string, c: InviteCredentials): Promise<LoginResponse>;
 
   // Library
   libraries(): Promise<Library[]>;
@@ -129,6 +171,38 @@ const httpApi: Api = {
   setupStatus: () => http.get("/setup", undefined, noAuth),
   setup: (c) => http.post("/setup", c, noAuth),
   login: (c) => http.post("/auth/login", c, noAuth),
+  loginMfa: (b) => http.post("/auth/login/mfa", b, noAuth),
+  loginMfaPasskey: (mfa_token) => http.post("/auth/login/mfa/passkey", { mfa_token }, noAuth),
+  security: () => http.get("/me/security"),
+  totpStart: (password) => http.post("/me/totp/start", { password }),
+  totpConfirm: (code) => http.post("/me/totp/confirm", { code }),
+  totpRemove: (password) => http.post("/me/totp/remove", { password }),
+  newRecoveryCodes: (password) => http.post("/me/recovery-codes", { password }),
+  passkeyStart: (password, name) => http.post("/me/passkeys/start", { password, name }),
+  passkeyFinish: (credential) => http.post("/me/passkeys/finish", { credential }),
+  passkeyRemove: (id, password) => http.post(`/me/passkeys/${id}/remove`, { password }),
+  changePassword: (current_password, new_password) => http.post("/me/password", { current_password, new_password }),
+  mySessions: () => http.get("/me/sessions"),
+  revokeMySession: (id) => http.del(`/me/sessions/${id}`),
+  resetSecondFactor: (id) => http.del(`/admin/users/${id}/second-factor`),
+  deviceStart: (d) => http.post("/auth/device/start", d, noAuth),
+  devicePoll: (device_code) => http.post("/auth/device/poll", { device_code }, noAuth),
+  linkLookup: (user_code) => http.post("/me/device-link/lookup", { user_code }),
+  linkApprove: (user_code) => http.post("/me/device-link/approve", { user_code }),
+  linkDeny: (user_code) => http.post("/me/device-link/deny", { user_code }),
+  loginOptions: () => http.get("/auth/options", undefined, noAuth),
+  passkeyLogin: (b) => http.post("/auth/login/passkey", b, noAuth),
+  oidcProviders: () => http.get("/auth/oidc/providers", undefined, noAuth),
+  oidcStart: (slug, b) => http.post(`/auth/oidc/${encodeURIComponent(slug)}/start`, b, noAuth),
+  oidcExchange: (ticket, binding) => http.post("/auth/oidc/exchange", { ticket, binding }, noAuth),
+  myIdentities: () => http.get("/me/identities"),
+  identityStart: (slug, password, binding_hash) => http.post(`/me/identities/${encodeURIComponent(slug)}/start`, { password, binding_hash }),
+  identityComplete: (ticket, binding) => http.post("/me/identities/complete", { ticket, binding }),
+  identityRemove: (id, password) => http.post(`/me/identities/${id}/remove`, { password }),
+  adminOidcProviders: () => http.get("/admin/oidc/providers"),
+  adminCreateOidcProvider: (b) => http.post("/admin/oidc/providers", b),
+  adminPatchOidcProvider: (id, b) => http.patch(`/admin/oidc/providers/${id}`, b),
+  adminDeleteOidcProvider: (id) => http.del(`/admin/oidc/providers/${id}`),
   logout: () => http.post("/auth/logout"),
   me: () => http.get("/me"),
   inviteInfo: (code) => http.get(`/auth/invite/${encodeURIComponent(code)}`, undefined, noAuth),

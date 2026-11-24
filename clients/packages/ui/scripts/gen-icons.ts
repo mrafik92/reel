@@ -8,9 +8,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 /** Tile colour of logo.svg (`--accent` in ui.css): painted behind the full-bleed and maskable icons. */
-const TILE = "#c2352d";
+const TILE = "#e50914";
 /** App background (`--bg` in ui.css): the webOS splash screen. */
-const BG = "#0b0909";
+const BG = "#141414";
 
 const clients = resolve(import.meta.dir, "../../..");
 const logo = readFileSync(resolve(import.meta.dir, "../assets/logo.svg"), "utf8").trim();

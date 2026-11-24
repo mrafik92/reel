@@ -38,7 +38,6 @@
   right: 0;
   bottom: 0;
   background:
-    radial-gradient(ellipse 55% 60% at 24% 52%, rgba(var(--accent-rgb), 0.09) 0%, rgba(var(--accent-rgb), 0) 70%),
     linear-gradient(90deg, rgba(var(--bg-rgb), 0.9) 0%, rgba(var(--bg-rgb), 0.62) 46%, rgba(var(--bg-rgb), 0.9) 100%),
     linear-gradient(0deg, var(--bg) 0%, rgba(var(--bg-rgb), 0) 45%);
 }
@@ -54,10 +53,10 @@
   display: inline-flex;
   align-items: center;
   padding: 0.6rem 0.9rem 0.6rem 0.85rem;
-  border: 1.5px solid rgba(var(--accent-hi-rgb), 0.42);
-  border-radius: 999px;
-  background: rgba(var(--accent-rgb), 0.07);
-  color: var(--accent-hi);
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius);
+  background: var(--glass-strong);
+  color: var(--ink);
   font: 700 0.95rem/1 var(--font-body);
   cursor: pointer;
   transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
@@ -127,7 +126,7 @@
   bottom: -2.2rem;
   height: 2.2rem;
   border-radius: 50%;
-  background: radial-gradient(ellipse at 50% 0%, rgba(var(--accent-rgb), 0.4) 0%, rgba(var(--accent-rgb), 0) 70%);
+  background: radial-gradient(ellipse at 50% 0%, rgba(var(--ink-rgb), 0.22) 0%, rgba(var(--ink-rgb), 0) 70%);
   opacity: 0.35;
   transition: opacity 900ms var(--ease);
 }
@@ -249,6 +248,36 @@
 .castview__controls .ptx {
   margin: 0 2rem 0.6rem -0.3rem;
 }
+/* The remote view is a page, not a picture: its transport keeps filled buttons (#293 changed the kit). */
+.castview__controls .ptx__play {
+  width: 4.6rem;
+  height: 4.6rem;
+  background: var(--ink);
+  color: var(--on-light);
+  font-size: 1.9rem;
+  box-shadow: 0 0.6rem 1.8rem rgba(0, 0, 0, 0.45);
+}
+.castview__controls .ptx__play:hover {
+  transform: scale(1.06);
+}
+.castview__controls .ptx__skip {
+  width: 3.4rem;
+  height: 3.4rem;
+  background: rgba(var(--ink-rgb), 0.06);
+  font-size: 1.85rem;
+}
+html[data-input="key"] .castview__controls .ptx__skip:focus {
+  background: var(--ink);
+}
+.castview__opts .ctl.is-active {
+  color: var(--accent-hi);
+}
+.castview__opts .ctl.is-active::after {
+  display: none;
+}
+html[data-input="key"] .castview__opts .ctl.is-active:focus {
+  color: var(--on-light);
+}
 .castview__opts {
   display: flex;
   align-items: center;
@@ -267,7 +296,7 @@
 .castview__stop:hover,
 .castview__stop:focus {
   background: var(--danger);
-  color: #1a0503;
+  color: var(--on-light);
 }
 
 .castview__error {
@@ -377,7 +406,7 @@
 .btn__tag {
   margin-left: 0.45rem;
   padding: 0.1rem 0.38rem;
-  border-radius: 99px;
+  border-radius: var(--radius-s);
   background: var(--ink-5);
   font: 700 0.62rem/1.2 var(--font-body);
   letter-spacing: 0.08em;
@@ -392,4 +421,10 @@
   margin: 1rem 0 0;
   font: 700 1.05rem/1.3 var(--font-body);
   color: var(--ink-2);
+}
+
+/* TV never blurs: the stretched art is enough. */
+html.tv .castview__bg > * {
+  -webkit-filter: none;
+  filter: none;
 }

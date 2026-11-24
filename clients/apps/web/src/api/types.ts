@@ -147,3 +147,106 @@ export interface LibraryFilters {
   max_runtime_min?: number;
   unwatched?: boolean;
 }
+
+// ---- second factor (#146) ----------------------------------------------------------------------
+/** `POST /auth/login` answers with this (202) when the account has a second factor. */
+export interface MfaChallenge {
+  mfa_token: string;
+  methods: string[];
+  expires_in_s: number;
+}
+export interface MfaLogin {
+  mfa_token: string;
+  code?: string;
+  recovery_code?: string;
+  passkey?: unknown;
+}
+export interface PasskeyInfo {
+  id: number;
+  name: string;
+  created_at: number;
+  last_used_at?: number | null;
+}
+export interface AccountSecurity {
+  totp: boolean;
+  passkeys: PasskeyInfo[];
+  recovery_codes_left: number;
+  passkeys_available: boolean;
+  must_enroll: boolean;
+}
+export interface TotpEnrollment {
+  secret: string;
+  otpauth_uri: string;
+}
+export interface RecoveryCodes {
+  recovery_codes?: string[] | null;
+}
+export interface DeviceSession {
+  id: number;
+  device_id?: string | null;
+  device_name?: string | null;
+  client?: string | null;
+  ip?: string | null;
+  last_seen: number;
+  expires_at?: number | null;
+  current: boolean;
+}
+
+// ---- TV sign-in by code (#147) ------------------------------------------------------------------
+export interface DevicePairing {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete: string;
+  expires_in_s: number;
+  interval_s: number;
+}
+export interface DeviceLinkInfo {
+  device_name?: string | null;
+  client?: string | null;
+  ip?: string | null;
+  expires_in_s: number;
+}
+
+// ---- provider sign-in (#149) --------------------------------------------------------------------
+export interface OidcProviderPublic {
+  slug: string;
+  name: string;
+}
+export interface OidcProviderAdmin extends OidcProviderPublic {
+  id: number;
+  issuer: string;
+  client_id: string;
+  secret_set: boolean;
+  enabled: boolean;
+  redirect_uri?: string | null;
+}
+export interface CreateOidcProvider {
+  preset: string;
+  name?: string;
+  issuer?: string;
+  client_id: string;
+  client_secret: string;
+}
+export interface PatchOidcProvider {
+  name?: string;
+  client_id?: string;
+  client_secret?: string;
+  enabled?: boolean;
+}
+export interface LinkedIdentity {
+  id: number;
+  provider: string;
+  label?: string | null;
+  created_at: number;
+  last_used_at?: number | null;
+}
+
+// ---- passwordless sign-in (#287) ----------------------------------------------------------------
+export interface LoginOptions {
+  providers: OidcProviderPublic[];
+  /** Some account still signs in with a password, or no provider is configured. */
+  password_login: boolean;
+  /** Emergency passkey sign-in is available from this address (LAN or Tailscale). */
+  passkey_login: boolean;
+}

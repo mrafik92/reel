@@ -97,23 +97,32 @@ pub struct User {
     pub created_at: i64,
     pub limits: Limits,
     pub perms: Permissions,
+    /// This request may use admin powers. Always `false` when loaded from the database: the API
+    /// sets it only for a bearer session on the LAN or Tailscale (#127), so a code path that
+    /// forgets the check gets a regular user.
+    pub admin_powers: bool,
 }
 
 impl User {
+    /// Holds admin powers on this request (admin role, from an admin network).
     pub fn is_admin(&self) -> bool {
+        self.has_admin_role() && self.admin_powers
+    }
+    /// The account's stored role, wherever the request comes from.
+    pub fn has_admin_role(&self) -> bool {
         self.role == Role::Admin
     }
     pub fn can_iptv(&self) -> bool {
-        self.is_admin() || self.perms.iptv_access
+        self.has_admin_role() || self.perms.iptv_access
     }
     pub fn can_vod(&self) -> bool {
-        self.is_admin() || self.perms.vod_access
+        self.has_admin_role() || self.perms.vod_access
     }
     pub fn can_request(&self) -> bool {
-        self.is_admin() || self.perms.can_request
+        self.has_admin_role() || self.perms.can_request
     }
     pub fn can_cast(&self) -> bool {
-        self.is_admin() || self.perms.can_cast
+        self.has_admin_role() || self.perms.can_cast
     }
 }
 

@@ -40,6 +40,15 @@ export interface ItemSummary {
   rating?: number | null;
   runtime_s?: number | null;
   genres?: string[] | null;
+  /** The series of an episode in Continue watching: its title and art, while `id` stays the episode to resume. */
+  series?: SeriesRef | null;
+}
+
+export interface SeriesRef {
+  id: Id;
+  title: string;
+  poster_url?: string | null;
+  backdrop_url?: string | null;
 }
 
 export interface CastMember {

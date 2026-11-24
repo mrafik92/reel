@@ -1,12 +1,14 @@
 //! Auth: Argon2id passwords, opaque hashed session tokens, invites, permissions, rate limiting
-//! and signed short-lived media URLs (SPEC §8). 2FA/OIDC come later.
+//! a second factor (TOTP, passkeys, recovery codes) and signed short-lived media URLs (SPEC §8).
 
 mod error;
 mod model;
+pub mod oidc;
 pub mod password;
 pub mod ratelimit;
 mod service;
 pub mod signing;
+pub mod totp;
 
 pub use error::{AuthError, AuthResult};
 pub use model::{
@@ -14,5 +16,9 @@ pub use model::{
     UserPatch,
 };
 pub use ratelimit::{LimiterConfig, RateLimiter};
-pub use service::{AuthOptions, AuthService, LoginOutcome, ip_bucket, load_or_create_signing_key};
+pub use service::{
+    AuthOptions, AuthService, DevicePairing, LinkedIdentity, LoginOutcome, MfaChallenge, MfaProof,
+    MfaStatus, NewOidcProvider, OidcProvider, OidcProviderPatch, PairingInfo, PasskeyInfo,
+    TotpEnrollment, VerifiedIdentity, ip_bucket, load_or_create_signing_key,
+};
 pub use signing::UrlSigner;

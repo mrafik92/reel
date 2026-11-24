@@ -1,6 +1,7 @@
 import { createSignal, onCleanup, Show, type JSX } from "solid-js";
 import { formatClock, Icon, type IconName } from "@reel/ui";
 import { TV } from "../../lib/mode";
+import { volumeIcon } from "../../lib/playerChrome";
 import "../../styles/player.css";
 
 /**
@@ -232,11 +233,20 @@ export function Scrubber(props: {
   );
 }
 
-/** Round icon button; its name (and current value) slides in as a label on hover / focus. */
+/**
+ * Round icon button of a fixed width; its name slides in as a label on hover / focus. The current
+ * choice goes in that label (`hint`), not next to the icon, so a row of these never changes width.
+ */
 export function CtlButton(props: {
   icon: IconName;
   label: string;
-  /** Compact current choice shown next to the icon, e.g. "EN · 5.1". */
+  /** Current choice, shown after the name in the label: "Audio & subtitles · English SDH". */
+  hint?: string;
+  /** Words next to the icon, for rows that ask for them (Next episode, the phone's action row). */
+  text?: string;
+  /** A small outlined badge instead of the icon, e.g. the size that is playing: "1080p". */
+  badge?: string;
+  /** Compact current choice shown next to the icon, e.g. "EN · 5.1" (cast remote). */
   value?: string;
   /** Small marker after the value (e.g. "Auto"). */
   tag?: string;
@@ -252,25 +262,33 @@ export function CtlButton(props: {
       type="button"
       ref={props.ref}
       class={"ctl" + (props.class ? " " + props.class : "")}
-      classList={{ "has-value": !!props.value, "is-active": !!props.active }}
-      aria-label={props.value ? `${props.label}: ${props.value}` : props.label}
+      classList={{ "has-value": !!props.value, "has-text": !!props.text, "has-badge": !!props.badge, "is-active": !!props.active }}
+      aria-label={props.hint || props.value ? `${props.label}: ${props.hint || props.value}` : props.label}
       aria-pressed={props.pressed === undefined ? undefined : props.pressed}
       disabled={props.disabled}
       onClick={() => props.onClick()}
     >
-      <Icon name={props.icon} />
+      <Show when={props.badge} fallback={<Icon name={props.icon} />}>
+        <span class="ctl__badge">{props.badge}</span>
+      </Show>
+      <Show when={props.text}>
+        <span class="ctl__text">{props.text}</span>
+      </Show>
       <Show when={props.value}>
         <span class="ctl__val">
           {props.value}
           <Show when={props.tag}><i class="ctl__tag">{props.tag}</i></Show>
         </span>
       </Show>
-      <span class="ctl__tip" aria-hidden="true">{props.label}</span>
+      <span class="ctl__tip" aria-hidden="true">
+        {props.label}
+        <Show when={props.hint}><small>{props.hint}</small></Show>
+      </span>
     </button>
   );
 }
 
-/** −10 · play/pause · +30 (· next): the centred transport. */
+/** −10 · play/pause · +30: the centred transport. */
 export function Transport(props: {
   playing: boolean;
   onToggle: () => void;
@@ -278,7 +296,6 @@ export function Transport(props: {
   onForward?: () => void;
   back?: number;
   forward?: number;
-  next?: { label: string; onClick: () => void };
   playRef?: (el: HTMLButtonElement) => void;
   autofocus?: boolean;
 }): JSX.Element {
@@ -310,19 +327,11 @@ export function Transport(props: {
           <span class="ctl__tip" aria-hidden="true">Forward {props.forward ?? 30}s</span>
         </button>
       </Show>
-      <Show when={props.next}>
-        {(n) => (
-          <button type="button" class="ptx__skip ptx__next" aria-label={n().label} onClick={() => n().onClick()}>
-            <Icon name="next" />
-            <span class="ctl__tip" aria-hidden="true">{n().label}</span>
-          </button>
-        )}
-      </Show>
     </div>
   );
 }
 
-/** Mute + slider (0..1). The slider opens on hover / focus; ←/→ step 5 %. */
+/** Mute + slider (0..1). The icon follows the level; the slider opens on hover / focus; ←/→ step 5 %. */
 export function Volume(props: {
   value: number | null;
   muted?: boolean;
@@ -332,7 +341,6 @@ export function Volume(props: {
 }): JSX.Element {
   let track!: HTMLDivElement;
   const level = () => (props.muted ? 0 : props.value ?? 0);
-  const icon = (): IconName => (level() === 0 ? "mute" : "volume");
   const set = (v: number) => props.onChange(Math.max(0, Math.min(1, Math.round(v * 20) / 20)));
   const fromPointer = (e: PointerEvent) => {
     const r = track.getBoundingClientRect();
@@ -341,7 +349,7 @@ export function Volume(props: {
   return (
     <div class="pvol" classList={{ "is-unknown": props.value == null }}>
       <button type="button" class="ctl" aria-label={level() === 0 ? "Unmute" : "Mute"} onClick={() => props.onMute()}>
-        <Icon name={icon()} />
+        <Icon name={volumeIcon(level())} />
         <span class="ctl__tip" aria-hidden="true">{level() === 0 ? "Unmute" : "Mute"} (M)</span>
       </button>
       <div

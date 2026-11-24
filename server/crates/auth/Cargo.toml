@@ -14,6 +14,7 @@ argon2 = "0.5"
 base64 = "0.22"
 hmac = "0.12"
 rand = "0.8"
+ring = "0.17"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
@@ -21,6 +22,8 @@ sqlx.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 tracing.workspace = true
+# 0.6 needs rustc 1.89; CI is pinned to 1.86.
+webauthn-rs = "=0.5.4"
 
 [dev-dependencies]
 tempfile = "3"

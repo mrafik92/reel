@@ -51,7 +51,7 @@ ARG TARGETARCH
 RUN set -eux; \
     sed -i 's/^Components: main$/Components: main non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources; \
     apt-get update; \
-    pkgs="ffmpeg ca-certificates curl tzdata libva-drm2 vainfo mesa-va-drivers"; \
+    pkgs="ffmpeg ca-certificates curl libssl3 tzdata libva-drm2 vainfo mesa-va-drivers"; \
     if [ "$TARGETARCH" = "amd64" ]; then \
         pkgs="$pkgs intel-media-va-driver-non-free i965-va-driver"; \
     fi; \

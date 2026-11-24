@@ -158,7 +158,7 @@ html[data-input="key"] .review:focus {
   align-items: center;
   justify-content: center;
   background: var(--bg-3);
-  font: 750 1rem/1 var(--font-display);
+  font: 700 1rem/1 var(--font-display);
   color: var(--ink-2);
 }
 .review__who {
@@ -181,7 +181,7 @@ html[data-input="key"] .review:focus {
   align-items: center;
   flex-shrink: 0;
   margin-left: 0.6rem;
-  font: 750 1.05rem/1 var(--font-display);
+  font: 700 1.05rem/1 var(--font-display);
 }
 .review__rating .icon {
   margin-right: 0.3rem;
@@ -229,7 +229,7 @@ html[data-input="key"] .review:focus {
   align-items: center;
   height: 2.3rem;
   padding: 0 0.6rem 0 0.9rem;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--ink-5);
   color: var(--ink);
   font-weight: 700;
@@ -314,7 +314,6 @@ html[data-input="key"] .review:focus {
   height: 19.5rem;
   margin-right: 2.5rem;
   border-radius: var(--radius-l);
-  box-shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.5);
 }
 .person-head__initials {
   position: absolute;
@@ -325,7 +324,7 @@ html[data-input="key"] .review:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  font: 780 3.5rem/1 var(--font-display);
+  font: 800 3.5rem/1 var(--font-display);
   color: var(--ink-3);
 }
 .person-head__body {
@@ -334,9 +333,9 @@ html[data-input="key"] .review:focus {
   padding-top: 0.6rem;
 }
 .person-head__name {
-  margin: 0.5rem 0 0.8rem;
-  font: 780 4.4rem/0.92 var(--font-display);
-  letter-spacing: -0.04em;
+  margin: 0.4rem 0 0.6rem;
+  font: 800 2.2rem/1.1 var(--font-display);
+  letter-spacing: -0.02em;
 }
 .person-head__bio {
   max-width: 48rem;
@@ -373,11 +372,10 @@ html[data-input="key"] .review:focus {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.6rem 0.8rem;
-  margin-bottom: 0.6rem;
 }
+.person-credits__filters > *,
 .person-credits__filters .chip {
-  margin: 0;
+  margin: 0 0.8rem 0.6rem 0;
 }
 .segmented__count {
   margin-left: 0.35rem;
@@ -396,21 +394,19 @@ html[data-input="key"] .review:focus {
   list-style: none;
 }
 .dl-row {
-  margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--line);
 }
 .dl-row__inner {
   display: flex;
   align-items: center;
-  padding: 0.85rem 1.1rem 0.85rem 0.85rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-l);
-  background: rgba(var(--bg-1-rgb), 0.8);
+  padding: 0.75rem 0.5rem;
+  border-radius: var(--radius);
   color: inherit;
   text-decoration: none;
   transition: background-color var(--t-fast) var(--ease);
 }
 a.dl-row__inner:hover {
-  background: rgba(var(--bg-2-rgb), 0.95);
+  background: var(--fill-row);
 }
 html[data-input="key"] .dl-row__inner:focus {
   box-shadow: var(--focus-ring);
@@ -439,7 +435,7 @@ html[data-input="key"] .dl-row__inner:focus {
   flex-direction: column;
 }
 .dl-row__title {
-  font: 750 1.15rem/1.2 var(--font-display);
+  font: 700 1.15rem/1.2 var(--font-display);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -518,7 +514,7 @@ html[data-input="key"] .dl-row__inner:focus {
   flex-direction: column;
 }
 .dl-group__title strong {
-  font: 750 1.4rem/1.2 var(--font-display);
+  font: 700 1.4rem/1.2 var(--font-display);
 }
 .dl-group__title span {
   color: var(--ink-3);
@@ -531,43 +527,9 @@ html[data-input="key"] .dl-row__inner:focus {
   padding-left: 4.5rem;
 }
 
-/* ---------- Nav indicator ------------------------------------------------ */
-.rail__ring {
-  position: absolute;
-  top: 50%;
-  left: 0.42rem;
-  width: 2.45rem;
-  height: 2.45rem;
-  margin-top: -1.225rem;
-  pointer-events: none;
-}
-.rail__ring-track {
-  fill: none;
-  stroke: var(--ink-5);
-  stroke-width: 3.5;
-}
-.rail__ring-arc {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 3.5;
-  stroke-linecap: round;
-  transition: stroke-dashoffset 900ms linear;
-}
-.rail__ring--stalled .rail__ring-arc { stroke: var(--warn); }
-html[data-input="key"] .rail__link:focus .rail__ring-track,
-html.tv .rail__link:focus .rail__ring-track { stroke: rgba(var(--bg-rgb), 0.15); }
-html[data-input="key"] .rail__link:focus .rail__ring-arc,
-html.tv .rail__link:focus .rail__ring-arc { stroke: var(--bg); }
-.rail__label small,
-.rail__sub {
-  display: block;
-  margin-top: 0.2rem;
-  font: 400 0.72rem/1 var(--font-body);
-  opacity: 0.7;
-}
 .rail__count--bad {
   background: var(--danger);
-  color: #1a0503;
+  color: var(--on-light);
 }
 
 @media (max-width: 960px) {
@@ -580,7 +542,7 @@ html.tv .rail__link:focus .rail__ring-arc { stroke: var(--bg); }
     margin: 0 0 1.4rem;
   }
   .person-head__name {
-    font-size: 2.8rem;
+    font-size: 1.9rem;
   }
   .dl-list--nested {
     padding-left: 0;
@@ -593,19 +555,6 @@ html.tv .rail__link:focus .rail__ring-arc { stroke: var(--bg); }
 /* Grid items must not grow to their nowrap caption's width (overlapping tiles). */
 .results-grid > * {
   min-width: 0;
-}
-/* TV: eight nav entries + footer must fit 1080p without clipping. */
-html.tv .rail__brand {
-  margin-bottom: 1.6rem;
-}
-html.tv .rail__list li + li {
-  margin-top: 0.25rem;
-}
-html.tv .rail__foot .rail__link {
-  height: 2.9rem;
-}
-html.tv .rail__badge {
-  margin-top: 0.6rem;
 }
 /* `.results-grid .card {width:auto}` would shrink-wrap the <button> to its caption. */
 .results-grid .dcard__poster {

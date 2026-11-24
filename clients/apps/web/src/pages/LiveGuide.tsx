@@ -9,7 +9,7 @@ import { ErrorState } from "../components/States";
 import { ChannelLogo } from "../components/live/ChannelLogo";
 import { Filters } from "../components/live/Filters";
 import {
-  channelById, channelByNumber, channelsError, clock, filter, filterKey, filteredList, loadAll, loadState, fmtDay, fmtRange, fmtTime, loadChannels, nowSec, progressOf, setFilter, getBrowsingChannel, setBrowsingChannel,
+  channelById, channelByNumber, channelsError, clock, filter, filterKey, filteredList, loadAll, loadState, fmtDay, fmtRange, fmtTime, loadChannels, nowSec, progressOf, setFilter,
 } from "../components/live/store";
 
 // Geometry (rem) — converted to px with the live root font size (TV scales rem with the viewport).
@@ -350,7 +350,6 @@ function Grid(): JSX.Element {
     if (need > span()) setSpan(need);
     ensureVisible(c, row, lateral);
     setFocused(c);
-    setBrowsingChannel(c.ch);
     const el = scroller.querySelector<HTMLElement>(`[data-fid="${cssEsc(c.key)}"]`);
     if (el) el.focus({ preventScroll: true });
     else requestAnimationFrame(() => scroller.querySelector<HTMLElement>(`[data-fid="${cssEsc(c.key)}"]`)?.focus({ preventScroll: true }));
@@ -489,7 +488,7 @@ function Grid(): JSX.Element {
       setPx(rootPx());
       scroller.scrollLeft = (Math.floor(nowSec() / HALF) * HALF - origin) * pps();
       measure();
-      focusRowAt(rowIndex().get(getBrowsingChannel() ?? -1) ?? 0, nowSec());
+      focusRowAt(0, nowSec());
     };
     requestAnimationFrame(place);
     const onResize = () => {
@@ -560,13 +559,13 @@ function Grid(): JSX.Element {
           <p class="eyebrow eyebrow--accent">Live TV</p>
           <h1 class="live__title">Guide</h1>
         </div>
+        <Filters class="guide__filters" label={false} />
         <div class="guide__actions">
           <button type="button" class="btn btn--sm" onClick={goNow}><Icon name="clock" /> <span>Now</span></button>
           <a class="btn btn--sm" href={href("/live")}><Icon name="live" /> <span>Channels</span></a>
         </div>
       </header>
-      <Filters class="guide__filters" label={false} />
-      <Preview cell={focused()} />
+      <Preview cell={focused()} onWatch={watch} />
 
       <div
         ref={scroller}
@@ -614,7 +613,6 @@ function Grid(): JSX.Element {
                 onOpen={setDetail}
                 onFocusCell={(c) => {
                   setFocused(c);
-                  setBrowsingChannel(c.ch);
                   if (!(c.start <= cursorT && c.stop > cursorT)) cursorT = Math.max(c.start, timeRange()[0]);
                 }}
               />
@@ -755,7 +753,7 @@ function GuideRow(props: {
 }
 
 /** The strip above the grid describing the focused programme. */
-function Preview(props: { cell?: Cell }): JSX.Element {
+function Preview(props: { cell?: Cell; onWatch: (ch: number) => void }): JSX.Element {
   const ch = () => (props.cell ? channelById(props.cell.ch) : undefined);
   return (
     <div class="guide__preview" aria-live="polite">
@@ -774,6 +772,10 @@ function Preview(props: { cell?: Cell }): JSX.Element {
         </div>
         <Show when={props.cell!.start <= clock() && props.cell!.stop > clock()}>
           <span class="guide__onnow"><i /> On now</span>
+          {/* Pointer only: with the D-pad, OK on the cell opens the details, which have Watch. */}
+          <button type="button" class="btn btn--primary btn--sm" tabindex="-1" data-nav-skip onClick={() => props.onWatch(props.cell!.ch)}>
+            <Icon name="play" /> <span>Watch</span>
+          </button>
         </Show>
       </Show>
     </div>

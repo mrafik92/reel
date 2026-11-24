@@ -5,4 +5,8 @@ ignore = [
   # though it is disabled (rust-lang/cargo#10801). Reel builds sqlx with SQLite only, and CI fails if
   # sqlx-mysql or rsa ever enter the build graph. sqlx 0.9 drops the entry but needs rustc 1.94.
   "RUSTSEC-2023-0071",
+  # time 0.3.45 (stack exhaustion when *parsing* RFC 2822). The fix, 0.3.47, needs rustc 1.88 and CI is
+  # pinned to 1.86. Only webauthn-rs's certificate parsers depend on time here: asn1-rs doesn't use its
+  # parsers and x509-parser only *formats* RFC 2822 (src/time.rs). Remove when the compiler moves.
+  "RUSTSEC-2026-0009",
 ]

@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, type JSX } from "solid-js";
 import { useNavigate, useSearchParams } from "@solidjs/router";
-import { focusElement, Icon, onBack, onRemoteKey, SheetClose } from "@reel/ui";
+import { focusElement, Icon, mediaUrl, onBack, onRemoteKey, SheetClose } from "@reel/ui";
+import { useAmbientArt } from "../lib/ambient";
 import "../styles/live.css";
 import { iptv, type IptvChannel } from "../api/iptv";
 import { href } from "../lib/mode";
@@ -8,17 +9,20 @@ import { isAdmin } from "../lib/auth";
 import { toast } from "../lib/toast";
 import { ErrorState } from "../components/States";
 import { ChannelList, type ChannelListApi } from "../components/live/ChannelList";
+import { ChannelRail } from "../components/live/ChannelRail";
 import { ChannelLogo } from "../components/live/ChannelLogo";
 import { NowPlaying, NumberEntry, ZapStats } from "../components/live/Overlays";
-import { ChannelSearch, GroupPicker } from "../components/live/Filters";
+import { ChannelSearch, Filters } from "../components/live/Filters";
 import { createTuner, forgetSession, ownSession, type TuneError } from "../components/live/tuner";
 import {
   allChannels, channelById, channelByNumber, channelsError, current, favourites, filter, filtered, filterLabel, fmtRange, fmtTime,
   lastChannel, loadAll, loadChannels, loadState, query, rememberChannel, setQuery, toggleFavorite, nowSec, clock, ensureNow, filterKey,
-  totalChannels, noteWatched, nowNext, progressOf, getBrowsingChannel, setBrowsingChannel, setFilter,
+  totalChannels, noteWatched, nowNext, progressOf,
 } from "../components/live/store";
 import { currentUser } from "../lib/auth";
 import { createTapToggle } from "../lib/tap";
+import { createSwipe } from "../lib/swipe";
+import { TV } from "../lib/mode";
 
 const STATS_KEY = "reel.live.stats";
 const ZAP_DEBOUNCE = 320;
@@ -67,7 +71,6 @@ function Watch(): JSX.Element {
   const tuner = createTuner(() => video);
   const [tunedCh, setTunedCh] = createSignal<IptvChannel>();
   const [numWait, setNumWait] = createSignal(false);
-  const [focusedChannel, setFocusedChannel] = createSignal<number | undefined>(getBrowsingChannel());
 
   const tuned = () => channelById(tuner.channelId()) ?? tunedCh();
   /**
@@ -78,6 +81,8 @@ function Watch(): JSX.Element {
   const idle = () => tuner.phase() === "idle" && !pending();
   /** What the overlays describe: the zap target while it's pending, else the tuned channel. */
   const shown = () => pending() ?? tuned();
+  // Colour behind the hero: the channel's logo, stretched (no blur filter). Purely decorative.
+  const ambient = useAmbientArt(() => heroCh()?.logo_url);
   // Tizen's AVPlay draws on a full-screen plane behind the page: no windowed preview there.
   const isFull = () => full() || (tuner.nativePlane() && tuner.phase() !== "idle");
   /** What's in the side list: search results or the current group / favourites. */
@@ -137,10 +142,7 @@ function Watch(): JSX.Element {
 
   const pick = (c: IptvChannel) => {
     if (c.id === tuner.channelId() && tuner.phase() !== "error") enterFull();
-    else {
-      tuneNow(c);
-      enterFull();
-    }
+    else tuneNow(c);
   };
 
   // ---- number entry ----------------------------------------------------------------
@@ -200,7 +202,7 @@ function Watch(): JSX.Element {
     setMini(false);
     setOsd(false);
     if (tuner.nativePlane()) tuner.stop();
-    const id = focusedChannel() ?? tuner.channelId();
+    const id = tuner.channelId();
     requestAnimationFrame(() => id != null && listApi?.reveal(id, true));
   };
   // Where focus goes back to when the mini guide closes: the "Channel list" button when it
@@ -261,7 +263,11 @@ function Watch(): JSX.Element {
       requestAnimationFrame(() => {
         const a = document.activeElement;
         if (isFull() || (a && a !== document.body && a.tagName !== "MAIN")) return;
-        const id = focusedChannel() ?? tuner.channelId() ?? tunedCh()?.id;
+        if (idle()) {
+          const w = document.querySelector<HTMLElement>(".live__watch");
+          if (w) return w.focus({ preventScroll: true });
+        }
+        const id = tuner.channelId() ?? tunedCh()?.id;
         listApi?.reveal(id != null && l.some((c) => c.id === id) ? id : l[0]!.id, true);
       }),
     );
@@ -281,7 +287,6 @@ function Watch(): JSX.Element {
   // ---- keys ------------------------------------------------------------------------------
   onMount(() => {
     const offKeys = onRemoteKey((e) => {
-      if (document.querySelector("[data-nav-trap]") && !mini()) return false;
       const k = e.key;
       if (k === "digit") {
         pushDigit(e.digit ?? 0);
@@ -317,7 +322,7 @@ function Watch(): JSX.Element {
         case "right": showOsd(8000); return true;
         case "enter":
           // With an error card up, OK goes to its buttons.
-          if (tuner.error() || document.activeElement?.closest("button, a")) return false;
+          if (tuner.error()) return false;
           openMini();
           return true;
         case "stop": exitFull(); return true;
@@ -347,7 +352,6 @@ function Watch(): JSX.Element {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
-      if (t?.closest("[data-nav-trap]")) return;
       if (e.key === "f" || e.key === "F") (isFull() ? exitFull() : enterFull());
       else if (e.key === "i" || e.key === "I") toggleStats();
       else if (e.key === "g" || e.key === "G") navigate("/live/guide");
@@ -411,6 +415,58 @@ function Watch(): JSX.Element {
     hide: () => (isFull() ? setOsd(false) : activate()),
   });
 
+  // Phones: a vertical swipe on the full-screen picture zaps like Channel Up/Down (#291). Touch
+  // Events only, so mouse, keyboard and D-pad are unchanged. Off on TV, with the mini guide or any
+  // sheet/dialog up (they scroll as usual), and while the video is in Picture-in-Picture.
+  const swipe = createSwipe();
+  const swipeOn = () =>
+    !TV && isFull() && !mini() && !document.pictureInPictureElement && !document.querySelector("[data-nav-trap]");
+  onMount(() => {
+    // A finger back on the glass while a zap is pending is probably the next swipe: hold the
+    // tune until it lifts, so a run of swipes tunes only the last channel even when the viewer
+    // is slower than ZAP_DEBOUNCE between them.
+    let held = false;
+    const release = () => {
+      if (!held) return;
+      held = false;
+      const c = pending();
+      if (c) zapTimer = setTimeout(() => tuneNow(c), ZAP_DEBOUNCE);
+    };
+    const onStart = (e: TouchEvent) => {
+      if (!swipeOn()) return swipe.cancel();
+      swipe.start(e.touches, Date.now());
+      if (pending() && zapTimer && !held) {
+        clearTimeout(zapTimer);
+        held = true;
+      }
+    };
+    const onMove = (e: TouchEvent) => swipe.move(e.touches);
+    const onEnd = (e: TouchEvent) => {
+      const dir = swipe.end(e.changedTouches, e.touches.length, Date.now());
+      if (e.touches.length) return;
+      if (!dir || !swipeOn()) return release();
+      held = false;
+      // A swipe isn't a tap: no click (and no controls toggle) should follow it.
+      if (e.cancelable) e.preventDefault();
+      tap.cancel();
+      zap(dir);
+    };
+    const onCancel = () => {
+      swipe.cancel();
+      release();
+    };
+    screen.addEventListener("touchstart", onStart, { passive: true });
+    screen.addEventListener("touchmove", onMove, { passive: true });
+    screen.addEventListener("touchend", onEnd, { passive: false });
+    screen.addEventListener("touchcancel", onCancel, { passive: true });
+    onCleanup(() => {
+      screen.removeEventListener("touchstart", onStart);
+      screen.removeEventListener("touchmove", onMove);
+      screen.removeEventListener("touchend", onEnd);
+      screen.removeEventListener("touchcancel", onCancel);
+    });
+  });
+
   let lastMove = 0;
   const onPointer = () => {
     if (!isFull()) return;
@@ -422,12 +478,20 @@ function Watch(): JSX.Element {
 
   return (
     <div class="live live--rows" classList={{ "is-full": isFull(), "is-native": tuner.nativePlane(), "has-mini": mini() }}>
-      <section class="live__hero" inert={!isFull()} aria-hidden={!isFull()}>
+      <Show when={ambient()} keyed>
+        {(url) => (
+          <div class="live__ambient" aria-hidden="true">
+            <img src={mediaUrl(url)} alt="" decoding="async" onError={(e) => (e.currentTarget.style.display = "none")} />
+          </div>
+        )}
+      </Show>
+      <section class="live__hero">
         <div
           ref={screen}
           class="live__screen"
           classList={{ "is-osd": osd() || !!pending(), "is-error": !!tuner.error(), "is-limit": tuner.error()?.kind === "limit" }}
-          tabindex={-1}
+          tabindex={isFull() ? -1 : 0}
+          data-focusable={isFull() ? undefined : ""}
           aria-label={isFull() ? `Watching ${tuned()?.name ?? ""}` : "Watch full screen"}
           onPointerDown={tap.onPointerDown}
           onClick={tap.onClick}
@@ -497,8 +561,6 @@ function Watch(): JSX.Element {
                 <span><kbd>0–9</kbd> number</span>
               </span>
               <button type="button" class="iconbtn" aria-label="Channel list" onClick={openMini}><Icon name="layers" /></button>
-              <button type="button" class="iconbtn" aria-label={tuned()?.favorite ? "Remove from favourites" : "Add to favourites"} aria-pressed={!!tuned()?.favorite} onClick={() => void fav()}><Icon name="star" /></button>
-              <button type="button" class="iconbtn" aria-label="Zap timing" aria-pressed={stats()} onClick={toggleStats}><Icon name="activity" /></button>
               <a class="iconbtn" aria-label="Guide" href={href("/live/guide")}><Icon name="grid" /></a>
             </div>
             <Show when={(osd() || pending()) && shown()}>
@@ -548,26 +610,22 @@ function Watch(): JSX.Element {
       </section>
 
       <section class="live__rows" aria-label="Channels">
-        <div class="live__browser-head">
-          <h1>Live TV</h1>
-          <a class="btn btn--sm" href={href("/live/guide")} onClick={() => { const id = focusedChannel(); if (id != null && !filtered()?.some((c) => c.id === id)) setFilter({ kind: "all" }); }}><Icon name="grid" /> <span>Guide</span></a>
-        </div>
-        <div class="live__browse-controls"><GroupPicker /><ChannelSearch class="livesearch--row" /></div>
+        <Filters />
         <div class="chanrow">
           <div class="rowlabel rowlabel--split">
             <p class="rowlabel__title">
               <span dir="auto">{query() ? "Search results" : filterLabel()}</span>{" "}
               <small>{shownList() ? shownList()!.length.toLocaleString() : "…"}</small>
             </p>
+            <ChannelSearch class="livesearch--row" />
           </div>
           <Show when={shownList()} fallback={<RailLoading />}>
-            <ChannelList
+            <ChannelRail
               channels={shownList()!}
               resetKey={`${filterKey(filter())}|${query()}`}
               activeId={tuner.phase() === "error" ? undefined : tuner.channelId()}
               pendingId={pending()?.id ?? digitTarget()?.id}
               onPick={pick}
-              onFocusChannel={(c) => { setFocusedChannel(c.id); setBrowsingChannel(c.id); }}
               controller={(a) => (listApi = a)}
               empty={
                 <>
@@ -584,9 +642,6 @@ function Watch(): JSX.Element {
             />
           </Show>
         </div>
-        <Show when={focusedChannel() != null && shownList()?.some((c) => c.id === focusedChannel()) && nowNext(focusedChannel()!)?.next}>
-          {(next) => <div class="live__next"><span>Next on {channelById(focusedChannel())?.name}</span><strong>{fmtTime(next().start)} · {next().title}</strong></div>}
-        </Show>
       </section>
 
       <Show when={mini()}>
@@ -796,7 +851,6 @@ function IdleHero(props: { channel: IptvChannel; onWatch: () => void }): JSX.Ele
   const nn = () => nowNext(props.channel.id);
   return (
     <div class="live__idle" onClick={(e) => e.stopPropagation()}>
-      <div class="live__idle-glow" aria-hidden="true" />
       <ChannelLogo channel={props.channel} class="chlogo--hero" />
       <p class="eyebrow">{lastChannel()?.id === props.channel.id ? "Last watched" : "Ready to watch"}</p>
       <h2 class="live__idle-name" dir="auto">

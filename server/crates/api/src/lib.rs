@@ -3,12 +3,15 @@
 pub mod auth;
 mod browse;
 pub mod cast;
+pub mod device_link;
 pub mod dto;
 pub mod enrich;
 pub mod error;
 mod extras;
 mod iptv;
+pub mod mfa;
 pub mod netutil;
+pub mod oidc;
 
 /// Test hook for the profile sanitizer.
 #[doc(hidden)]
@@ -87,6 +90,8 @@ pub struct AppState {
     pub cast: Arc<cast::CastRuntime>,
     /// WebSocket tickets and per-user socket slots.
     pub ws: Arc<ws::WsHub>,
+    /// Provider sign-ins in progress and cached provider metadata (#149).
+    pub oidc: Arc<oidc::OidcRuntime>,
     /// TMDB client (set by [`AppState::with_tmdb`]).
     pub tmdb: Option<reel_metadata::TmdbClient>,
     pub omdb: Option<reel_requests::reviews::OmdbClient>,
@@ -119,6 +124,7 @@ impl AppState {
                 session_ttl: Duration::from_secs(
                     u64::from(config.session_ttl_days.max(1)) * 86_400,
                 ),
+                public_url: config.public_url.clone(),
                 ..Default::default()
             },
             key,
@@ -149,6 +155,7 @@ impl AppState {
             vod: Arc::default(),
             cast: Arc::default(),
             ws: Arc::default(),
+            oidc: Arc::default(),
             tmdb: None,
             omdb: config
                 .omdb_api_key
@@ -179,7 +186,8 @@ impl AppState {
     }
 
     /// Replace the auth options (session lifetime, rate-limit thresholds), keeping the signing key.
-    pub fn with_auth_options(mut self, opts: AuthOptions) -> Self {
+    pub fn with_auth_options(mut self, mut opts: AuthOptions) -> Self {
+        opts.public_url = opts.public_url.or_else(|| self.config.public_url.clone());
         self.auth = AuthService::new(self.db.clone(), opts, self.auth.signing_key().to_vec());
         self
     }
@@ -499,11 +507,12 @@ pub struct EventsQuery {
 pub async fn events(
     ws: WebSocketUpgrade,
     State(st): State<AppState>,
+    auth::Peer(peer): auth::Peer,
     headers: HeaderMap,
     Query(q): Query<EventsQuery>,
 ) -> Result<Response, error::ApiError> {
     let unauthorized = || error::ApiError::Unauthorized("authentication required".into());
-    let (user, session_id) = if let Some(t) = q.ticket.as_deref() {
+    let (mut user, session_id) = if let Some(t) = q.ticket.as_deref() {
         let (uid, sid) = st.ws.redeem(t).ok_or_else(unauthorized)?;
         let user = st
             .auth
@@ -520,6 +529,8 @@ pub async fn events(
         let (user, s) = st.auth.authenticate(token).await?;
         (user, s.id)
     };
+    // judged where the socket connects: a ticket issued on the LAN carries no powers elsewhere
+    st.grant_admin_powers(&mut user, peer, &headers).await?;
     let slot = st.ws.acquire(user.id).ok_or_else(|| {
         error::ApiError::TooManyRequests("too many open event streams for this account".into())
     })?;
@@ -651,6 +662,35 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(auth::my_sessions))
         .routes(routes!(auth::revoke_my_session))
         .routes(routes!(auth::change_password))
+        .routes(routes!(device_link::device_start))
+        .routes(routes!(device_link::device_poll))
+        .routes(routes!(device_link::link_lookup))
+        .routes(routes!(device_link::link_approve))
+        .routes(routes!(device_link::link_deny))
+        .routes(routes!(oidc::public_providers))
+        .routes(routes!(oidc::login_options))
+        .routes(routes!(oidc::start))
+        .routes(routes!(oidc::callback))
+        .routes(routes!(oidc::exchange))
+        .routes(routes!(oidc::my_identities))
+        .routes(routes!(oidc::link_start))
+        .routes(routes!(oidc::link_complete))
+        .routes(routes!(oidc::unlink))
+        .routes(routes!(oidc::admin_list, oidc::admin_create))
+        .routes(routes!(oidc::admin_patch, oidc::admin_delete))
+        .routes(routes!(mfa::login_mfa))
+        .routes(routes!(mfa::login_mfa_passkey))
+        .routes(routes!(mfa::login_passkey))
+        .routes(routes!(mfa::security))
+        .routes(routes!(mfa::totp_start))
+        .routes(routes!(mfa::totp_confirm))
+        .routes(routes!(mfa::totp_remove))
+        .routes(routes!(mfa::new_recovery_codes))
+        .routes(routes!(mfa::passkey_start))
+        .routes(routes!(mfa::passkey_finish))
+        .routes(routes!(mfa::passkey_rename))
+        .routes(routes!(mfa::passkey_remove))
+        .routes(routes!(mfa::admin_reset_second_factor))
         .routes(routes!(auth::invite_info))
         .routes(routes!(auth::accept_invite))
         .routes(routes!(auth::list_users, auth::create_user))

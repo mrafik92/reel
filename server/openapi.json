@@ -1193,6 +1193,154 @@
         }
       }
     },
+    "/api/v1/admin/oidc/providers": {
+      "get": {
+        "summary": "Configured sign-in providers.",
+        "operationId": "admin_list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OidcProviderDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add a provider.",
+        "operationId": "admin_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOidcProviderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcProviderDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/oidc/providers/{id}": {
+      "delete": {
+        "summary": "Remove a provider and the sign-ins linked through it.",
+        "operationId": "admin_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Provider id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Change a provider.",
+        "operationId": "admin_patch",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Provider id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchOidcProviderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcProviderDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/sessions": {
       "get": {
         "summary": "Live playback sessions.",
@@ -1452,6 +1600,39 @@
         }
       }
     },
+    "/api/v1/admin/users/{id}/second-factor": {
+      "delete": {
+        "summary": "Remove all of a user's second factors and sign them out (they lost their device).",
+        "operationId": "admin_reset_second_factor",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Reset"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/users/{id}/sessions": {
       "delete": {
         "summary": "Sign a user out of every device.",
@@ -1483,6 +1664,108 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/auth/device/poll": {
+      "post": {
+        "summary": "Poll for approval. The session is delivered once.",
+        "operationId": "device_poll",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DevicePollBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Still waiting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevicePendingDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown, expired, refused or already used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Polling too fast",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/device/start": {
+      "post": {
+        "summary": "Start signing in a TV: returns a code to show and a secret to poll with.",
+        "operationId": "device_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceStartDto"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many pairings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v1/auth/invite/{code}": {
@@ -1614,6 +1897,16 @@
               }
             }
           },
+          "202": {
+            "description": "Password accepted; finish at `/auth/login/mfa`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MfaChallengeDto"
+                }
+              }
+            }
+          },
           "401": {
             "description": "",
             "content": {
@@ -1640,6 +1933,169 @@
         ]
       }
     },
+    "/api/v1/auth/login/mfa": {
+      "post": {
+        "summary": "Finish signing in with a second factor. Failures count towards the account's lockout.",
+        "operationId": "login_mfa",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfaLoginBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Wrong code, or the challenge expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Locked out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/login/mfa/passkey": {
+      "post": {
+        "summary": "WebAuthn options for the passkey option of login step two.",
+        "operationId": "login_mfa_passkey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfaPasskeyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/login/passkey": {
+      "post": {
+        "summary": "Emergency sign-in with a Reel passkey, for when the provider is unavailable. LAN or Tailscale\nonly.",
+        "operationId": "login_passkey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyLoginBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyLoginDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not on the LAN or Tailscale",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
     "/api/v1/auth/logout": {
       "post": {
         "summary": "Revoke the current token.",
@@ -1649,6 +2105,233 @@
             "description": "Signed out"
           }
         }
+      }
+    },
+    "/api/v1/auth/oidc/callback": {
+      "get": {
+        "summary": "Where the provider sends the browser back.",
+        "operationId": "callback",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Back to the web app"
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/oidc/exchange": {
+      "post": {
+        "summary": "Finish a provider sign-in. An identity that isn't linked to a Reel account is refused.",
+        "operationId": "exchange",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcExchangeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Second factor needed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MfaChallengeDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/oidc/providers": {
+      "get": {
+        "summary": "Sign-in providers to offer on the login page.",
+        "operationId": "public_providers",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OidcProviderPublicDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/oidc/{slug}/start": {
+      "post": {
+        "summary": "Start signing in with a provider.",
+        "operationId": "start",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Provider",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcStartDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/options": {
+      "get": {
+        "summary": "How people can sign in from here.",
+        "operationId": "login_options",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginOptionsDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v1/auth/ws-ticket": {
@@ -3662,6 +4345,492 @@
         }
       }
     },
+    "/api/v1/me/device-link/approve": {
+      "post": {
+        "summary": "Approve the code: that device gets its own session on this account.",
+        "operationId": "link_approve",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceLinkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Approved"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/device-link/deny": {
+      "post": {
+        "summary": "Refuse the code.",
+        "operationId": "link_deny",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceLinkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Refused"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/device-link/lookup": {
+      "post": {
+        "summary": "What's asking to sign in with this code.",
+        "operationId": "link_lookup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceLinkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceLinkInfoDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/identities": {
+      "get": {
+        "summary": "Provider sign-ins linked to this account.",
+        "operationId": "my_identities",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IdentityDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/identities/complete": {
+      "post": {
+        "summary": "Finish linking: the provider login becomes a way into this account.",
+        "operationId": "link_complete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcExchangeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Linked"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/identities/{id}/remove": {
+      "post": {
+        "summary": "Remove a linked provider sign-in.",
+        "operationId": "unlink",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identity id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnlinkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/identities/{slug}/start": {
+      "post": {
+        "summary": "Start linking a provider sign-in to this account.",
+        "operationId": "link_start",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Provider",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcStartDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/passkeys/finish": {
+      "post": {
+        "summary": "Store the new passkey.",
+        "operationId": "passkey_finish",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyFinishBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodesDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/passkeys/start": {
+      "post": {
+        "summary": "Start adding a passkey: options for `navigator.credentials.create()`.",
+        "operationId": "passkey_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/passkeys/{id}": {
+      "patch": {
+        "summary": "Rename a passkey.",
+        "operationId": "passkey_rename",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Passkey id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyRenameBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Renamed"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/passkeys/{id}/remove": {
+      "post": {
+        "summary": "Remove a passkey.",
+        "operationId": "passkey_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Passkey id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/password": {
       "post": {
         "summary": "Change the password; all other sessions are signed out.",
@@ -3681,17 +4850,7 @@
             "description": "Changed"
           },
           "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
+            "description": "Weak new password or wrong current password",
             "content": {
               "application/json": {
                 "schema": {
@@ -3757,6 +4916,62 @@
         }
       }
     },
+    "/api/v1/me/recovery-codes": {
+      "post": {
+        "summary": "Replace all recovery codes.",
+        "operationId": "new_recovery_codes",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodesDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/security": {
+      "get": {
+        "summary": "The current user's sign-in methods.",
+        "operationId": "security",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/sessions": {
       "get": {
         "summary": "Devices signed in as the current user.",
@@ -3799,6 +5014,133 @@
             "description": "Revoked"
           },
           "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/totp/confirm": {
+      "post": {
+        "summary": "Activate the authenticator app with its first code.",
+        "operationId": "totp_confirm",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpConfirmBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodesDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/totp/remove": {
+      "post": {
+        "summary": "Remove the authenticator app.",
+        "operationId": "totp_remove",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/totp/start": {
+      "post": {
+        "summary": "Start adding an authenticator app. It's active once `/me/totp/confirm` gets a valid code.",
+        "operationId": "totp_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpStartDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
             "description": "",
             "content": {
               "application/json": {
@@ -5886,8 +7228,7 @@
       "AcceptInviteBody": {
         "type": "object",
         "required": [
-          "username",
-          "password"
+          "username"
         ],
         "properties": {
           "client": {
@@ -5908,9 +7249,26 @@
               "null"
             ]
           },
+          "oidc_binding": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The browser secret that goes with `oidc_ticket`."
+          },
+          "oidc_ticket": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ticket from a provider sign-in, to link it to the new account (#149)."
+          },
           "password": {
-            "type": "string",
-            "description": "At least 8 characters."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "At least 12 characters, and not a common password. Not used with a provider sign-in, and\nrefused without one once a provider is configured."
           },
           "username": {
             "type": "string"
@@ -7057,6 +8415,40 @@
           }
         }
       },
+      "CreateOidcProviderBody": {
+        "type": "object",
+        "required": [
+          "preset",
+          "client_id",
+          "client_secret"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "client_secret": {
+            "type": "string"
+          },
+          "issuer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issuer URL; required for `custom`."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display name; required for `custom`."
+          },
+          "preset": {
+            "type": "string",
+            "description": "`google`, `microsoft` (personal accounts) or `custom`."
+          }
+        }
+      },
       "CreateRequestBody": {
         "type": "object",
         "required": [
@@ -7354,6 +8746,74 @@
           }
         }
       },
+      "DeviceLinkBody": {
+        "type": "object",
+        "required": [
+          "user_code"
+        ],
+        "properties": {
+          "user_code": {
+            "type": "string",
+            "description": "The code shown on the TV."
+          }
+        }
+      },
+      "DeviceLinkInfoDto": {
+        "type": "object",
+        "required": [
+          "expires_in_s"
+        ],
+        "properties": {
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_in_s": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "ip": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Address the request came from, so the person can spot one that isn't theirs."
+          }
+        }
+      },
+      "DevicePendingDto": {
+        "type": "object",
+        "description": "Returned with 202 while nobody has approved the code yet.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Always `pending`."
+          }
+        }
+      },
+      "DevicePollBody": {
+        "type": "object",
+        "required": [
+          "device_code"
+        ],
+        "properties": {
+          "device_code": {
+            "type": "string"
+          }
+        }
+      },
       "DeviceProfile": {
         "type": "object",
         "required": [
@@ -7412,6 +8872,70 @@
             "items": {
               "$ref": "#/components/schemas/VideoCodecSupport"
             }
+          }
+        }
+      },
+      "DeviceStartBody": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Shown to the person approving, e.g. \"Living Room TV\"."
+          }
+        }
+      },
+      "DeviceStartDto": {
+        "type": "object",
+        "required": [
+          "device_code",
+          "user_code",
+          "verification_uri",
+          "verification_uri_complete",
+          "expires_in_s",
+          "interval_s"
+        ],
+        "properties": {
+          "device_code": {
+            "type": "string",
+            "description": "Secret to poll with. Don't display it."
+          },
+          "expires_in_s": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "interval_s": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds to wait between polls.",
+            "minimum": 0
+          },
+          "user_code": {
+            "type": "string",
+            "description": "Short code to display, e.g. `BCDF-GHJK`."
+          },
+          "verification_uri": {
+            "type": "string",
+            "description": "Page where the code is approved."
+          },
+          "verification_uri_complete": {
+            "type": "string",
+            "description": "The same page with the code filled in, for a QR code."
           }
         }
       },
@@ -8182,6 +9706,41 @@
           }
         }
       },
+      "IdentityDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The provider account's email, for recognizing it."
+          },
+          "last_used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "provider": {
+            "type": "string"
+          }
+        }
+      },
       "InviteDto": {
         "type": "object",
         "required": [
@@ -8582,6 +10141,17 @@
             ],
             "format": "int64"
           },
+          "series": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SeriesRef",
+                "description": "The series an episode belongs to (only on Home's `continue_watching`)."
+              }
+            ]
+          },
           "title": {
             "type": "string"
           },
@@ -8747,6 +10317,21 @@
           }
         }
       },
+      "LinkStartBody": {
+        "type": "object",
+        "required": [
+          "password",
+          "binding_hash"
+        ],
+        "properties": {
+          "binding_hash": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
       "LiveModeDto": {
         "type": "string",
         "enum": [
@@ -8852,18 +10437,48 @@
           }
         }
       },
+      "LoginOptionsDto": {
+        "type": "object",
+        "description": "What the login page should offer.",
+        "required": [
+          "providers",
+          "password_login",
+          "passkey_login"
+        ],
+        "properties": {
+          "passkey_login": {
+            "type": "boolean",
+            "description": "Emergency passkey sign-in is available from this address."
+          },
+          "password_login": {
+            "type": "boolean",
+            "description": "Some account still signs in with a password, or no provider is configured."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OidcProviderPublicDto"
+            }
+          }
+        }
+      },
       "LoginResponse": {
         "type": "object",
         "required": [
           "token",
           "expires_at",
-          "user"
+          "user",
+          "password_weak"
         ],
         "properties": {
           "expires_at": {
             "type": "integer",
             "format": "int64",
             "description": "Session expiry (unix seconds); extended on use."
+          },
+          "password_weak": {
+            "type": "boolean",
+            "description": "The password used still works but wouldn't be accepted as a new one: suggest changing it."
           },
           "token": {
             "type": "string",
@@ -8897,14 +10512,26 @@
           "id",
           "username",
           "role",
+          "admin_powers",
+          "second_factor",
+          "must_enroll_second_factor",
+          "has_password",
           "limits",
           "permissions",
           "direct_live"
         ],
         "properties": {
+          "admin_powers": {
+            "type": "boolean",
+            "description": "This session can use admin actions right now. False for an admin on a public address: they\nkeep every library and feature, but admin actions need the LAN or Tailscale."
+          },
           "direct_live": {
             "type": "boolean",
             "description": "The server lets this user play Live TV directly from the provider\n(`REEL_ALLOW_DIRECT_LIVE` and IPTV access)."
+          },
+          "has_password": {
+            "type": "boolean",
+            "description": "The account still has a stored password. False once it signs in through its provider."
           },
           "id": {
             "type": "integer",
@@ -8924,12 +10551,20 @@
           "limits": {
             "$ref": "#/components/schemas/LimitsDto"
           },
+          "must_enroll_second_factor": {
+            "type": "boolean",
+            "description": "An admin who must add a second factor before getting admin powers."
+          },
           "permissions": {
             "$ref": "#/components/schemas/PermissionsDto",
             "description": "Effective permissions (all true for admins)."
           },
           "role": {
             "$ref": "#/components/schemas/RoleDto"
+          },
+          "second_factor": {
+            "type": "boolean",
+            "description": "The account has a passkey or authenticator app."
           },
           "username": {
             "type": "string"
@@ -9006,6 +10641,76 @@
           "tv"
         ]
       },
+      "MfaChallengeDto": {
+        "type": "object",
+        "description": "Returned with 202 by `/auth/login` when the account has a second factor.",
+        "required": [
+          "mfa_token",
+          "methods",
+          "expires_in_s"
+        ],
+        "properties": {
+          "expires_in_s": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Available methods: `totp`, `passkey`, `recovery`."
+          },
+          "mfa_token": {
+            "type": "string",
+            "description": "Send to `/auth/login/mfa`. It can't be used as a session."
+          }
+        }
+      },
+      "MfaLoginBody": {
+        "type": "object",
+        "required": [
+          "mfa_token"
+        ],
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "6-digit authenticator code."
+          },
+          "mfa_token": {
+            "type": "string"
+          },
+          "passkey": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The browser's WebAuthn assertion."
+          },
+          "recovery_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Single-use recovery code."
+          }
+        }
+      },
+      "MfaPasskeyBody": {
+        "type": "object",
+        "required": [
+          "mfa_token"
+        ],
+        "properties": {
+          "mfa_token": {
+            "type": "string"
+          }
+        }
+      },
       "NotificationDto": {
         "type": "object",
         "required": [
@@ -9068,6 +10773,243 @@
           }
         }
       },
+      "OidcExchangeBody": {
+        "type": "object",
+        "required": [
+          "ticket",
+          "binding"
+        ],
+        "properties": {
+          "binding": {
+            "type": "string",
+            "description": "The secret whose hash was sent to `/start`."
+          },
+          "ticket": {
+            "type": "string"
+          }
+        }
+      },
+      "OidcProviderDto": {
+        "type": "object",
+        "description": "A provider as admins see it; the client secret is never returned.",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "issuer",
+          "client_id",
+          "secret_set",
+          "enabled"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "issuer": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "redirect_uri": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Register this redirect URI at the provider."
+          },
+          "secret_set": {
+            "type": "boolean"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "OidcProviderPublicDto": {
+        "type": "object",
+        "required": [
+          "slug",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "OidcStartBody": {
+        "type": "object",
+        "required": [
+          "binding_hash"
+        ],
+        "properties": {
+          "binding_hash": {
+            "type": "string",
+            "description": "base64url SHA-256 of a random secret the browser keeps until it returns."
+          },
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purpose": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`login` (default) or `invite`."
+          }
+        }
+      },
+      "OidcStartDto": {
+        "type": "object",
+        "required": [
+          "authorization_url"
+        ],
+        "properties": {
+          "authorization_url": {
+            "type": "string",
+            "description": "Send the browser here."
+          }
+        }
+      },
+      "PasskeyDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "PasskeyFinishBody": {
+        "type": "object",
+        "required": [
+          "credential"
+        ],
+        "properties": {
+          "credential": {
+            "type": "object",
+            "description": "The browser's WebAuthn attestation."
+          }
+        }
+      },
+      "PasskeyLoginBody": {
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "PasskeyLoginDto": {
+        "type": "object",
+        "required": [
+          "mfa_token",
+          "options"
+        ],
+        "properties": {
+          "mfa_token": {
+            "type": "string",
+            "description": "Send to `/auth/login/mfa` with the passkey assertion."
+          },
+          "options": {
+            "type": "object",
+            "description": "WebAuthn options for `navigator.credentials.get()`."
+          }
+        }
+      },
+      "PasskeyRenameBody": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "PasskeyStartBody": {
+        "type": "object",
+        "required": [
+          "password",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Label shown in the list, e.g. \"MacBook\"."
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
       "PasswordBody": {
         "type": "object",
         "required": [
@@ -9080,7 +11022,37 @@
           },
           "new_password": {
             "type": "string",
-            "description": "At least 8 characters."
+            "description": "At least 12 characters, and not a common password."
+          }
+        }
+      },
+      "PatchOidcProviderBody": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Omit or leave empty to keep the current secret."
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -9701,6 +11673,34 @@
           }
         }
       },
+      "ReauthBody": {
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "The account's current password."
+          }
+        }
+      },
+      "RecoveryCodesDto": {
+        "type": "object",
+        "description": "Recovery codes, shown once.",
+        "properties": {
+          "recovery_codes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when new codes were generated. They can't be read again."
+          }
+        }
+      },
       "RequestDto": {
         "type": "object",
         "required": [
@@ -9988,6 +11988,40 @@
           }
         }
       },
+      "SecurityDto": {
+        "type": "object",
+        "required": [
+          "totp",
+          "passkeys",
+          "recovery_codes_left",
+          "passkeys_available",
+          "must_enroll"
+        ],
+        "properties": {
+          "must_enroll": {
+            "type": "boolean",
+            "description": "This admin has to add a factor before getting admin powers."
+          },
+          "passkeys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PasskeyDto"
+            }
+          },
+          "passkeys_available": {
+            "type": "boolean",
+            "description": "The server can do passkeys (`REEL_PUBLIC_URL` is set)."
+          },
+          "recovery_codes_left": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "totp": {
+            "type": "boolean",
+            "description": "An authenticator app is active."
+          }
+        }
+      },
       "SeeAll": {
         "type": "object",
         "required": [
@@ -10030,6 +12064,35 @@
             ],
             "format": "int64",
             "description": "ffprobe index of the chosen subtitle stream; `null` = none."
+          }
+        }
+      },
+      "SeriesRef": {
+        "type": "object",
+        "description": "The series identity of an episode in Continue watching, so a client can show the title and art\nof the series while Play still resumes the episode.",
+        "required": [
+          "id",
+          "title"
+        ],
+        "properties": {
+          "backdrop_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
           }
         }
       },
@@ -10200,7 +12263,7 @@
           },
           "password": {
             "type": "string",
-            "description": "At least 8 characters."
+            "description": "At least 12 characters, and not a common password."
           },
           "setup_token": {
             "type": [
@@ -10788,6 +12851,34 @@
           }
         }
       },
+      "TotpConfirmBody": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          }
+        }
+      },
+      "TotpStartDto": {
+        "type": "object",
+        "required": [
+          "secret",
+          "otpauth_uri"
+        ],
+        "properties": {
+          "otpauth_uri": {
+            "type": "string",
+            "description": "`otpauth://` link, shown as a QR code."
+          },
+          "secret": {
+            "type": "string",
+            "description": "Base32 secret, for typing into an authenticator app."
+          }
+        }
+      },
       "TranscodeStatus": {
         "type": "object",
         "required": [
@@ -10888,6 +12979,17 @@
           "url": {
             "type": "string",
             "description": "Signed URL: `stream.ts` (passthrough) or `index.m3u8` (HLS). Valid for the configured\nsigned-URL lifetime; the session itself ends shortly after the player disconnects.\nFor `direct`: the provider's own URL (contains the provider login; never log it)."
+          }
+        }
+      },
+      "UnlinkBody": {
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string"
           }
         }
       },
