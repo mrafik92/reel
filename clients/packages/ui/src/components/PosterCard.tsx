@@ -6,6 +6,14 @@ import { Img } from "./Img";
 import { ProgressRing, RING_LABEL, type RingState } from "./ProgressRing";
 import { Icon } from "./Icon";
 
+/** Opt-in preview: the app decides when a card opens from these pointer and focus signals. */
+export interface CardPreview {
+  enter: (item: ItemSummary, el: HTMLElement) => void;
+  leave: (el: HTMLElement) => void;
+  focus: (item: ItemSummary, el: HTMLElement) => void;
+  blur: (el: HTMLElement) => void;
+}
+
 export interface PosterCardProps {
   item: ItemSummary;
   href: string;
@@ -31,6 +39,8 @@ export interface PosterCardProps {
   meta?: boolean;
   /** Position in a ranked row: draws the large numeral and joins the accessible name ("3. Title"). */
   rank?: number;
+  /** Hover and focus preview card (library titles). Not used while a download overlay shows. */
+  preview?: CardPreview;
   class?: string;
 }
 
@@ -69,13 +79,22 @@ export function PosterCard(props: PosterCardProps): JSX.Element {
       classList={{
         "has-download": dlActive(),
         "is-ready": dl()?.state === "available",
+        "card--preview": !!props.preview,
         "card--ranked": props.rank != null,
         "card--ranked-wide": (props.rank ?? 0) >= 10,
       }}
       href={props.href}
       data-fid={it().id}
       data-autofocus={props.autofocus ? "" : undefined}
-      onFocus={() => props.onFocus?.(it())}
+      onFocus={(e) => {
+        props.onFocus?.(it());
+        if (props.preview && !dlActive()) props.preview.focus(it(), e.currentTarget);
+      }}
+      onBlur={(e) => props.preview?.blur(e.currentTarget)}
+      onMouseEnter={(e) => {
+        if (props.preview && !dlActive()) props.preview.enter(it(), e.currentTarget);
+      }}
+      onMouseLeave={(e) => props.preview?.leave(e.currentTarget)}
       onClick={(e) => {
         const st = dl()?.state;
         if (props.onRetry && (st === "failed" || st === "not_found")) {

@@ -11,6 +11,7 @@ import { itemHref, libraryHref, playHref } from "../lib/links";
 import { laneHref } from "../lib/browse";
 import { continueSubtitle, continueTile } from "../lib/continue";
 import { AMBIENT_W, useAmbientArt } from "../lib/ambient";
+import { cardPreview } from "../lib/preview";
 import type { BrowseLane } from "../api";
 
 export default function Home(): JSX.Element {
@@ -72,6 +73,7 @@ export default function Home(): JSX.Element {
                             variant="landscape"
                             href={playHref(it)}
                             subtitle={continueSubtitle(it)}
+                            preview={cardPreview(playHref(it))}
                           />
                         )}
                       </For>
@@ -91,7 +93,7 @@ export default function Home(): JSX.Element {
                         >
                           <For each={ranked ? lane.items.slice(0, 10) : lane.items}>
                             {(it, n) => (
-                              <PosterCard item={it} href={itemHref(it)} rank={ranked ? n() + 1 : undefined} activity={itemActivity(it.id)} />
+                              <PosterCard item={it} href={itemHref(it)} rank={ranked ? n() + 1 : undefined} activity={itemActivity(it.id)} preview={cardPreview(itemHref(it))} />
                             )}
                           </For>
                         </Row>
@@ -101,7 +103,7 @@ export default function Home(): JSX.Element {
                   <Show when={h().recently_added.length}>
                     <Row title="Recently added">
                       <For each={h().recently_added}>
-                        {(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} />}
+                        {(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} preview={cardPreview(itemHref(it))} />}
                       </For>
                     </Row>
                   </Show>
@@ -114,7 +116,7 @@ export default function Home(): JSX.Element {
                           action={lib ? { label: "Explore all", href: libraryHref(lib) } : undefined}
                         >
                           <For each={row.items}>
-                            {(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} />}
+                            {(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} preview={cardPreview(itemHref(it))} />}
                           </For>
                         </Row>
                       );

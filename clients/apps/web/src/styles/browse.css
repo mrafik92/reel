@@ -48,6 +48,150 @@ html[data-input="key"] .card:focus .card__meta {
   }
 }
 
+/* ---------- Preview card (hover and key focus) --------------------------- */
+.preview {
+  position: fixed;
+  z-index: 49;
+  border-radius: var(--radius-l);
+  overflow: hidden;
+  box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.75);
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
+}
+.preview.is-in {
+  opacity: 1;
+  transform: none;
+  transition: opacity 200ms var(--ease), transform 200ms var(--ease-out);
+}
+/* Key focus: the tile underneath is covered, so the card carries the white ring. */
+.preview--focus {
+  box-shadow: var(--focus-ring), 0 0.6rem 2rem rgba(0, 0, 0, 0.75);
+  overflow: visible;
+  pointer-events: none;
+}
+/* No blur on TV: the tile under the card must not read through its text. */
+html.tv .preview {
+  background: rgba(var(--bg-1-rgb), 0.97);
+}
+html[data-input="key"] .card.is-previewed .card__frame {
+  box-shadow: none;
+}
+.preview--focus .preview__art {
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  overflow: hidden;
+}
+.preview__art {
+  position: relative;
+  display: block;
+  height: 0;
+  padding-top: 56.25%;
+  color: var(--ink);
+  text-decoration: none;
+  background: var(--bg-2);
+}
+.preview__art > .img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+.preview__img--poster img {
+  object-position: 50% 0;
+}
+.preview__noart {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-2);
+}
+.preview__shade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 60%;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0) 100%);
+}
+.preview__title {
+  position: absolute;
+  left: 0.9rem;
+  right: 0.9rem;
+  bottom: 0.7rem;
+  font: 800 1.15rem/1.15 var(--font-display);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.preview__progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(var(--ink-rgb), 0.3);
+}
+.preview__progress i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.preview__body {
+  padding: 0.75rem 0.9rem 0.95rem;
+}
+.preview__actions {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.7rem;
+}
+.preview__actions > * + * {
+  margin-left: 0.5rem;
+}
+.preview__more {
+  margin-left: auto !important;
+}
+.preview__episode {
+  margin-bottom: 0.35rem;
+  color: var(--ink);
+  font: 700 0.88rem/1.3 var(--font-body);
+}
+.preview__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  color: var(--ink-2);
+  font: 400 0.88rem/1.5 var(--font-body);
+}
+.preview__meta > * {
+  margin-right: 0.65rem;
+}
+.preview__rating {
+  color: var(--ink);
+  font-weight: 700;
+}
+.preview__rating .icon {
+  margin: -0.12em 0.2rem 0 0;
+  color: var(--accent-hi);
+}
+.preview__genres {
+  margin-top: 0.3rem;
+  color: var(--ink);
+  font: 400 0.88rem/1.4 var(--font-body);
+}
+.preview__genres i {
+  margin: 0 0.45rem;
+  color: var(--ink-3);
+  font-style: normal;
+}
+@media (prefers-reduced-motion: reduce) {
+  .preview,
+  .preview.is-in {
+    transform: none;
+    transition: opacity 100ms linear !important;
+  }
+}
+
 /* ---------- Row subtitle ------------------------------------------------- */
 .row__sub {
   margin-left: 0.85rem;

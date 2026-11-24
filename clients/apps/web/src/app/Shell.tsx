@@ -6,6 +6,7 @@ import { authStatus, bootError, bootstrap, currentUser, isAdmin, logout, onAuthC
 import { connectEvents, disconnectEvents, downloads, queueSummary } from "../lib/downloads";
 import { Toaster } from "../components/Toaster";
 import { TopBar } from "../components/TopBar";
+import { PreviewLayer } from "../components/PreviewCard";
 import { api, invalidate } from "../api";
 import { hadNetworkFailure, onConnectionRestored } from "../api/http";
 import { onResume } from "../lib/connection";
@@ -305,6 +306,7 @@ export function Shell(props: ParentProps): JSX.Element {
               footer={<>Signed in as {currentUser()?.username ?? "…"}</>}
             />
           </Show>
+          <PreviewLayer />
           <main class="main" data-nav-group>
             {/* Re-mounted when the connection comes back after a page's load failed (#81). */}
             <Show when={pageEpoch()} keyed>
