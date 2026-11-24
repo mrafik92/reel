@@ -51,7 +51,9 @@ impl FromRequestParts<AppState> for AuthUser {
     async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, ApiError> {
         let token = bearer(&parts.headers)
             .ok_or_else(|| ApiError::Unauthorized("authentication required".into()))?;
-        let (user, session) = st.auth.authenticate(token).await?;
+        let (mut user, session) = st.auth.authenticate(token).await?;
+        st.grant_admin_powers(&mut user, peer_of(&parts.extensions), &parts.headers)
+            .await?;
         check_feature(&user, feature_of_path(parts.uri.path()))?;
         Ok(AuthUser {
             user,
@@ -108,6 +110,16 @@ impl FromRequestParts<AppState> for AdminUser {
 
     async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, ApiError> {
         let u = AuthUser::from_request_parts(parts, st).await?;
+        if u.user.has_admin_role() && !u.is_admin() {
+            let on_network =
+                on_admin_network(&st.config, peer_of(&parts.extensions), &parts.headers);
+            return Err(ApiError::Forbidden(if on_network {
+                "add a passkey or authenticator app in Settings → Account to use admin actions"
+                    .into()
+            } else {
+                "admin actions are only available from the home network or Tailscale".into()
+            }));
+        }
         if !u.is_admin() {
             return Err(ApiError::Forbidden("admin access required".into()));
         }
@@ -166,6 +178,30 @@ pub fn resolve_client_ip(
         .map(normalize)
 }
 
+/// May this request use admin powers (#127)? Only from the LAN or Tailscale. Fails closed when
+/// proxy headers arrive from a peer that isn't trusted: the real client is then unknown.
+pub fn on_admin_network(
+    cfg: &reel_core::Config,
+    peer: Option<std::net::IpAddr>,
+    headers: &HeaderMap,
+) -> bool {
+    let client = resolve_client_ip(cfg, peer, headers);
+    let forwarded = ["x-forwarded-for", "x-real-ip", "forwarded"]
+        .iter()
+        .any(|h| headers.contains_key(*h));
+    let unbelieved = forwarded && peer.map(crate::netutil::normalize) == client;
+    match client {
+        Some(c) => crate::netutil::is_admin_network(c) && !unbelieved,
+        None => peer.is_none(), // in-process (tests)
+    }
+}
+
+/// The socket peer recorded on a request.
+pub fn peer_of(ext: &axum::http::Extensions) -> Option<std::net::IpAddr> {
+    ext.get::<ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0.ip())
+}
+
 /// The socket peer (`None` without connection info, i.e. in-process tests).
 pub struct Peer(pub Option<std::net::IpAddr>);
 
@@ -173,12 +209,7 @@ impl FromRequestParts<AppState> for Peer {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _: &AppState) -> Result<Self, Self::Rejection> {
-        Ok(Peer(
-            parts
-                .extensions
-                .get::<ConnectInfo<std::net::SocketAddr>>()
-                .map(|c| c.0.ip()),
-        ))
+        Ok(Peer(peer_of(&parts.extensions)))
     }
 }
 
@@ -186,10 +217,7 @@ impl FromRequestParts<AppState> for ClientIp {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, Self::Rejection> {
-        let peer = parts
-            .extensions
-            .get::<ConnectInfo<std::net::SocketAddr>>()
-            .map(|c| c.0.ip());
+        let peer = peer_of(&parts.extensions);
         Ok(ClientIp(
             resolve_client_ip(&st.config, peer, &parts.headers).map(|i| i.to_string()),
         ))
@@ -208,6 +236,20 @@ pub struct SignedQuery {
 }
 
 impl AppState {
+    /// Decide whether this request may use admin powers (#127, #146): an admin role, from an
+    /// admin network, with a second factor when that's required.
+    pub async fn grant_admin_powers(
+        &self,
+        user: &mut User,
+        peer: Option<std::net::IpAddr>,
+        headers: &HeaderMap,
+    ) -> ApiResult<()> {
+        user.admin_powers = user.has_admin_role()
+            && on_admin_network(&self.config, peer, headers)
+            && !self.auth.must_enroll(user).await?;
+        Ok(())
+    }
+
     /// URL signer for `user_id`.
     pub fn signer(&self, user_id: i64) -> reel_auth::UrlSigner {
         self.auth.signer(user_id)
@@ -219,8 +261,32 @@ impl AppState {
     }
 
     /// Resolve the caller of a media endpoint: bearer token, or a valid signature for `scope`.
+    /// The result never holds admin powers; see [`Self::media_user_from`].
     pub async fn media_user(
         &self,
+        headers: &HeaderMap,
+        q: &SignedQuery,
+        scope: &str,
+    ) -> ApiResult<User> {
+        self.media_user_from(None, false, headers, q, scope).await
+    }
+
+    /// [`Self::media_user`] for routes where an admin may open someone else's session: a bearer
+    /// token from an admin network keeps admin powers. A signed URL never carries them.
+    pub async fn media_user_at(
+        &self,
+        peer: Option<std::net::IpAddr>,
+        headers: &HeaderMap,
+        q: &SignedQuery,
+        scope: &str,
+    ) -> ApiResult<User> {
+        self.media_user_from(peer, true, headers, q, scope).await
+    }
+
+    async fn media_user_from(
+        &self,
+        peer: Option<std::net::IpAddr>,
+        allow_powers: bool,
         headers: &HeaderMap,
         q: &SignedQuery,
         scope: &str,
@@ -233,7 +299,10 @@ impl AppState {
             None
         };
         if let Some(t) = bearer(headers) {
-            let user = self.auth.authenticate(t).await?.0;
+            let mut user = self.auth.authenticate(t).await?.0;
+            if allow_powers {
+                self.grant_admin_powers(&mut user, peer, headers).await?;
+            }
             check_feature(&user, feature)?;
             return Ok(user);
         }
@@ -269,7 +338,7 @@ impl AppState {
 
     /// 404 unless `user` may see `library_id`.
     pub async fn require_library(&self, user: &User, library_id: i64) -> ApiResult<()> {
-        if user.is_admin() {
+        if user.has_admin_role() {
             return Ok(());
         }
         let ok: Option<i64> =
@@ -429,7 +498,7 @@ impl From<PermissionsDto> for reel_auth::Permissions {
 }
 
 fn effective(u: &User) -> PermissionsDto {
-    if u.is_admin() {
+    if u.has_admin_role() {
         reel_auth::Permissions::all().into()
     } else {
         u.perms.into()
@@ -442,6 +511,13 @@ pub struct Me {
     pub id: i64,
     pub username: String,
     pub role: RoleDto,
+    /// This session can use admin actions right now. False for an admin on a public address: they
+    /// keep every library and feature, but admin actions need the LAN or Tailscale.
+    pub admin_powers: bool,
+    /// The account has a passkey or authenticator app.
+    pub second_factor: bool,
+    /// An admin who must add a second factor before getting admin powers.
+    pub must_enroll_second_factor: bool,
     pub limits: LimitsDto,
     /// Effective permissions (all true for admins).
     pub permissions: PermissionsDto,
@@ -458,6 +534,9 @@ async fn me_dto(st: &AppState, u: &User) -> ApiResult<Me> {
         id: u.id,
         username: u.username.clone(),
         role: u.role.into(),
+        admin_powers: u.is_admin(),
+        second_factor: st.auth.has_second_factor(u.id).await?,
+        must_enroll_second_factor: st.auth.must_enroll(u).await?,
         limits: u.limits.clone().into(),
         permissions: effective(u),
         direct_live: st.config.allow_direct_live && u.can_iptv(),
@@ -473,13 +552,22 @@ pub struct LoginResponse {
     /// Session expiry (unix seconds); extended on use.
     pub expires_at: i64,
     pub user: Me,
+    /// The password used still works but wouldn't be accepted as a new one: suggest changing it.
+    pub password_weak: bool,
 }
 
-async fn login_response(st: &AppState, o: reel_auth::LoginOutcome) -> ApiResult<LoginResponse> {
+pub(crate) async fn login_response(
+    st: &AppState,
+    mut o: reel_auth::LoginOutcome,
+    peer: Option<std::net::IpAddr>,
+    headers: &HeaderMap,
+) -> ApiResult<LoginResponse> {
+    st.grant_admin_powers(&mut o.user, peer, headers).await?;
     Ok(LoginResponse {
         user: me_dto(st, &o.user).await?,
         token: o.token,
         expires_at: o.expires_at,
+        password_weak: o.password_weak,
     })
 }
 
@@ -502,7 +590,7 @@ pub async fn setup_status(State(st): State<AppState>) -> ApiResult<Json<SetupSta
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SetupBody {
     pub username: String,
-    /// At least 8 characters.
+    /// At least 12 characters, and not a common password.
     pub password: String,
     pub device_id: Option<String>,
     pub device_name: Option<String>,
@@ -580,7 +668,8 @@ pub async fn setup(
             },
         )
         .await?;
-    Ok((StatusCode::CREATED, Json(login_response(&st, out).await?)))
+    let res = login_response(&st, out, peer, &headers).await?;
+    Ok((StatusCode::CREATED, Json(res)))
 }
 
 // ───────────────────────── login / logout / me ─────────────────────────
@@ -605,6 +694,7 @@ pub struct LoginBody {
     request_body = LoginBody,
     responses(
         (status = 200, body = LoginResponse),
+        (status = 202, description = "Password accepted; finish at `/auth/login/mfa`", body = crate::mfa::MfaChallengeDto),
         (status = 401, body = ErrorBody),
         (status = 429, description = "Locked out", body = ErrorBody)
     )
@@ -612,8 +702,11 @@ pub struct LoginBody {
 pub async fn login(
     State(st): State<AppState>,
     ClientIp(ip): ClientIp,
+    Peer(peer): Peer,
+    headers: HeaderMap,
     Json(b): Json<LoginBody>,
-) -> ApiResult<Json<LoginResponse>> {
+) -> ApiResult<axum::response::Response> {
+    use axum::response::IntoResponse;
     let out = st
         .auth
         .login(
@@ -626,8 +719,16 @@ pub async fn login(
                 ip,
             },
         )
-        .await?;
-    Ok(Json(login_response(&st, out).await?))
+        .await;
+    match out {
+        Ok(o) => Ok(Json(login_response(&st, o, peer, &headers).await?).into_response()),
+        Err(reel_auth::AuthError::SecondFactorRequired(c)) => Ok((
+            StatusCode::ACCEPTED,
+            Json(crate::mfa::MfaChallengeDto::from(c)),
+        )
+            .into_response()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Revoke the current token.
@@ -698,7 +799,7 @@ pub async fn revoke_my_session(
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PasswordBody {
     pub current_password: String,
-    /// At least 8 characters.
+    /// At least 12 characters, and not a common password.
     pub new_password: String,
 }
 
@@ -707,7 +808,7 @@ pub struct PasswordBody {
     post,
     path = "/me/password",
     request_body = PasswordBody,
-    responses((status = 204, description = "Changed"), (status = 400, body = ErrorBody), (status = 401, body = ErrorBody))
+    responses((status = 204, description = "Changed"), (status = 400, description = "Weak new password or wrong current password", body = ErrorBody))
 )]
 pub async fn change_password(
     State(st): State<AppState>,
@@ -730,9 +831,8 @@ pub async fn change_password(
     {
         Err(reel_auth::AuthError::InvalidCredentials) => {
             st.auth.limiter().fail_user(&key);
-            Err(ApiError::Unauthorized(
-                "current password is incorrect".into(),
-            ))
+            // not a 401: clients read that as "your session ended" and sign out
+            Err(ApiError::BadRequest("current password is incorrect".into()))
         }
         r => {
             r?;
@@ -783,8 +883,12 @@ pub async fn invite_info(
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AcceptInviteBody {
+    /// Ticket from a provider sign-in, to link it to the new account (#149).
+    pub oidc_ticket: Option<String>,
+    /// The browser secret that goes with `oidc_ticket`.
+    pub oidc_binding: Option<String>,
     pub username: String,
-    /// At least 8 characters.
+    /// At least 12 characters, and not a common password.
     pub password: String,
     pub device_id: Option<String>,
     pub device_name: Option<String>,
@@ -809,12 +913,19 @@ pub struct AcceptInviteBody {
 pub async fn accept_invite(
     State(st): State<AppState>,
     ClientIp(ip): ClientIp,
+    Peer(peer): Peer,
+    headers: HeaderMap,
     Path(code): Path<String>,
     Json(b): Json<AcceptInviteBody>,
 ) -> ApiResult<(StatusCode, Json<LoginResponse>)> {
+    let identity = match (&b.oidc_ticket, &b.oidc_binding) {
+        (Some(t), Some(k)) => Some(crate::oidc::invite_identity(&st, t, k)?),
+        (None, None) => None,
+        _ => return Err(ApiError::BadRequest("incomplete provider sign-in".into())),
+    };
     let out = st
         .auth
-        .accept_invite(
+        .accept_invite_with(
             &code,
             &b.username,
             &b.password,
@@ -824,9 +935,14 @@ pub async fn accept_invite(
                 client: b.client,
                 ip,
             },
+            identity.as_ref(),
         )
         .await?;
-    Ok((StatusCode::CREATED, Json(login_response(&st, out).await?)))
+    if let Some(t) = &b.oidc_ticket {
+        crate::oidc::finish_invite_ticket(&st, t);
+    }
+    let res = login_response(&st, out, peer, &headers).await?;
+    Ok((StatusCode::CREATED, Json(res)))
 }
 
 // ───────────────────────── admin: users ─────────────────────────
@@ -1060,7 +1176,7 @@ pub struct InviteDto {
     pub status: String,
 }
 
-fn base_url(st: &AppState, headers: &HeaderMap) -> String {
+pub(crate) fn base_url(st: &AppState, headers: &HeaderMap) -> String {
     if let Some(u) = st.config.public_url.as_deref().filter(|u| !u.is_empty()) {
         return u.trim_end_matches('/').to_string();
     }

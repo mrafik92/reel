@@ -96,7 +96,9 @@ scripts/tests/android-release-test.sh
   asked). The keystore password is the owner's: never look for it, guess it or ask for it in chat; test with
   `--dry-run` and a throwaway keystore. Details: `clients/android-web/README.md` → Release builds.
 - Live access for checks: `ssh minix-local` → `pct exec 113 -- …` (Reel runs in Docker there). Admin
-  credentials for API smoke tests are in `/root/.reel-admin` on minix. Never print them.
+  credentials for API smoke tests are in `/root/.reel-admin` on minix. Never print them. Once that account
+  has a second factor (#146), its password alone returns a 202 challenge: use a non-admin test account for
+  smoke tests, and never read or reuse the owner's recovery codes or authenticator secret.
 
 ## 5. Guardrails
 
@@ -108,6 +110,10 @@ scripts/tests/android-release-test.sh
   are done and re-reviewed. Don't add public exposure.
 - The IPTV provider rate-limits (HTTP 46x) and allows **one connection**. Don't hammer its API, and don't
   tune channels while someone is watching (`GET /api/v1/admin/iptv/hub`).
+- **`main` is protected** by the *Protect main* ruleset (#283): changes land only through a PR with passing
+  `changes`, `server`, `clients`, `android-web` and `docs` checks. Force-pushes and deletion are blocked, and
+  nobody can bypass it. Don't disable or edit the ruleset unless the owner asks. A PR that renames or removes
+  one of these CI jobs must say so, because the ruleset has to change with it (`docs/OPERATIONS.md`).
 - Stage only the files you changed (`git add <paths>`, never `git add -A`). Don't commit `clients/data/`
   or other local artifacts.
 - Keep `docs/STATUS.md` honest (see §6).

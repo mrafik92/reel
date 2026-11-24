@@ -736,7 +736,7 @@ async fn user_management_and_guards() {
             Some(json!({"current_password":cur,"new_password":new})),
         )
     };
-    assert_eq!(change("wrong", "a brand new password").await.0, 401);
+    assert_eq!(change("wrong", "a brand new password").await.0, 400);
     assert_eq!(change("another long pw 1", "short").await.0, 400);
     assert_eq!(
         change("another long pw 1", "a brand new password").await.0,

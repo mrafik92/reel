@@ -79,10 +79,14 @@ pub async fn stream_guard(State(st): State<AppState>, req: Request, next: Next) 
     let scope = format!("stream:{sid}");
     let mut signed_query = None;
     if let Some(token) = bearer(req.headers()) {
-        let user = match st.auth.authenticate(token).await {
+        let mut user = match st.auth.authenticate(token).await {
             Ok((u, _)) => u,
             Err(e) => return ApiError::from(e).into_response(),
         };
+        let peer = crate::auth::peer_of(req.extensions());
+        if let Err(e) = st.grant_admin_powers(&mut user, peer, req.headers()).await {
+            return e.into_response();
+        }
         // an unknown session is a 404, never a way past the owner check
         match st.playback.session(&sid).await {
             Ok(info) if info.user_id == user.id || user.is_admin() => {}

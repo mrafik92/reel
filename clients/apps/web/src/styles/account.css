@@ -1,0 +1,33 @@
+/* Settings → Account (#146) and device sign-in (#147). Spacing and colours come from the tokens.
+   Chromium 63/68 safe: margins instead of flex gap, no clamp(). */
+.account { display: flex; flex-direction: column; max-width: 47.5rem; }
+.account > * + * { margin-top: 1rem; }
+.account__row { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; margin: 0 -0.75rem -0.75rem 0; }
+.account__row > * { margin: 0 0.75rem 0.75rem 0; }
+.account__row .field { flex: 1 1 13.75rem; }
+.account__notice { display: flex; align-items: flex-start; margin: 0; padding: 0.75rem 0.9rem; border: 1px solid currentColor; border-radius: var(--radius); }
+.account__notice > * + * { margin-left: 0.6rem; }
+.account__enroll { display: flex; flex-wrap: wrap; align-items: flex-start; margin: 0 -1.25rem -1.25rem 0; }
+.account__enroll > * { margin: 0 1.25rem 1.25rem 0; }
+.account__enroll > div { flex: 1 1 15rem; min-width: 0; }
+.account__secret { display: inline-block; max-width: 100%; overflow-wrap: anywhere; font-size: 0.95em; letter-spacing: 0.04em; }
+.account__codes { display: flex; flex-direction: column; padding: 1rem; border: 1px solid currentColor; border-radius: var(--radius); }
+.account__codes > * + * { margin-top: 0.75rem; }
+.account__codes p { margin: 0; }
+.account__codes > p + * { margin-top: 0.75rem; }
+.account__codelist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-gap: 0.4rem 1rem; margin: 0; padding: 0; list-style: none; }
+.qr { display: block; flex: none; max-width: 100%; height: auto; border-radius: var(--radius); }
+.devicelink { display: flex; flex-wrap: wrap; align-items: center; margin: 0 -1.5rem -1.5rem 0; }
+.devicelink > * { margin: 0 1.5rem 1.5rem 0; }
+.devicelink__code { margin: 0; font-size: 2.6rem; font-weight: 700; letter-spacing: 0.08em; white-space: nowrap; }
+.devicelink__facts { margin: 0 0 1rem; display: grid; grid-template-columns: auto 1fr; grid-gap: 0.25rem 0.9rem; }
+.devicelink__facts dd { margin: 0; overflow-wrap: anywhere; }
+.auth__methods { display: flex; flex-wrap: wrap; margin-top: 0.6rem; }
+.auth__methods > * { margin: 0 0.5rem 0.5rem 0; }
+.auth__methods--stack { flex-direction: column; }
+.auth__methods--stack > * { margin-right: 0; }
+/* Signed in on /link: the top bar already shows the logo. */
+@media (min-width: 761px) {
+  .topbar ~ .main .logo--auth { display: none; }
+}
+html.tv .topbar ~ .main .logo--auth { display: none; }

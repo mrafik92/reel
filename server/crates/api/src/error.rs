@@ -119,6 +119,7 @@ impl From<reel_auth::AuthError> for ApiError {
         use reel_auth::AuthError as A;
         match e {
             A::InvalidCredentials => Self::Unauthorized("invalid username or password".into()),
+            A::SecondFactorRequired(_) => Self::Unauthorized("a second factor is required".into()),
             A::Unauthorized => Self::Unauthorized("invalid or expired token".into()),
             A::Forbidden => Self::Forbidden("forbidden".into()),
             A::Locked(d) => Self::Locked(d),

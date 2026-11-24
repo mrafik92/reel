@@ -54,5 +54,7 @@ http-body-util.workspace = true
 tower.workspace = true
 tempfile = "3"
 wiremock = "=0.6.4"
+# signs RS256 ID tokens for the mock issuer; already built through webauthn-rs
+openssl = "0.10"
 tokio-tungstenite = "0.29"
 futures-util = "0.3"
