@@ -8,6 +8,10 @@ use argon2::{
 
 use crate::{AuthError, AuthResult};
 
+/// Stored instead of a hash once an account signs in through a provider (#287). It isn't a valid
+/// PHC string, so no password can ever match it.
+pub const NO_PASSWORD: &str = "external";
+
 /// Shortest password accepted for a new or changed password (#148). Existing ones keep working.
 pub const MIN_PASSWORD_CHARS: usize = 12;
 const MAX_PASSWORD_BYTES: usize = 256;
@@ -132,6 +136,7 @@ mod tests {
         assert!(verify("hunter2hunter2", &h));
         assert!(!verify("wrong", &h));
         assert!(!verify("x", "!"));
+        assert!(!verify("external", NO_PASSWORD));
         assert_ne!(h, hash("hunter2hunter2", p).unwrap(), "salted");
     }
 

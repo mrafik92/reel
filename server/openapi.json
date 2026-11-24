@@ -2035,6 +2035,67 @@
         ]
       }
     },
+    "/api/v1/auth/login/passkey": {
+      "post": {
+        "summary": "Emergency sign-in with a Reel passkey, for when the provider is unavailable. LAN or Tailscale\nonly.",
+        "operationId": "login_passkey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyLoginBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyLoginDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not on the LAN or Tailscale",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
     "/api/v1/auth/logout": {
       "post": {
         "summary": "Revoke the current token.",
@@ -2242,6 +2303,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/auth/options": {
+      "get": {
+        "summary": "How people can sign in from here.",
+        "operationId": "login_options",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginOptionsDto"
                 }
               }
             }
@@ -7146,8 +7228,7 @@
       "AcceptInviteBody": {
         "type": "object",
         "required": [
-          "username",
-          "password"
+          "username"
         ],
         "properties": {
           "client": {
@@ -7183,8 +7264,11 @@
             "description": "Ticket from a provider sign-in, to link it to the new account (#149)."
           },
           "password": {
-            "type": "string",
-            "description": "At least 12 characters, and not a common password."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "At least 12 characters, and not a common password. Not used with a provider sign-in, and\nrefused without one once a provider is configured."
           },
           "username": {
             "type": "string"
@@ -10342,6 +10426,31 @@
           }
         }
       },
+      "LoginOptionsDto": {
+        "type": "object",
+        "description": "What the login page should offer.",
+        "required": [
+          "providers",
+          "password_login",
+          "passkey_login"
+        ],
+        "properties": {
+          "passkey_login": {
+            "type": "boolean",
+            "description": "Emergency passkey sign-in is available from this address."
+          },
+          "password_login": {
+            "type": "boolean",
+            "description": "Some account still signs in with a password, or no provider is configured."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OidcProviderPublicDto"
+            }
+          }
+        }
+      },
       "LoginResponse": {
         "type": "object",
         "required": [
@@ -10395,6 +10504,7 @@
           "admin_powers",
           "second_factor",
           "must_enroll_second_factor",
+          "has_password",
           "limits",
           "permissions",
           "direct_live"
@@ -10407,6 +10517,10 @@
           "direct_live": {
             "type": "boolean",
             "description": "The server lets this user play Live TV directly from the provider\n(`REEL_ALLOW_DIRECT_LIVE` and IPTV access)."
+          },
+          "has_password": {
+            "type": "boolean",
+            "description": "The account still has a stored password. False once it signs in through its provider."
           },
           "id": {
             "type": "integer",
@@ -10809,6 +10923,52 @@
           "credential": {
             "type": "object",
             "description": "The browser's WebAuthn attestation."
+          }
+        }
+      },
+      "PasskeyLoginBody": {
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "PasskeyLoginDto": {
+        "type": "object",
+        "required": [
+          "mfa_token",
+          "options"
+        ],
+        "properties": {
+          "mfa_token": {
+            "type": "string",
+            "description": "Send to `/auth/login/mfa` with the passkey assertion."
+          },
+          "options": {
+            "type": "object",
+            "description": "WebAuthn options for `navigator.credentials.get()`."
           }
         }
       },

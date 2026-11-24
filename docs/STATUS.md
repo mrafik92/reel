@@ -4,7 +4,7 @@ The repo is public (#268) so GitHub-hosted Actions minutes are free again; priva
 
 `main` is protected by the active *Protect main* ruleset (#283): changes need a PR and passing CI, force-pushes and deletion are blocked, and nobody can bypass it. GitHub reports the rules as active on `main`. A rejected direct push and a merge under the ruleset haven't been exercised yet.
 
-The Live TV channel-list redesign (#254) is rolled back in the code to the player with horizontal channel rows, at the owner's request. The live build still runs the redesign until this change is deployed.
+The Live TV channel-list redesign (#254) is rolled back in the code to the player with horizontal channel rows, at the owner's request. The rollback is live in `c03f32b`.
 
 The webOS direct-play audio selection fix (#255) is built: the player applies the selected audio after native tracks appear. Unit tests cover selection and incomplete track lists; verification on the LG TV and reported title remains pending.
 
@@ -18,11 +18,13 @@ Startup diagnostics (#210) are built for debug measurement in web development bu
 
 Verified by the owner on 2026-11-19: **Reel Web for Android** 0.1.1 on their phone against server `3a64eeb` (epic #225), and the **LG webOS app** on their LG TV (#17). Both are ✅ live.
 
-Live build: **`73476ab`** (2026-11-23) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
+Live build: **`c03f32b`** (2026-11-24) on CT 113 → https://reel.rafikii.co (LAN + Tailscale only).
 
 Reel Web for Android (epic #225), the WebView client, has its shell built (#226) and Back, full screen and insets (#227): checked on an Android 15 phone emulator against the live server (setup, sign-in kept across a force stop, Search → title → Back, external links, TLS refusal, error screens) and a dev build of the web app (full screen, Back order, rotation, keyboard). Recovery (#228) is built: a 20 s load timeout, plain-language error screens, and an automatic retry when the network returns, checked on the emulator with airplane mode, an unroutable address and a refused port. The web half of #227 (Search scroll and focus on return, Back on the sign-in page) reaches the live server with the next deploy. The Android TV check (#231) passed on the Android TV emulator with D-pad and remote keys only, so the APK now has a Leanback launcher entry and banner. Its web fixes (Back on Home, play/pause keys, the player's control row) and TV mode (#229) need that deploy too. Its playback matrix (#230) is recorded on the emulator: everything except HEVC 10-bit on a decoder without Main 10 (#245) plays, with web-player follow-up #246 (#247, *Next* leaving full screen, and #248, the Live retune after the background, are fixed and not yet deployed). The owner verified 0.1.1 on their phone against `3a64eeb` (2026-11-19); Android TV is still emulator-only. Reel Web releases are built on the Mac with `scripts/android-release.sh` (#232), sent to the phone with Taildrop and published to GitHub releases only on request. The script is checked with a throwaway keystore and dry runs; 0.1.1 was built with the release key and installed on the owner's phone, and no GitHub release exists yet.
 
-The sign-in epic (#150) is built on branch `150-auth-epic` and not deployed: admin powers only from the LAN or Tailscale (#127), the 12-character password rule (#148), passkeys, TOTP and recovery codes with a second factor required for admins (#146), TV sign-in approved on a phone (#147), and optional Google, Microsoft and OpenID Connect sign-in (#149). Checked with server tests and in Chromium against a local server (virtual authenticator, mock OpenID issuer, desktop, 1920×1080 TV mode and phone width). The Docker image wasn't built locally, and nothing has run on the real server, a real TV, a real phone passkey, or real Google or Microsoft accounts.
+The sign-in epic (#150) is deployed in `c03f32b`, with its real-world checks still open: admin powers only from the LAN or Tailscale (#127), the 12-character password rule (#148), passkeys, TOTP and recovery codes with a second factor required for admins (#146), TV sign-in approved on a phone (#147), and optional Google, Microsoft and OpenID Connect sign-in (#149). Checked with server tests and in Chromium against a local server (virtual authenticator, mock OpenID issuer, desktop, 1920×1080 TV mode and phone width). The image built in CI with OpenSSL, the migrations applied on CT 113, and the new routes answer there. Nobody has signed in through these flows on the real server yet, or used a real TV, a real phone passkey, or a real provider account. **Admin actions stay off until the admin account adds a second factor.**
+
+Passwordless sign-in (#287) is built: QR login on computers and TVs, email code + 2FA through WorkOS, password-free invites, per-account removal of stored passwords, and an emergency Reel passkey. Checked with server tests and in Chromium against a mock provider. WorkOS Production is configured and the admin account is linked on the real server, but a real phone, a real TV and a full WorkOS login through the new screen are still to be checked.
 
 ## What's verified on real hardware and data
 
@@ -47,7 +49,7 @@ The sign-in epic (#150) is built on branch `150-auth-epic` and not deployed: adm
 
 ## Built but not exercised for real (🧪)
 
-- **Sign-in epic** (#150; #127, #146, #147, #148, #149): see the note at the top and FEATURES. Still to check for real: the image build with OpenSSL, a passkey from a phone and a Mac over the LAN and the public name, the phone code on the LG TV, and Google and Microsoft accounts. **Deploying turns admin actions off until the admin enrolls a factor** (OPERATIONS → Runbooks).
+- **Sign-in epic** (#150; #127, #146, #147, #148, #149): see the note at the top and FEATURES. Still to check for real: a passkey from a phone and a Mac over the LAN and the public name, the phone code on the LG TV, and Google and Microsoft accounts. **Admin actions are off until the admin enrolls a factor** (OPERATIONS → Runbooks).
 
 - **Late subtitles (#237):** follow-up import scans and six-hour reconciliation are built; pending deploy and verification. A manual Movies scan on 2026-11-18 registered Frida’s subtitle on the live server.
 
@@ -236,7 +238,7 @@ proposal are in [#102](https://github.com/mrafik92/reel/issues/102#issuecomment-
 
 ## Security posture
 
-**Sign-in epic (#150, built, not deployed).** When deployed, it closes the in-Reel part of #127: admin powers need the LAN or Tailscale on every route, and a second factor. The Caddy `@lan_only` rules stay as a second layer. `cargo audit` on the branch reports only RUSTSEC-2026-0459 (#80, accepted). `url` moved to 2.5.9 because WebAuthn calls `Url::origin()` on client data (RUSTSEC-2026-0592). RUSTSEC-2026-0009 (`time`) has a reasoned exception: the fix needs rustc 1.88 and Reel never parses RFC 2822. The epic hasn't had an independent security review, which is worth doing before #32.
+**Sign-in epic (#150, deployed in `c03f32b`, not yet verified).** It closes the in-Reel part of #127: admin powers need the LAN or Tailscale on every route, and a second factor. The Caddy `@lan_only` rules stay as a second layer. `cargo audit` on this build reports only RUSTSEC-2026-0459 (#80, accepted). `url` moved to 2.5.9 because WebAuthn calls `Url::origin()` on client data (RUSTSEC-2026-0592). RUSTSEC-2026-0009 (`time`) has a reasoned exception: the fix needs rustc 1.88 and Reel never parses RFC 2822. The epic hasn't had an independent security review, which is worth doing before #32.
 
 ### Re-review 2026-11-15 (#16): GO with conditions
 

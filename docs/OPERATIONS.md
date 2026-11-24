@@ -96,7 +96,10 @@ CT 113:  deploy/ct113/deploy.py on the Mac  (ssh minix-local → pct exec 113 �
   `clients/android-web/README.md`. `--dry-run` builds but only prints the Taildrop and GitHub commands.
   Passwords: see Credentials. The Compose app's old `android-v0.1.0`–`0.3.0` releases stay on GitHub. Sideloading:
   `clients/android-web/README.md` → Install a release.
-- Rollback: pin `image: ghcr.io/mrafik92/reel:sha-<previous>` in the compose file and run `up -d`.
+- Rollback: pin `image: ghcr.io/mrafik92/reel:sha-<previous>` in the compose file and run `up -d`. A build older than
+  `c03f32b` also needs the database from before migrations 0017 and 0018: stop Reel, restore
+  `/root/reel-backups/reel.db.pre-150-20261124T001917Z` (CT 113, root-only) over `/opt/appdata/reel/reel.db`, remove
+  the `-wal` and `-shm` files, and keep the owner uid and `0600`. Anything written since that backup is lost.
 
 ### Ticket flow (GitHub Project #1)
 
@@ -142,6 +145,14 @@ Use a recovery code. Otherwise an admin uses Settings → Users & invites → Re
 them out. If the **only admin** is locked out, stop Reel, back up the database, and on CT 113 remove the factors with
 `DELETE FROM user_totp WHERE user_id = 1; DELETE FROM user_passkeys WHERE user_id = 1; DELETE FROM user_recovery_codes WHERE user_id = 1;`
 (check the id in `users` first), start Reel, sign in with the password and enroll again.
+
+**Passwordless sign-in (#287)**
+The live provider is WorkOS Production (issuer `https://therapeutic-terrain-48.authkit.app`, Connect app *Reel*); its client
+secret is only in Reel's database, encrypted. Each person links it in Settings → Account, which deletes their stored
+password. **An admin's password is deleted only after they also add a Reel passkey**: that passkey is the way in if WorkOS is
+down (login page → *Emergency passkey*, LAN or Tailscale only). Keep it. If an admin loses both, follow *Someone lost their
+second factor*, and restore a password from the pre-deploy database backup or by resetting `password_hash` with the server
+stopped.
 
 **Add Google or Microsoft sign-in (#149)**
 In the provider's console, create a web OAuth client with the redirect URI `https://reel.rafikii.co/api/v1/auth/oidc/callback`.

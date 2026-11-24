@@ -358,6 +358,32 @@ pub async fn public_providers(
     ))
 }
 
+/// What the login page should offer.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LoginOptionsDto {
+    pub providers: Vec<OidcProviderPublicDto>,
+    /// Some account still signs in with a password, or no provider is configured.
+    pub password_login: bool,
+    /// Emergency passkey sign-in is available from this address.
+    pub passkey_login: bool,
+}
+
+/// How people can sign in from here.
+#[utoipa::path(get, path = "/auth/options", security(()), responses((status = 200, body = LoginOptionsDto)))]
+pub async fn login_options(
+    State(st): State<AppState>,
+    Peer(peer): Peer,
+    headers: HeaderMap,
+) -> ApiResult<Json<LoginOptionsDto>> {
+    let Json(providers) = public_providers(State(st.clone())).await?;
+    let password_login = providers.is_empty() || st.auth.any_password_left().await?;
+    Ok(Json(LoginOptionsDto {
+        providers,
+        password_login,
+        passkey_login: st.auth.passkeys_available() && on_admin_network(&st.config, peer, &headers),
+    }))
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct OidcStartBody {
     /// base64url SHA-256 of a random secret the browser keeps until it returns.

@@ -14,5 +14,17 @@
 .devicelink__code { margin: 0; font-size: clamp(2rem, 4vw, 3.25rem); font-weight: 700; letter-spacing: 0.08em; white-space: nowrap; }
 .devicelink__facts { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; }
 .devicelink__facts dd { margin: 0; overflow-wrap: anywhere; }
+.auth__form--center { display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }
+.auth__form--center > .btn, .auth__form--center > .auth__methods--stack { width: 100%; }
+.auth__form--center p { margin: 0; }
+.auth__form--center .auth__methods:not(.auth__methods--stack) { justify-content: center; }
+.auth__or { display: flex; align-items: center; gap: 12px; width: 100%; font-size: 0.85em; opacity: 0.55; }
+.auth__or::before, .auth__or::after { content: ""; flex: 1; height: 1px; background: currentColor; }
+.pairing { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.pairing p { margin: 0; }
+.pairing__status { display: flex; align-items: center; gap: 9px; }
+.pairing__status span { width: 9px; height: 9px; border-radius: 50%; background: var(--accent, #e5534b); animation: pairing-pulse 1.6s ease-in-out infinite; }
+@keyframes pairing-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .pairing__status span { animation: none; } }
 .auth__methods { display: flex; flex-wrap: wrap; gap: 8px; }
 .auth__methods--stack { flex-direction: column; }
