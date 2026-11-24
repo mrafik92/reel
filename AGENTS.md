@@ -110,6 +110,10 @@ scripts/tests/android-release-test.sh
   are done and re-reviewed. Don't add public exposure.
 - The IPTV provider rate-limits (HTTP 46x) and allows **one connection**. Don't hammer its API, and don't
   tune channels while someone is watching (`GET /api/v1/admin/iptv/hub`).
+- **`main` is protected** by the *Protect main* ruleset (#283): changes land only through a PR with passing
+  `changes`, `server`, `clients`, `android-web` and `docs` checks. Force-pushes and deletion are blocked, and
+  nobody can bypass it. Don't disable or edit the ruleset unless the owner asks. A PR that renames or removes
+  one of these CI jobs must say so, because the ruleset has to change with it (`docs/OPERATIONS.md`).
 - Stage only the files you changed (`git add <paths>`, never `git add -A`). Don't commit `clients/data/`
   or other local artifacts.
 - Keep `docs/STATUS.md` honest (see §6).

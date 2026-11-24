@@ -35,7 +35,7 @@
 ## Build & deploy pipeline
 
 ```
-git push main ──► GitHub Actions
+merge to main ──► GitHub Actions
                    ├── ci.yml:    cargo fmt/clippy/nextest (rustc 1.86, ffmpeg, mold), bun typecheck/build
                    └── image.yml: docker buildx (deploy/Dockerfile) → ghcr.io/mrafik92/reel:latest + :sha-xxxx
                                   build args GIT_SHA / BUILD_DATE → shown in Settings → About
@@ -220,6 +220,18 @@ the container (`sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' /config/config.xml`)
 - None. The repo is public, and a self-hosted runner would let fork PRs run code on the homelab, so don't
   register one (the CT 116 runner was removed and its container destroyed in #268). GitHub → Settings → Actions → Runners
   should stay empty.
+
+**Branch protection (`main`)**
+- The active ruleset *Protect main* (id `27947506`, GitHub → Settings → Rules → Rulesets) requires a PR and
+  passing `changes`, `server`, `clients`, `android-web` and `docs` checks from GitHub Actions. It blocks
+  force-pushes and deletion, requires no approval, and has no bypass actors, so it also applies to the owner.
+- Jobs skipped by their `if:` count as passing, so a docs-only PR can still merge. Renaming or removing a required
+  job leaves PRs waiting for a check that never arrives, so update the ruleset in the same change.
+- If Actions is down and a merge can't wait, the owner can turn the ruleset off and back on:
+  ```sh
+  gh api -X PUT repos/mrafik92/reel/rulesets/27947506 -f enforcement=disabled
+  gh api -X PUT repos/mrafik92/reel/rulesets/27947506 -f enforcement=active
+  ```
 
 **Bootstrap a fresh instance**
 `deploy/ct113/bootstrap.py` (on minix) creates the admin, libraries, Arr servers and webhooks. It's idempotent and never prints keys.
