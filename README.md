@@ -177,3 +177,9 @@ Bug reports and ideas are welcome as [issues](https://github.com/mrafik92/reel/i
 report security problems privately instead: see [SECURITY.md](SECURITY.md).
 
 The original design spec is in [SPEC.md](SPEC.md); the docs in [docs/](docs/README.md) supersede it.
+
+## License
+
+Reel is free software under the [GNU Affero General Public License v3.0 or later](LICENSE). You can run,
+study, change and share it. If you run a modified version for other people, including over a network,
+you have to offer them its source under the same license.
