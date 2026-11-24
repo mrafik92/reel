@@ -1162,13 +1162,6 @@ html[data-input="key"] .admin__link:focus {
     flex: 1 1 100%;
     margin: 0.8rem 0 0.5rem;
   }
-  .auth {
-    display: block;
-    padding-top: 2.5rem;
-  }
-  .logo--auth {
-    margin-bottom: 1.5rem;
-  }
   .dsheet__panel {
     width: 100%;
   }
