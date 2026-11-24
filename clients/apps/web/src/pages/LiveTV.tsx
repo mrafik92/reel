@@ -21,6 +21,8 @@ import {
 } from "../components/live/store";
 import { currentUser } from "../lib/auth";
 import { createTapToggle } from "../lib/tap";
+import { createSwipe } from "../lib/swipe";
+import { TV } from "../lib/mode";
 
 const STATS_KEY = "reel.live.stats";
 const ZAP_DEBOUNCE = 320;
@@ -411,6 +413,58 @@ function Watch(): JSX.Element {
     shown: () => isFull() && osd(),
     show: () => (isFull() ? showOsd() : activate()),
     hide: () => (isFull() ? setOsd(false) : activate()),
+  });
+
+  // Phones: a vertical swipe on the full-screen picture zaps like Channel Up/Down (#291). Touch
+  // Events only, so mouse, keyboard and D-pad are unchanged. Off on TV, with the mini guide or any
+  // sheet/dialog up (they scroll as usual), and while the video is in Picture-in-Picture.
+  const swipe = createSwipe();
+  const swipeOn = () =>
+    !TV && isFull() && !mini() && !document.pictureInPictureElement && !document.querySelector("[data-nav-trap]");
+  onMount(() => {
+    // A finger back on the glass while a zap is pending is probably the next swipe: hold the
+    // tune until it lifts, so a run of swipes tunes only the last channel even when the viewer
+    // is slower than ZAP_DEBOUNCE between them.
+    let held = false;
+    const release = () => {
+      if (!held) return;
+      held = false;
+      const c = pending();
+      if (c) zapTimer = setTimeout(() => tuneNow(c), ZAP_DEBOUNCE);
+    };
+    const onStart = (e: TouchEvent) => {
+      if (!swipeOn()) return swipe.cancel();
+      swipe.start(e.touches, Date.now());
+      if (pending() && zapTimer && !held) {
+        clearTimeout(zapTimer);
+        held = true;
+      }
+    };
+    const onMove = (e: TouchEvent) => swipe.move(e.touches);
+    const onEnd = (e: TouchEvent) => {
+      const dir = swipe.end(e.changedTouches, e.touches.length, Date.now());
+      if (e.touches.length) return;
+      if (!dir || !swipeOn()) return release();
+      held = false;
+      // A swipe isn't a tap: no click (and no controls toggle) should follow it.
+      if (e.cancelable) e.preventDefault();
+      tap.cancel();
+      zap(dir);
+    };
+    const onCancel = () => {
+      swipe.cancel();
+      release();
+    };
+    screen.addEventListener("touchstart", onStart, { passive: true });
+    screen.addEventListener("touchmove", onMove, { passive: true });
+    screen.addEventListener("touchend", onEnd, { passive: false });
+    screen.addEventListener("touchcancel", onCancel, { passive: true });
+    onCleanup(() => {
+      screen.removeEventListener("touchstart", onStart);
+      screen.removeEventListener("touchmove", onMove);
+      screen.removeEventListener("touchend", onEnd);
+      screen.removeEventListener("touchcancel", onCancel);
+    });
   });
 
   let lastMove = 0;
