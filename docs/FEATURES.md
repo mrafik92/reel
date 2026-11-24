@@ -33,6 +33,7 @@ gaps are listed in [STATUS.md](STATUS.md).
 |---|---|---|
 | Search TMDB → **Add** → Radarr/Sonarr | ✅ | One click for admins and auto-approve users. Others go through approval and per-user quotas |
 | Live progress ring | ✅ | States: searching → queued → downloading % → importing → available (stalled / failed / not found shown too). Pushed over WebSocket |
+| Bulk request retry | 🧪 | In Requests → Problems, admins can choose **Retry all** to retry failed and not-found entries in the list one at a time. Reel reports how many retries started and how many could not start (#67) |
 | Downloads page | ✅ | The whole Radarr and Sonarr queue, including items not started from Reel, with reasons such as "qBittorrent is downloading metadata" |
 | qBittorrent / Transmission adapters | ✅ | Speed, ETA, peers, client state. Supports qBittorrent 5's `QBT_SID_<port>` cookie |
 | Notifications | 🧪 | Discord, Telegram, generic webhook |

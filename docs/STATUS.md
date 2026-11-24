@@ -28,6 +28,8 @@ The sign-in epic (#150) is deployed in `c03f32b`, with its real-world checks sti
 
 Passwordless sign-in (#287) is deployed (live since `4c9d820`): QR login on computers and TVs, email code + 2FA through WorkOS, password-free invites, per-account removal of stored passwords, and an emergency Reel passkey. Checked with server tests and in Chromium against a mock provider. WorkOS Production is configured and the admin account is linked on the real server, but a real phone, a real TV and a full WorkOS login through the new screen are still to be checked.
 
+The admin **Retry all** action in Requests → Problems is built as part of #67. Indexer health reporting and automatic recovery remain open in that issue.
+
 ## What's verified on real hardware and data
 
 - **Library:** 178 movies, 4 shows, 4 anime from NFS, with TMDB metadata. Rename detection, multi-episode files and targeted webhook rescans all work.
