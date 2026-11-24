@@ -224,7 +224,7 @@ impl Discovery {
                 .map(|r| reel_core::text::fold(r.display_title()))
                 .collect();
             let rows: Vec<(i64, Option<i64>, String, Option<i64>)> = sqlx::query_as(&format!(
-                "SELECT id, tmdb_id, title_norm, year FROM {table} WHERE missing = 0 AND \
+                "SELECT id, tmdb_id, title_norm, year FROM {table} WHERE missing = 0 AND duplicate = 0 AND \
                  (tmdb_id IN (SELECT value FROM json_each(?1)) \
                   OR title_norm IN (SELECT value FROM json_each(?2))) ORDER BY id"
             ))

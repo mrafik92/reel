@@ -1227,6 +1227,8 @@ pub async fn update_source(
     .bind(id)
     .execute(&st.db)
     .await?;
+    // enabling, disabling or moving a login changes which copy of a shared catalog shows (#297)
+    reel_iptv::dedup::refresh(&st.db).await?;
     st.audit(
         &a.user,
         "iptv_source_update",
@@ -1259,6 +1261,8 @@ pub async fn delete_source(
     if n == 0 {
         return Err(ApiError::NotFound);
     }
+    // another login on the same provider takes over the deleted one's titles (#297)
+    reel_iptv::dedup::refresh(&st.db).await?;
     st.audit(
         &a.user,
         "iptv_source_delete",

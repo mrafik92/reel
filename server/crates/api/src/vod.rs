@@ -407,7 +407,7 @@ pub async fn vod_categories(
     };
     let rows: Vec<(i64, String, i64)> = sqlx::query_as(&format!(
         "SELECT c.id, c.name, count(i.id) AS n FROM vod_categories c \
-         JOIN {table} i ON i.category_id = c.id AND i.missing = 0 \
+         JOIN {table} i ON i.category_id = c.id AND i.missing = 0 AND i.duplicate = 0 \
          WHERE c.kind = ? GROUP BY c.id ORDER BY n DESC, c.name"
     ))
     .bind(kind)
@@ -432,7 +432,8 @@ pub async fn vod_genres(
         "vod_series"
     };
     let values = sqlx::query_scalar::<_, String>(&format!(
-        "SELECT DISTINCT genres FROM {table} WHERE missing = 0 AND COALESCE(genres, '') <> ''"
+        "SELECT DISTINCT genres FROM {table} WHERE missing = 0 AND duplicate = 0 \
+         AND COALESCE(genres, '') <> ''"
     ))
     .fetch_all(&st.db)
     .await?;
@@ -503,7 +504,7 @@ async fn list(
         ),
     };
     let mut binds: Vec<Bind> = vec![];
-    let mut sql_where = String::from("m.missing = 0");
+    let mut sql_where = String::from("m.missing = 0 AND m.duplicate = 0");
     if let Some(c) = q.category {
         sql_where.push_str(" AND m.category_id = ?");
         binds.push(Bind::I(c));
@@ -896,7 +897,8 @@ async fn lane_cards(
         "vod_series m".to_string()
     };
     let mut sql = format!(
-        "SELECT {} FROM {from} WHERE m.missing = 0 {extra_where} ORDER BY {order}, m.id LIMIT {LANE_ITEMS}",
+        "SELECT {} FROM {from} WHERE m.missing = 0 AND m.duplicate = 0 {extra_where} \
+         ORDER BY {order}, m.id LIMIT {LANE_ITEMS}",
         card_cols(kind)
     );
     if bind_cat.is_none() {
@@ -962,7 +964,7 @@ pub async fn vod_lanes(
     };
     let cats: Vec<(i64, String, i64)> = sqlx::query_as(&format!(
         "SELECT c.id, c.name, count(i.id) AS n FROM vod_categories c \
-         JOIN {table} i ON i.category_id = c.id AND i.missing = 0 \
+         JOIN {table} i ON i.category_id = c.id AND i.missing = 0 AND i.duplicate = 0 \
          WHERE c.kind = ? GROUP BY c.id HAVING n >= 6 ORDER BY n DESC, c.name LIMIT 10"
     ))
     .bind(kind)
@@ -1020,7 +1022,7 @@ pub(crate) async fn search_cards(
             "vod_series m".to_string()
         };
         let rows = sqlx::query(&format!(
-            "SELECT {}, m.title_norm AS norm FROM {from} WHERE m.missing = 0 \
+            "SELECT {}, m.title_norm AS norm FROM {from} WHERE m.missing = 0 AND m.duplicate = 0 \
              AND m.title_norm LIKE ? ESCAPE '\\' LIMIT 300",
             card_cols(kind)
         ))
@@ -1235,12 +1237,18 @@ pub async fn vod_play(
             })?
         }
     };
-    let target = reel_iptv::vod::resolve_target(&st.db, kind, req.id)
+    let mut targets = reel_iptv::vod::resolve_targets(&st.db, kind, req.id)
         .await
         .map_err(|e| match e {
             reel_iptv::Error::NotFound(_) => ApiError::NotFound,
             e => e.into(),
         })?;
+    // a login with a free connection first; else the main one under the budget policy (#297)
+    let pick = targets
+        .iter()
+        .position(|t| st.iptv.live.vod_slot_free(t.source_id, t.max_connections))
+        .unwrap_or(0);
+    let target = targets.swap_remove(pick);
     // re-deciding the same title on the same device replaces the previous playback
     crate::playback::replace_previous(&st, u.id(), &req.device_id, vod_file_id(kind, req.id)).await;
     let limits = &u.user.limits;

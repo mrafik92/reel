@@ -76,6 +76,8 @@ struct Xt {
     media_hits: AtomicUsize,
     /// User-Agent of every media request
     media_uas: Mutex<Vec<String>>,
+    /// login (username) of every media request
+    media_users: Mutex<Vec<String>>,
     /// serve movies slowly (1 KiB / 50 ms) so a response stays open
     slow_media: AtomicBool,
     /// media responses whose body is still open (dropped = provider connection closed)
@@ -160,10 +162,11 @@ async fn panel_api(
 
 async fn serve_movie(
     State((x, _)): State<(Arc<Xt>, String)>,
-    Path((_u, _p, file)): Path<(String, String, String)>,
+    Path((u, _p, file)): Path<(String, String, String)>,
     req: Request<Body>,
 ) -> Response {
     x.media_hits.fetch_add(1, SeqCst);
+    x.media_users.lock().unwrap().push(u);
     if let Some(ua) = req
         .headers()
         .get(header::USER_AGENT)
@@ -1250,6 +1253,105 @@ async fn vod_shares_the_provider_connection_budget_with_live_tv() {
     assert_eq!(e.state.iptv.live.vod_lease_count(), 0);
     let (s, _) = tune(&alice, json!({"mode":"passthrough"})).await;
     assert_eq!(s, StatusCode::OK);
+    e.state.iptv.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_second_login_on_the_provider_shows_nothing_twice_and_serves_a_second_viewer() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let e = env(|c| c.iptv_grace_secs = 30, 1).await;
+    let (_, before) = get(&e.admin, "/api/v1/vod/movies?limit=100").await;
+    let (_, chans_before) = get(&e.admin, "/api/v1/iptv/channels").await;
+    // the provider's second login (#297)
+    let (s, v) = send(
+        &e.admin,
+        "POST",
+        "/api/v1/admin/iptv/sources",
+        Some(json!({"name":"Panel 2","kind":"xtream","url":e.base,"username":"carol","password":"pw2","max_connections":1})),
+    )
+    .await;
+    assert!(s.is_success(), "{v}");
+    let second = v["id"].as_i64().unwrap();
+    // the create already started a background refresh: wait for it, then make sure it ran
+    while e.state.iptv.is_refreshing(second) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let _ = e.state.iptv.refresh_source(second).await;
+    let both: i64 = sqlx::query_scalar("SELECT count(DISTINCT source_id) FROM vod_movies")
+        .fetch_one(&e.state.db)
+        .await
+        .unwrap();
+    assert_eq!(both, 2, "both logins imported the catalog");
+
+    let (_, after) = get(&e.admin, "/api/v1/vod/movies?limit=100").await;
+    assert_eq!(titles(&after), titles(&before), "every title once");
+    let (_, chans) = get(&e.admin, "/api/v1/iptv/channels").await;
+    assert_eq!(chans, chans_before, "every channel once");
+    let (_, cats) = get(&e.admin, "/api/v1/vod/categories").await;
+    let names: Vec<&str> = cats
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Drama", "Misc"]);
+    let (_, found) = get(&e.admin, "/api/v1/search/all?q=dune").await;
+    assert_eq!(found["vod"].as_array().map(Vec::len), Some(1), "{found}");
+
+    // alice holds the main login with live TV; bob's movie goes through the second login
+    let chan = chans[0]["id"].as_i64().unwrap();
+    let movie = after["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["title"] == "Dune")
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    let (alice, _) = user_app(&e, "alice").await;
+    let (bob, _) = user_app(&e, "bob2").await;
+    let (dave, _) = user_app(&e, "dave").await;
+    let (s, live) = send(
+        &alice,
+        "POST",
+        &format!("/api/v1/iptv/channels/{chan}/tune"),
+        Some(json!({"mode":"passthrough"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{live}");
+    let (s, v) = send(
+        &bob,
+        "POST",
+        "/api/v1/vod/play",
+        Some(json!({"kind":"movie","id":movie})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(
+        e.state
+            .iptv
+            .live
+            .session(live["session_id"].as_str().unwrap())
+            .is_some(),
+        "alice keeps watching"
+    );
+    assert_eq!(e.state.iptv.live.vod_lease_count(), 1);
+    let users = e.x.media_users.lock().unwrap().clone();
+    assert!(
+        !users.is_empty() && users.iter().all(|u| u == "carol"),
+        "{users:?}"
+    );
+    // both logins busy: a third viewer is told so, as with one login
+    let (s, v) = send(
+        &dave,
+        "POST",
+        "/api/v1/vod/play",
+        Some(json!({"kind":"movie","id":movie})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS, "{v}");
     e.state.iptv.shutdown().await;
 }
 

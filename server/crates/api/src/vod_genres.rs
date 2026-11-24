@@ -26,7 +26,7 @@ pub fn spawn(db: SqlitePool, tmdb: TmdbClient) {
 async fn backfill_one(db: &SqlitePool, tmdb: &TmdbClient) -> anyhow::Result<bool> {
     let Some((id, title, year, existing_id)) = sqlx::query_as::<_, Movie>(
         "SELECT id, title, year, tmdb_id FROM vod_movies
-         WHERE missing = 0 AND COALESCE(genres, '') = ''
+         WHERE missing = 0 AND duplicate = 0 AND COALESCE(genres, '') = ''
            AND (genre_checked_at IS NULL OR genre_checked_at < unixepoch() - 30 * 86400)
          ORDER BY genre_checked_at, id LIMIT 1",
     )

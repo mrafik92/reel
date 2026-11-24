@@ -107,6 +107,14 @@ impl IptvService {
     /// Reapers, the refresh scheduler and the warm-favorites task.
     pub fn spawn_background(self: &Arc<Self>) {
         self.hub().spawn_reaper();
+        // flags of logins on the same provider (#297): rows imported before the migration
+        // and sources changed while the server was down
+        let pool = self.pool.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::dedup::refresh(&pool).await {
+                warn!("merging logins of the same provider failed: {e}");
+            }
+        });
         self.live.spawn_reaper();
         let me = self.clone();
         tokio::spawn(async move {

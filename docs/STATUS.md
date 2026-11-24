@@ -28,6 +28,8 @@ The sign-in epic (#150) is deployed in `c03f32b`, with its real-world checks sti
 
 Passwordless sign-in (#287) is deployed (live since `4c9d820`): QR login on computers and TVs, email code + 2FA through WorkOS, password-free invites, per-account removal of stored passwords, and an emergency Reel passkey. Checked with server tests and in Chromium against a mock provider. WorkOS Production is configured and the admin account is linked on the real server, but a real phone, a real TV and a full WorkOS login through the new screen are still to be checked.
 
+A second login on the IPTV provider no longer duplicates the catalog (#297, built, not deployed). The owner added the provider's second username as a second Xtream source (`lionz2`, same server), and every channel, movie, series and category showed twice. Logins on the same server now share one catalog, and each login adds a connection for live TV and VOD. Checked with server tests; after the deploy, the startup pass hides the copies on CT 113 without a refresh. Live TV and VOD with both logins in use at once still need checking on the real provider.
+
 The admin **Retry all** action in Requests → Problems is built as part of #67. Indexer health reporting and automatic recovery remain open in that issue.
 
 ## What's verified on real hardware and data
