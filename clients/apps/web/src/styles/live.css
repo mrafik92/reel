@@ -508,6 +508,8 @@ html[data-input="key"] .live__screen:focus {
   box-shadow: none;
   z-index: 70;
   cursor: default;
+  /* #291: a vertical swipe zaps; the page mustn't scroll, zoom or pull to refresh under it. */
+  touch-action: none;
   animation: live-full-in 320ms var(--ease-out);
 }
 @keyframes live-full-in {
