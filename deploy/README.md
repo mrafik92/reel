@@ -18,7 +18,7 @@ Docker is the supported way to run Reel: one image contains the server, the web 
 ## 1. Install
 
 ```sh
-git clone <repo> reel && cd reel/deploy
+git clone https://github.com/mrafik92/reel.git && cd reel/deploy
 cp .env.example .env            # set MEDIA_DIR, REEL_WEBHOOK_SECRET, RENDER_GID/VIDEO_GID …
 cp config/config.toml.example config/config.toml    # optional: pre-create libraries
 docker compose up -d --build    # first build takes a few minutes
