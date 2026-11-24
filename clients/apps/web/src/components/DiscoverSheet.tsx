@@ -134,14 +134,14 @@ export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: 
                         </button>
                       </Show>
                       <Show when={failed() && dl()?.request_id}>
-                        <button type="button" class="btn btn--primary btn--lg" data-autofocus onClick={() => void actions.retry(dl()!.request_id, c().title)}>
+                        <button type="button" class="btn btn--accent btn--lg" data-autofocus onClick={() => void actions.retry(dl()!.request_id, c().title)}>
                           <Icon name="retry" /> <span>Try again</span>
                         </button>
                       </Show>
                       <Show when={!available() && !active() && c().status !== "requested"}>
                         <button
                           type="button"
-                          class="btn btn--primary btn--lg"
+                          class="btn btn--accent btn--lg"
                           data-autofocus
                           aria-disabled={isBusy(props.media, props.tmdbId) || (picked() != null && picked()!.length === 0) ? "true" : undefined}
                           onClick={() => void add()}

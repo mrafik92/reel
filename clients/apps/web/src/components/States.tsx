@@ -56,7 +56,7 @@ export function ErrorState(props: { error: unknown; onRetry?: () => void; title?
           </Show>
         </p>
         <Show when={props.onRetry}>
-          <button class="btn btn--primary" type="button" data-autofocus onClick={() => props.onRetry?.()}>
+          <button class="btn btn--accent" type="button" data-autofocus onClick={() => props.onRetry?.()}>
             <Icon name="retry" /> <span>Try again</span>
           </button>
         </Show>
@@ -109,7 +109,7 @@ export function SkeletonRow(props: { variant?: "poster" | "landscape"; count?: n
 export function FirstRun(): JSX.Element {
   return (
     <div class="state state--first">
-      <p class="eyebrow eyebrow--accent">Welcome to Reel</p>
+      <p class="eyebrow eyebrow--bar">Welcome to Reel</p>
       <h2 class="state__title">{isAdmin() ? "Add your first library" : "Nothing to watch yet"}</h2>
       <p class="state__body">
         {isAdmin()
@@ -118,7 +118,7 @@ export function FirstRun(): JSX.Element {
       </p>
       <Show when={isAdmin()}>
         <div class="actions">
-          <a class="btn btn--primary btn--lg" href={href("/admin/libraries")} data-autofocus>
+          <a class="btn btn--accent btn--lg" href={href("/admin/libraries")} data-autofocus>
             <Icon name="plus" /> <span>Add a library</span>
           </a>
           <a class="btn btn--lg" href={href("/discover")}>

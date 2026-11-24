@@ -175,14 +175,14 @@ export default function Requests(): JSX.Element {
                       </div>
                       <div class="req__actions">
                         <Show when={isAdmin() && st() === "requested"}>
-                          <button type="button" class="btn btn--primary btn--sm" onClick={() => void approve(r)}><Icon name="check" /> <span>Approve</span></button>
+                          <button type="button" class="btn btn--accent btn--sm" onClick={() => void approve(r)}><Icon name="check" /> <span>Approve</span></button>
                           <button type="button" class="btn btn--sm" onClick={() => void decline(r)}><Icon name="x" /> <span>Decline</span></button>
                         </Show>
                         <Show when={st() === "failed" || st() === "not_found"}>
-                          <button type="button" class="btn btn--primary btn--sm" onClick={() => void actions.retry(r.id, r.title ?? undefined)}><Icon name="retry" /> <span>Retry</span></button>
+                          <button type="button" class="btn btn--accent btn--sm" onClick={() => void actions.retry(r.id, r.title ?? undefined)}><Icon name="retry" /> <span>Retry</span></button>
                         </Show>
                         <Show when={st() === "available"}>
-                          <button type="button" class="btn btn--sm" onClick={() => void actions.play({ title: r.title ?? "", media_type: r.media_type, tmdb_id: r.tmdb_id })}>
+                          <button type="button" class="btn btn--primary btn--sm" onClick={() => void actions.play({ title: r.title ?? "", media_type: r.media_type, tmdb_id: r.tmdb_id })}>
                             <Icon name="play" /> <span>Play</span>
                           </button>
                         </Show>

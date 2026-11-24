@@ -6,6 +6,7 @@ import { href } from "../../lib/mode";
 import { EmptyState, ErrorState, SkeletonRow } from "../States";
 import { VodCard } from "./VodCard";
 import { CategoryBar, CategoryLabel, CategorySheet } from "./Categories";
+import { isPhoneWidth } from "../../lib/viewport";
 
 const SORTS: { value: VodSort; label: string; detail?: string }[] = [
   { value: "added", label: "Recently added", detail: "Newest on your provider first" },
@@ -176,16 +177,22 @@ export function VodBrowser(props: { kind: VodKind; switcher: JSX.Element; onRead
   return (
     <>
       <header class="page-head picker vpicker">
-        {props.switcher}
-        <div class="page-head__row picker__title-row">
+        <div class="page-head__row picker__title-row" data-nav-group>
           <h1 class="page-title">
             {movies ? "Films" : "Series"}
             <Show when={cats()}>
               <span class="page-title__count">
-                {total().toLocaleString()} on IPTV · {(cats() ?? []).length} categories
+                {total().toLocaleString()} · {(cats() ?? []).length} categories
               </span>
             </Show>
           </h1>
+          {props.switcher}
+          <span class="picker__spacer" />
+          <Show when={cats() && total() > 0 && grid()}>
+            <button type="button" class="btn btn--dropdown picker__sort" aria-label={`Sort: ${sortLabel()}`} onClick={() => setSortSheet(true)}>
+              <span>{sortLabel()}</span> <Icon name="down" />
+            </button>
+          </Show>
         </div>
 
         <Show when={cats() && total() > 0}>
@@ -206,11 +213,6 @@ export function VodBrowser(props: { kind: VodKind; switcher: JSX.Element; onRead
               </button>
             </Show>
             <span class="picker__spacer" />
-            <Show when={grid()}>
-              <button type="button" class="btn btn--ghost picker__sort" onClick={() => setSortSheet(true)}>
-                <Icon name="sort" /> <span class="btn__label">Sort</span> <span class="btn__value">{sortLabel()}</span>
-              </button>
-            </Show>
             <label class="vsearch" classList={{ "has-value": !!typed() }}>
               <Icon name="search" class="vsearch__icon" />
               <input
@@ -338,10 +340,10 @@ export function VodBrowser(props: { kind: VodKind; switcher: JSX.Element; onRead
                 class="library__grid"
                 items={items()}
                 total={gridTotal()}
-                minColumnRem={tv ? 8.4 : 10.5}
+                minColumnRem={tv ? 9.6 : isPhoneWidth() ? 6.4 : 10.5}
                 ratio={1.5}
-                captionRem={tv ? 3 : 3.1}
-                gapRem={tv ? 1.25 : 1.5}
+                captionRem={isPhoneWidth() ? 3.1 : 0}
+                gapRem={tv ? 0.7 : 0.5}
                 onRange={onRange}
                 renderItem={(it, i) => <VodCard card={it} badge={false} autofocus={i() === 0} />}
                 renderPlaceholder={() => (

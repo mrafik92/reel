@@ -613,14 +613,12 @@ html.tv .discover__rows .row {
 .reqlist.is-loading {
   height: 20rem;
 }
+/* Flat rows on the page, separated by hairlines. */
 .req {
   display: flex;
   align-items: center;
-  margin-bottom: 0.6rem;
-  padding: 0.8rem 1rem 0.8rem 0.8rem;
-  border-radius: var(--radius-l);
-  background: rgba(var(--bg-1-rgb), 0.75);
-  border: 1px solid var(--line);
+  padding: 0.75rem 0.3rem;
+  border-bottom: 1px solid var(--line);
 }
 .req__main {
   display: flex;
@@ -638,10 +636,10 @@ html.tv .discover__rows .row {
   cursor: pointer;
 }
 .req__main:hover {
-  background: var(--ink-5);
+  background: var(--fill-row);
 }
 .req__main:focus {
-  background: var(--ink-5);
+  background: var(--fill-row);
 }
 html[data-input="key"] .req__main:focus {
   box-shadow: var(--focus-ring);

@@ -4,91 +4,56 @@
    no inset, no clamp(), no backdrop-filter, no :focus-visible.
    ========================================================================== */
 
-/* ---------- Source switch: My library · IPTV ------------------------------ */
-.srcrow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  margin-bottom: 1.1rem;
-}
-.srcrow > * {
-  margin-bottom: 0.5rem;
-}
-.srcrow .tabs {
-  margin: 0 0 0.5rem 1.4rem;
-  padding-left: 1.4rem;
-  border-left: 1px solid var(--line);
-}
-.srcrow .tabs .tab {
-  margin-bottom: 0;
-}
+/* ---------- Source switch ------------------------------------------------ */
+/* My library · IPTV: text tabs with the accent bar above the current one. */
 .srcswitch {
   display: inline-flex;
-  padding: 0.28rem;
-  border-radius: 999px;
-  background: var(--ink-5);
-  box-shadow: inset 0 0 0 1px var(--line);
+  margin-right: 1rem;
 }
 .srcswitch__btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  height: 2.75rem;
-  padding: 0 1.2rem 0 1rem;
+  height: 2.5rem;
+  padding: 0 0.8rem;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--ink-3);
-  font: 700 1rem/1 var(--font-body);
+  font: 700 0.98rem/1 var(--font-body);
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t) var(--ease-out);
-}
-.srcswitch__btn + .srcswitch__btn {
-  margin-left: 0.2rem;
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
 .srcswitch__icon {
-  margin-right: 0.55rem;
-  font-size: 1.15em;
+  display: none;
 }
 .srcswitch__n {
-  margin-left: 0.6rem;
-  font: 400 0.82rem/1 var(--font-body);
+  margin-left: 0.45rem;
+  font: 400 0.8rem/1 var(--font-body);
   font-variant-numeric: tabular-nums;
-  opacity: 0.7;
+  opacity: 0.75;
 }
 .srcswitch__btn:hover {
   color: var(--ink);
 }
 .srcswitch__btn[aria-pressed="true"] {
-  background: var(--bg-3);
   color: var(--ink);
-  box-shadow: 0 0.35rem 1.2rem rgba(0, 0, 0, 0.35);
 }
-.srcswitch__btn[aria-pressed="true"] .srcswitch__icon {
-  color: var(--accent-hi);
-}
-.srcswitch__btn:focus {
-  background: var(--ink);
-  color: var(--bg);
-  transform: scale(1.04);
-}
-.srcswitch__btn:focus .srcswitch__icon {
-  color: inherit;
+.srcswitch__btn[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0.8rem;
+  right: 0.8rem;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--accent);
 }
 html[data-input="key"] .srcswitch__btn:focus {
+  background: var(--ink);
+  color: var(--on-light);
   box-shadow: var(--focus-ring);
-}
-html[data-input="pointer"] .srcswitch__btn:focus:not(:hover) {
-  background: transparent;
-  color: var(--ink-3);
-  transform: none;
-}
-html[data-input="pointer"] .srcswitch__btn[aria-pressed="true"]:focus:not(:hover) {
-  background: var(--bg-3);
-  color: var(--ink);
-}
-html[data-input="pointer"] .srcswitch__btn[aria-pressed="true"]:focus:not(:hover) .srcswitch__icon {
-  color: var(--accent-hi);
 }
 .library__pending {
   padding-top: 6.5rem;
@@ -104,11 +69,10 @@ html[data-input="pointer"] .srcswitch__btn[aria-pressed="true"]:focus:not(:hover
   align-items: center;
   width: 22rem;
   max-width: 100%;
-  height: 3rem;
-  padding: 0 0.4rem 0 1.1rem;
-  border-radius: 999px;
-  background: rgba(var(--ink-rgb), 0.07);
-  box-shadow: inset 0 0 0 1.5px var(--line);
+  height: 2.75rem;
+  padding: 0 0.3rem 0 0.95rem;
+  border-radius: var(--radius);
+  background: var(--fill-input);
   transition: box-shadow var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
 }
 .vsearch__icon {
@@ -146,7 +110,7 @@ html[data-input="pointer"] .srcswitch__btn[aria-pressed="true"]:focus:not(:hover
 }
 .vsearch:focus-within .vsearch__icon,
 .vsearch.has-value .vsearch__icon {
-  color: var(--accent-hi);
+  color: var(--ink);
 }
 
 /* Category chips: provider prefix as a tag ("AR", "NETFLIX"), name after it. */
@@ -154,7 +118,7 @@ html[data-input="pointer"] .srcswitch__btn[aria-pressed="true"]:focus:not(:hover
   display: inline-block;
   margin-right: 0.5rem;
   padding: 0.2rem 0.38rem;
-  border-radius: 0.3rem;
+  border-radius: var(--radius-s);
   background: var(--ink-5);
   box-shadow: inset 0 0 0 1px var(--ink-4);
   font: 800 0.64rem/1 var(--font-body);
@@ -183,7 +147,7 @@ html[data-input="pointer"] .cchip:focus:not(:hover):not([aria-pressed="true"]) .
 }
 .cbar__more .icon {
   margin-right: 0.45rem;
-  color: var(--accent-hi);
+  color: inherit;
 }
 .cbar__more:focus .icon {
   color: inherit;
@@ -646,11 +610,6 @@ html.tv .eplist .eprow {
 }
 
 @media (max-width: 760px) {
-  .srcrow .tabs {
-    margin-left: 0;
-    padding-left: 0;
-    border-left: 0;
-  }
   .vsearch {
     width: 100%;
     margin-top: 0.8rem;
