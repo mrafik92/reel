@@ -23,7 +23,8 @@
 
 | Secret | Location |
 |---|---|
-| Reel admin (`rafik`) | minix `/root/.reel-admin` (root-only). Change the password in Settings |
+| Reel admin (`rafik`) | minix `/root/.reel-admin` (root-only). Change the password in Settings. Use 16+ random characters. Once the account has a second factor, this password alone no longer signs in, so `deploy/ct113/bootstrap.py` and `add_xtream.py` stop working for it (#146) |
+| TOTP secrets, OpenID Connect client secrets | Reel DB, encrypted with a key derived from `/appdata/signing.key`. **Replacing that key makes them unreadable**: everyone with an authenticator app has to enroll again, and provider secrets have to be re-entered |
 | TMDB key, webhook secret, (OMDb, Trakt) | CT 113 `/root/reel/.env` |
 | IPTV provider login, qBittorrent password, Arr API keys | Reel DB (entered in Settings) |
 | Former `PROJECT_TOKEN` (classic PAT: `repo`, `project`) | The GitHub repo secret was deleted on 2026-11-23 (#268). The PAT itself must be revoked by the owner in GitHub → Settings → Developer settings. Ticket updates on deploy use the Mac's `gh` login (needs the `project` scope) |
@@ -109,7 +110,8 @@ Backlog → To do → Implementing → Reviewing → **Deployed** (automatic, `d
 | Var | Value | Purpose |
 |---|---|---|
 | `REEL_DATA_DIR` | `/appdata` | DB, caches, signing key |
-| `REEL_PUBLIC_URL` | `https://reel.rafikii.co` | Invite links; never derive URLs from Host |
+| `REEL_PUBLIC_URL` | `https://reel.rafikii.co` | Invite links; never derive URLs from Host. Also the passkey relying party and the provider redirect URI: **changing the hostname invalidates every passkey** |
+| `REEL_REQUIRE_ADMIN_2FA` | unset (on) | An admin needs a passkey or authenticator app for admin actions (#146). `false`/`0` is the recovery lever if an admin can't enroll; it doesn't remove a factor from login |
 | `REEL_CAST_BASE_URL` | `http://10.10.10.207:8420` | Absolute LAN URLs for TVs/Chromecast |
 | `REEL_ALLOW_DIRECT_LIVE` | unset (`false`) | Lets devices play Live TV straight from the provider (opt-in per device). Turning it on sends the provider login (it is part of the stream URL) to those devices. On CT 113 it goes in `/root/reel/.env` (the compose loads it with `env_file`) |
 | `REEL_MAX_TRANSCODES` / `REEL_MAX_USER_TRANSCODES` | `3` / `2` | Transcode caps, shared by playback and live TV: a live channel whose video is re-encoded counts once per viewer for the user and once per channel server-wide |
@@ -128,6 +130,24 @@ Backlog → To do → Implementing → Reviewing → **Deployed** (automatic, `d
 | Container limits | `mem_limit 3g`, `pids_limit 512`, `cpus 3.0`, `read_only`, `cap_drop ALL`, `no-new-privileges` | |
 
 ## Runbooks
+
+**First deploy of the sign-in epic (#150)**
+Admin actions turn off until the admin account has a second factor, so do this right after deploying, from the LAN or
+Tailscale: Settings → Account → add a passkey or authenticator app, and store the recovery codes in Proton Pass. Packaged
+TV apps need a rebuild before they can use the phone code or sign in to an account with a second factor. Sessions they
+already hold keep working.
+
+**Someone lost their second factor**
+Use a recovery code. Otherwise an admin uses Settings → Users & invites → Reset 2FA, which removes their factors and signs
+them out. If the **only admin** is locked out, stop Reel, back up the database, and on CT 113 remove the factors with
+`DELETE FROM user_totp WHERE user_id = 1; DELETE FROM user_passkeys WHERE user_id = 1; DELETE FROM user_recovery_codes WHERE user_id = 1;`
+(check the id in `users` first), start Reel, sign in with the password and enroll again.
+
+**Add Google or Microsoft sign-in (#149)**
+In the provider's console, create a web OAuth client with the redirect URI `https://reel.rafikii.co/api/v1/auth/oidc/callback`.
+Google: keep the app in **testing** with the household listed as test users. Microsoft: choose **personal Microsoft accounts
+only**. Then Settings → Sign-in providers → add it from the LAN or Tailscale, and have each person link it in Settings →
+Account. The client secret is stored encrypted and can't be read back.
 
 **Logs**
 ```sh

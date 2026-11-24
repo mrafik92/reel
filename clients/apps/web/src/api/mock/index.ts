@@ -3,7 +3,7 @@ import { ApiError } from "../http";
 import type { ItemSummary } from "@reel/ui";
 import type { ReelEvent } from "@reel/sdk";
 import type {
-  AdminSession, ArrServer, DecideResponse, DiscoverCard, DownloadClient, InviteDto, Me, NotificationTarget,
+  AccountSecurity, OidcProviderAdmin, AdminSession, ArrServer, DecideResponse, DiscoverCard, DownloadClient, InviteDto, Me, NotificationTarget,
   ProgressDto, RequestDto, RequestState, UserDto,
 } from "../types";
 import { buildDb, detail, home, importTitle, tmdbIndex, SAMPLE_VIDEO } from "./fixtures";
@@ -27,6 +27,18 @@ const lim = (p: Partial<Limits> = {}): Limits => ({
   auto_approve: false, max_bitrate_kbps: null, max_streams: null, max_transcodes: null,
   quota_window_days: 7, request_quota_movies: null, request_quota_tv: null, ...p,
 });
+
+const mockSecurity: AccountSecurity = {
+  totp: false,
+  passkeys: [{ id: 1, name: "MacBook", created_at: Math.floor(Date.now() / 1000) - 86400 * 12, last_used_at: Math.floor(Date.now() / 1000) - 3600 }],
+  recovery_codes_left: 8,
+  passkeys_available: true,
+  must_enroll: false,
+};
+
+let mockOidc: OidcProviderAdmin[] = [
+  { id: 1, slug: "google", name: "Google", issuer: "https://accounts.google.com", client_id: "1234.apps.googleusercontent.com", secret_set: true, enabled: true, redirect_uri: "https://reel.example/api/v1/auth/oidc/callback" },
+];
 
 const ADMIN: Me = {
   id: 1, username: "rafik", role: "admin",
@@ -241,6 +253,56 @@ export function createMockApi(): MockApi {
       if (c.password.length < 3) throw new ApiError(401, "Wrong username or password");
       return { token: "mock", expires_at: nowS() + 86400 * 30, user: { ...ADMIN, username: c.username } };
     },
+    loginMfa: async () => ({ token: "mock", expires_at: nowS() + 86400 * 30, user: ADMIN, password_weak: false }),
+    loginMfaPasskey: async () => ({ publicKey: {} }),
+    security: async () => ({ ...mockSecurity, passkeys: [...mockSecurity.passkeys] }),
+    totpStart: async () => ({ secret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", otpauth_uri: "otpauth://totp/Reel:rafik?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Reel" }),
+    totpConfirm: async (code) => {
+      if (!/^\d{6}$/.test(code)) throw new ApiError(400, "that password or code isn't right");
+      mockSecurity.totp = true;
+      mockSecurity.recovery_codes_left = 10;
+      return { recovery_codes: ["m2abc-7defg", "h3jkm-9npqr", "s4tuv-6wxyz", "a5bcd-8efgh", "j6kmn-2pqrs", "t7uvw-3xyza", "b8cde-4fghj", "k9mnp-5qrst", "u2vwx-6yzab", "c3def-7ghjk"] };
+    },
+    totpRemove: async () => { mockSecurity.totp = false; },
+    newRecoveryCodes: async () => ({ recovery_codes: ["m2abc-7defg", "h3jkm-9npqr"] }),
+    passkeyStart: async () => { throw new ApiError(409, "passkeys need a real server"); },
+    passkeyFinish: async () => ({ recovery_codes: null }),
+    passkeyRemove: async (id) => { mockSecurity.passkeys = mockSecurity.passkeys.filter((k) => k.id !== id); },
+    changePassword: ok,
+    mySessions: async () => [
+      { id: 1, device_name: "Chrome on Mac", client: "web", ip: "192.168.1.20", last_seen: nowS(), current: true },
+      { id: 2, device_name: "Living Room TV", client: "webos", ip: "192.168.1.40", last_seen: nowS() - 7200, current: false },
+    ],
+    revokeMySession: ok,
+    resetSecondFactor: ok,
+    deviceStart: async () => ({ device_code: "mock", user_code: "BCDF-GHJK", verification_uri: `${location.origin}/link`, verification_uri_complete: `${location.origin}/link?code=BCDF-GHJK&mock=1`, expires_in_s: 600, interval_s: 4 }),
+    devicePoll: async () => ({ status: "pending" }),
+    linkLookup: async (code) => {
+      if (code.replace(/[^a-z]/gi, "").length !== 8) throw new ApiError(404, "that code isn't valid or has expired");
+      return { device_name: "Living Room TV", client: "webos", ip: "192.168.1.40", expires_in_s: 540 };
+    },
+    linkApprove: ok,
+    linkDeny: ok,
+    oidcProviders: async () => mockOidc.filter((p) => p.enabled).map((p) => ({ slug: p.slug, name: p.name })),
+    oidcStart: async () => { throw new ApiError(502, "Mock mode has no sign-in provider to go to"); },
+    oidcExchange: async () => { throw new ApiError(401, "that sign-in isn't linked to a Reel account"); },
+    myIdentities: async () => [{ id: 1, provider: "Google", label: "rafik@example.com", created_at: nowS() - 86400 * 5, last_used_at: nowS() - 3600 }],
+    identityStart: async () => { throw new ApiError(502, "Mock mode has no sign-in provider to go to"); },
+    identityComplete: ok,
+    identityRemove: ok,
+    adminOidcProviders: async () => mockOidc.map((p) => ({ ...p })),
+    adminCreateOidcProvider: async (b) => {
+      const p = { id: mockOidc.length + 1, slug: b.preset, name: b.name || b.preset, issuer: b.issuer || "https://issuer.example", client_id: b.client_id, secret_set: true, enabled: true, redirect_uri: `${location.origin}/api/v1/auth/oidc/callback` };
+      mockOidc.push(p);
+      return p;
+    },
+    adminPatchOidcProvider: async (id, b) => {
+      const p = mockOidc.find((x) => x.id === id);
+      if (!p) throw new ApiError(404, "not found");
+      if (b.enabled !== undefined) p.enabled = b.enabled;
+      return { ...p };
+    },
+    adminDeleteOidcProvider: async (id) => { mockOidc = mockOidc.filter((x) => x.id !== id); },
     logout: ok,
     me: async () => ADMIN,
     inviteInfo: async (code) => ({ valid: code.length > 3, library_names: ["Films", "Series"], expires_at: nowS() + 86400 * 3 }),

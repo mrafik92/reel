@@ -1542,8 +1542,9 @@ pub async fn vod_direct(
     let sq = Query::<SignedQuery>::try_from_uri(req.uri())
         .map(|q| q.0)
         .unwrap_or_default();
+    let peer = crate::auth::peer_of(req.extensions());
     let user = st
-        .media_user(req.headers(), &sq, &format!("vod:{sid}"))
+        .media_user_at(peer, req.headers(), &sq, &format!("vod:{sid}"))
         .await?;
     let (vs, stop) = st.vod.subscribe(&sid).ok_or(ApiError::NotFound)?;
     if vs.user_id != user.id && !user.is_admin() {
@@ -1720,6 +1721,7 @@ pub async fn vod_subs(
     State(st): State<AppState>,
     Path((sid, file)): Path<(String, String)>,
     Query(sq): Query<SignedQuery>,
+    crate::auth::Peer(peer): crate::auth::Peer,
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Response> {
     let idx: i64 = file
@@ -1727,7 +1729,7 @@ pub async fn vod_subs(
         .and_then(|n| n.parse().ok())
         .ok_or(ApiError::NotFound)?;
     let user = st
-        .media_user(&headers, &sq, &format!("vodsub:{sid}:{idx}"))
+        .media_user_at(peer, &headers, &sq, &format!("vodsub:{sid}:{idx}"))
         .await?;
     let vs = st.vod.get(&sid).ok_or(ApiError::NotFound)?;
     if vs.user_id != user.id && !user.is_admin() {

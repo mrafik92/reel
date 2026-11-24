@@ -1,10 +1,13 @@
 import { createResource, createSignal, For, Match, onMount, Show, Switch, type JSX, type ParentProps } from "solid-js";
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import { focusFirst, getServerUrl, Icon, isFileOrigin, setServerUrl } from "@reel/ui";
-import { api, ApiError } from "../api";
-import { acceptInvite, authStatus, bootstrap, createAdmin, login } from "../lib/auth";
+import { api, ApiError, type Me, type MfaChallenge } from "../api";
+import { acceptInvite, afterLogin, authStatus, bootstrap, completeMfa, completeMfaWithPasskey, createAdmin, login, MIN_PASSWORD } from "../lib/auth";
+import { passkeyCancelled, passkeysSupported } from "../lib/webauthn";
 import { Field, PasswordField, useCountdown } from "../components/Form";
 import { href } from "../lib/mode";
+import { clearInviteLink, inviteLink, takePendingChallenge } from "../lib/oidc";
+import { OidcButtons } from "../components/OidcButtons";
 
 /** Two-column auth layout: wordmark + message left, form right. Stacks on narrow screens. */
 function AuthLayout(props: ParentProps<{ eyebrow: string; title: string; lede: string; aside?: JSX.Element }>): JSX.Element {
@@ -45,6 +48,56 @@ export function Login(): JSX.Element {
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal(false);
   const [left, startCountdown] = useCountdown();
+  // a provider sign-in on an account with a second factor continues here (#149)
+  const returned = takePendingChallenge();
+  const [challenge, setChallenge] = createSignal<MfaChallenge | undefined>(returned);
+  const [code, setCode] = createSignal("");
+  const [useRecovery, setUseRecovery] = createSignal(!!returned && !returned.methods.includes("totp") && !returned.methods.includes("passkey"));
+  const done = (me: Me) => navigate(afterLogin(me, safeNext(params.next)), { replace: true });
+  const has = (m: string) => !!challenge()?.methods.includes(m);
+
+  const failSecondStep = (err: unknown) => {
+    if (passkeyCancelled(err)) return;
+    if (err instanceof ApiError && err.status === 429) {
+      startCountdown(err.retryAfter ?? 60);
+      setError(undefined);
+    } else if (err instanceof ApiError && err.status === 401 && /expired/.test(err.message)) {
+      setChallenge(undefined);
+      setPassword("");
+      setError("That sign-in expired. Enter your password again.");
+    } else setError(err instanceof Error ? err.message : "Couldn't sign in.");
+  };
+
+  const submitCode = async (e: Event) => {
+    e.preventDefault();
+    const c = challenge();
+    if (!c || busy() || left() > 0) return;
+    if (!code().trim()) return setError(useRecovery() ? "Enter a recovery code." : "Enter the 6-digit code.");
+    setBusy(true);
+    setError(undefined);
+    try {
+      done(await completeMfa(useRecovery() ? { mfa_token: c.mfa_token, recovery_code: code().trim() } : { mfa_token: c.mfa_token, code: code().trim() }));
+    } catch (err) {
+      setCode("");
+      failSecondStep(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const signInWithPasskey = async () => {
+    const c = challenge();
+    if (!c || busy() || left() > 0) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      done(await completeMfaWithPasskey(c.mfa_token));
+    } catch (err) {
+      failSecondStep(err);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async (e: Event) => {
     e.preventDefault();
@@ -53,8 +106,11 @@ export function Login(): JSX.Element {
     setBusy(true);
     setError(undefined);
     try {
-      await login(username().trim(), password());
-      navigate(safeNext(params.next), { replace: true });
+      const r = await login(username().trim(), password());
+      if ("challenge" in r) {
+        setUseRecovery(!r.challenge.methods.includes("totp") && !r.challenge.methods.includes("passkey"));
+        setChallenge(r.challenge);
+      } else done(r.me);
     } catch (err) {
       if (err instanceof ApiError && err.status === 429) {
         startCountdown(err.retryAfter ?? 60);
@@ -67,6 +123,50 @@ export function Login(): JSX.Element {
   };
 
   return (
+    <Show
+      when={!challenge()}
+      fallback={
+        <AuthLayout eyebrow="One more step" title="Confirm it's you" lede="Your account has a second sign-in step.">
+          <form class="auth__form" onSubmit={submitCode} novalidate>
+            <Show when={has("passkey") && passkeysSupported() && !useRecovery()}>
+              <button type="button" class="btn btn--primary btn--lg btn--block" data-autofocus aria-disabled={busy() || left() > 0 ? "true" : undefined} onClick={signInWithPasskey}>
+                <Icon name="key" /> <span>Use a passkey</span>
+              </button>
+            </Show>
+            <Show when={has("totp") || useRecovery()}>
+              <Field
+                label={useRecovery() ? "Recovery code" : "6-digit code"}
+                value={code()}
+                onInput={(e) => setCode(e.currentTarget.value)}
+                inputmode={useRecovery() ? "text" : "numeric"}
+                autocomplete="one-time-code"
+                autocapitalize="off"
+                spellcheck={false}
+                data-autofocus={!has("passkey") || !passkeysSupported() || useRecovery() ? "" : undefined}
+              />
+            </Show>
+            <Show when={left() > 0 || error()}>
+              <p class="auth__error" role="alert"><Icon name="alert" /> {left() > 0 ? lockoutText(left()) : error()}</p>
+            </Show>
+            <Show when={has("totp") || useRecovery()}>
+              <button type="submit" class="btn btn--lg btn--block" classList={{ "btn--primary": !has("passkey") || useRecovery() }} aria-disabled={busy() || left() > 0 ? "true" : undefined}>
+                <span>{busy() ? "Checking…" : "Continue"}</span>
+              </button>
+            </Show>
+            <div class="auth__methods">
+              <Show when={has("recovery") && (has("totp") || has("passkey"))}>
+                <button type="button" class="btn btn--quiet btn--sm" onClick={() => { setUseRecovery((v) => !v); setCode(""); setError(undefined); }}>
+                  <span>{useRecovery() ? "Use your app or passkey" : "Use a recovery code"}</span>
+                </button>
+              </Show>
+              <button type="button" class="btn btn--quiet btn--sm" onClick={() => { setChallenge(undefined); setPassword(""); setCode(""); setError(undefined); }}>
+                <span>Start over</span>
+              </button>
+            </div>
+          </form>
+        </AuthLayout>
+      }
+    >
     <AuthLayout eyebrow="Welcome back" title="Sign in" lede="Your films, your shows, your server.">
       <form class="auth__form" onSubmit={submit} novalidate>
         <Field label="Username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocomplete="username" autocapitalize="off" spellcheck={false} data-autofocus />
@@ -79,6 +179,10 @@ export function Login(): JSX.Element {
         <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() || left() > 0 ? "true" : undefined}>
           <span>{busy() ? "Signing in…" : "Sign in"}</span>
         </button>
+        <OidcButtons purpose="login" next={safeNext(params.next)} onError={setError} />
+        <a class="btn btn--block" href={href("/login/device")}>
+          <Icon name="tv" /> <span>Sign in with your phone</span>
+        </a>
         <p class="auth__foot">Got an invite link? Open it on this device to create your account.</p>
         <Show when={isFileOrigin()}>
           <a class="btn btn--quiet btn--sm" href={href("/connect")}>
@@ -87,6 +191,7 @@ export function Login(): JSX.Element {
         </Show>
       </form>
     </AuthLayout>
+    </Show>
   );
 }
 
@@ -97,20 +202,20 @@ export function Setup(): JSX.Element {
   const [confirm, setConfirm] = createSignal("");
   const [error, setError] = createSignal<string>();
   const [busy, setBusy] = createSignal(false);
-  const tooShort = () => password().length > 0 && password().length < 8;
+  const tooShort = () => password().length > 0 && password().length < MIN_PASSWORD;
   const mismatch = () => confirm().length > 0 && confirm() !== password();
 
   const submit = async (e: Event) => {
     e.preventDefault();
     if (busy()) return;
     if (!username().trim()) return setError("Pick a username.");
-    if (password().length < 8) return setError("The password needs at least 8 characters.");
+    if (password().length < MIN_PASSWORD) return setError(`The password needs at least ${MIN_PASSWORD} characters.`);
     if (password() !== confirm()) return setError("The passwords don't match.");
     setBusy(true);
     setError(undefined);
     try {
-      await createAdmin(username().trim(), password());
-      navigate("/admin/libraries", { replace: true });
+      const me = await createAdmin(username().trim(), password());
+      navigate(afterLogin(me, "/admin/libraries"), { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setError("This server is already set up. Sign in instead.");
@@ -136,7 +241,7 @@ export function Setup(): JSX.Element {
     >
       <form class="auth__form" onSubmit={submit} novalidate>
         <Field label="Admin username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocomplete="username" autocapitalize="off" spellcheck={false} data-autofocus />
-        <PasswordField label="Password" hint="At least 8 characters" error={tooShort() && "At least 8 characters"} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
+        <PasswordField label="Password" hint={`At least ${MIN_PASSWORD} characters`} error={tooShort() && `At least ${MIN_PASSWORD} characters`} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
         <PasswordField label="Confirm password" error={mismatch() && "Doesn't match"} value={confirm()} onInput={(e) => setConfirm(e.currentTarget.value)} autocomplete="new-password" />
         <Show when={error()}>
           <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
@@ -162,11 +267,12 @@ export function Invite(): JSX.Element {
     e.preventDefault();
     if (busy()) return;
     if (!username().trim()) return setError("Pick a username.");
-    if (password().length < 8) return setError("The password needs at least 8 characters.");
+    if (password().length < MIN_PASSWORD) return setError(`The password needs at least ${MIN_PASSWORD} characters.`);
     setBusy(true);
     setError(undefined);
     try {
-      await acceptInvite(params.code, username().trim(), password());
+      await acceptInvite(params.code, username().trim(), password(), inviteLink(params.code));
+      clearInviteLink();
       navigate("/", { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) setError("That username is taken — try another.");
@@ -210,8 +316,14 @@ export function Invite(): JSX.Element {
             }
           >
             <form class="auth__form" onSubmit={submit} novalidate>
+              <Show
+                when={inviteLink(params.code)}
+                fallback={<OidcButtons purpose="invite" invite={params.code} onError={setError} />}
+              >
+                {(l) => <p class="state__body" role="status"><Icon name="check" /> {l().provider} will be linked. Pick a username and a password to keep as a fallback.</p>}
+              </Show>
               <Field label="Choose a username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocomplete="username" autocapitalize="off" spellcheck={false} data-autofocus />
-              <PasswordField label="Choose a password" hint="At least 8 characters" value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
+              <PasswordField label="Choose a password" hint={`At least ${MIN_PASSWORD} characters`} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
               <Show when={error()}>
                 <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
               </Show>

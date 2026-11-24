@@ -1,0 +1,18 @@
+/* Settings → Account (#146). Spacing and colours come from the app's tokens via shared components. */
+.account { display: flex; flex-direction: column; gap: 16px; max-width: 760px; }
+.account__row { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.account__row .field { flex: 1 1 220px; margin: 0; }
+.account__notice { display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 12px 14px; border: 1px solid currentColor; border-radius: 10px; }
+.account__enroll { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.account__enroll > div { flex: 1 1 240px; min-width: 0; }
+.account__secret { display: inline-block; max-width: 100%; overflow-wrap: anywhere; font-size: 0.95em; letter-spacing: 0.04em; }
+.account__codes { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid currentColor; border-radius: 10px; }
+.account__codes p { margin: 0; }
+.account__codelist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; margin: 0; padding: 0; list-style: none; }
+.qr { display: block; flex: none; max-width: 100%; height: auto; border-radius: 8px; }
+.devicelink { display: flex; flex-wrap: wrap; gap: 24px; align-items: center; }
+.devicelink__code { margin: 0; font-size: clamp(2rem, 4vw, 3.25rem); font-weight: 700; letter-spacing: 0.08em; white-space: nowrap; }
+.devicelink__facts { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; }
+.devicelink__facts dd { margin: 0; overflow-wrap: anywhere; }
+.auth__methods { display: flex; flex-wrap: wrap; gap: 8px; }
+.auth__methods--stack { flex-direction: column; }

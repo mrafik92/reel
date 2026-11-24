@@ -22,6 +22,9 @@ const Requests = lazy(() => import("./pages/Requests"));
 const Downloads = lazy(() => import("./pages/Downloads"));
 const Person = lazy(() => import("./pages/Person"));
 const Admin = lazy(() => import("./pages/admin/Admin"));
+const OidcReturn = lazy(() => import("./pages/OidcReturn"));
+const DeviceLogin = lazy(() => import("./pages/DeviceLink").then((m) => ({ default: m.DeviceLogin })));
+const DeviceLink = lazy(() => import("./pages/DeviceLink").then((m) => ({ default: m.DeviceLink })));
 const LiveTV = lazy(() => import("./pages/LiveTV"));
 const LiveGuide = lazy(() => import("./pages/LiveGuide"));
 const VodMovie = lazy(() => import("./pages/VodMovie"));
@@ -37,6 +40,9 @@ function Routes() {
   return (
     <>
       <Route path="/login" component={Login} />
+      <Route path="/login/device" component={DeviceLogin} />
+      <Route path="/login/oidc" component={OidcReturn} />
+      <Route path="/link" component={DeviceLink} />
       <Route path="/setup" component={Setup} />
       <Route path="/connect" component={Connect} />
       <Route path="/invite/:code" component={Invite} />
@@ -56,6 +62,7 @@ function Routes() {
       <Route path="/vod/series/:id" component={VodSeries} />
       <Route path="/vod/play/:kind/:id" component={VodPlayer} />
       <Route path="/settings/playback" component={() => <Admin section="playback" />} />
+      <Route path="/settings/account" component={() => <Admin section="account" />} />
       <Route path="/admin/:section?" component={Admin} />
       <Route path="/dev/rings" component={DevRings} />
       <Route path="*" component={NotFound} />

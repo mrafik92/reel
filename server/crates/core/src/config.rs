@@ -91,6 +91,10 @@ pub struct Config {
     /// through Reel. Off by default: the tune response then carries the provider URL, which
     /// contains the provider login.
     pub allow_direct_live: bool,
+    /// `REEL_REQUIRE_ADMIN_2FA`: an admin needs a second factor (passkey or authenticator app) for
+    /// admin powers (#146). Default on; `false` is a recovery lever.
+    #[serde(deserialize_with = "bool_or_num")]
+    pub require_admin_2fa: bool,
     /// `REEL_ABR`: multi-variant HLS for players that switch variants themselves (#111): the
     /// original plus lazily transcoded rungs. Default on; `false`/`0` serves one rendition per
     /// session everywhere (a rollback lever without a rebuild).
@@ -150,6 +154,7 @@ impl Default for Config {
             cast_base_url: None,
             cast_discovery: true,
             allow_direct_live: false,
+            require_admin_2fa: true,
             abr: true,
             abr_variant_idle_secs: 30,
             omdb_api_key: None,
@@ -284,6 +289,8 @@ mod tests {
             });
             out.unwrap()
         };
+        assert!(!load("REEL_REQUIRE_ADMIN_2FA", "false").require_admin_2fa);
+        assert!(!load("REEL_REQUIRE_ADMIN_2FA", "0").require_admin_2fa);
         // the plain spelling used to stop the server from starting
         assert_eq!(
             load("REEL_TRUSTED_PROXIES", "10.10.10.73").trusted_proxies,

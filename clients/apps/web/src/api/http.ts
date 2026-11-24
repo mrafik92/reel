@@ -223,8 +223,16 @@ export async function request<T>(method: string, path: string, o: RequestOptions
     if (res.status === 401 && o.auth !== false) unauthorized?.();
     throw new ApiError(res.status, msg || FRIENDLY[res.status] || `Server error (${res.status})`, isFinite(ra) && ra > 0 ? ra : undefined, body);
   }
-  if (res.status === 204 || res.status === 202) return undefined as T;
+  if (res.status === 204) return undefined as T;
   const text = await res.text();
+  // Most 202s are empty; a login that needs a second factor carries its challenge (#146).
+  if (res.status === 202) {
+    try {
+      return (text ? JSON.parse(text) : undefined) as T;
+    } catch {
+      return undefined as T;
+    }
+  }
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
