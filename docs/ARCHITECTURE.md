@@ -163,6 +163,14 @@ provider ──(the device opens its own connection)──► device      mode "
   Raw MPEG-TS channels are read by the hub's guarded HTTP client directly; direct mode bypasses the hub.
 - **Budget.** A per-source connection budget enforces the provider's `max_connections`. If the same user tunes
   again, their older session is stopped first.
+- **Several logins on one provider (#297).** Xtream sources on the same server (scheme, host, port) form a
+  provider group, ordered enabled first, then by id. `reel_iptv::dedup::refresh` (after each source refresh,
+  source edit or delete, and at startup) flags a later login's channel, movie or series as `duplicate` when an
+  earlier login has a non-missing row with the same provider id (`ext_id`, `stream_id`, `series_id`), and moves
+  watch progress and channel favourites from duplicates to the visible row. User-facing listings skip duplicates.
+  The channel resolver adds the same channel on the group's other enabled logins as candidates, and new
+  connections (`ChannelHub::prefer_free`, VOD `resolve_targets`) start on the first candidate with a free slot.
+  Only when every login is busy does the usual budget policy apply to the main login. No extra provider calls.
 - **Guide.** Reel imports the provider's XMLTV (empty for this provider), then each external guide URL in
   priority order. Channels are matched by tvg-id first, then by name keys normalised for prefixes, quality
   tags, country suffixes, Arabic letter variants and so on. A channel takes its programmes from the first
@@ -312,6 +320,7 @@ The shell has one navigation per form factor. **Desktop and TV** use the fixed t
 | A82 | **A familiar streaming layout, the same on desktop and TV: top bar, billboard, dense art-first rows, a preview card and a title sheet, on neutral tokens with translucent glass. Glass blurs only inside `@supports` and never on TV; ambient art is a 92 px image stretched by the browser. Continue watching groups episodes by series on the server** (#281) | The owner wants Reel to browse like the streaming apps people already know: art first, little chrome, one obvious Play. One layout for desktop and TV removes a second set of screens, and TV differs only in scale and in having focus instead of hover. `backdrop-filter` and CSS blur are too costly on webOS and Tizen GPUs, while bilinear scaling of a thumbnail gives a similar wash for free. Grouping in `GET /home` keeps `ROW_LIMIT` counting titles and spares every client the logic; the entry stays the episode so Play resumes it, with a new optional `series` field for its title and art, which older clients ignore | Less brand distinctiveness. The landscape preview and billboard depend on backdrops, so titles without one look plainer. Frosted surfaces over raw art or video use a denser fill (`--glass-raised`, 0.78) than the 0.55 `--glass`, to keep secondary text readable. A focus preview doesn't consume Back, so Back acts at once on the page behind it. The poster transition (A69) no longer runs. Client API types for `series` are added by hand, because a full `gen:api` regeneration still pulls in unrelated schema drift (A43) |
 | A83 | **Bulk retry calls the existing request retry route sequentially from the web client (#67)** | Reuses per-request authorization and progress updates while avoiding simultaneous Arr commands from the batch | The batch covers the loaded list and submits one API call per eligible entry |
 | A84 | **The player's controls sit on the picture, and its action row is fixed-width icons (#293)** | The glass bands from #281 read as an app toolbar and cropped the picture. Text values next to the icons ("EN SDH Auto", "Orig") made the right-hand group grow until it covered Next (#264). Now each action has one width, the current choice lives in its label (hover and focus), Next is in the same flex row, and neither side may shrink below its buttons (`min-width: max-content`), so a tight row moves the transport over and never overlaps. Audio and subtitles share one two-column menu (`TracksMenu`), and player menus use `Sheet variant="pop"`, a compact corner panel that leaves the picture visible. Phones are detected by size alone (`max-width: 760px` or `max-height: 500px`), so a phone on its side gets the phone layout too | A glance no longer shows the audio or subtitle language without focus or hover. A desktop window under 500px tall gets the phone layout. The cast remote view keeps its filled buttons through overrides in `casting.css`, so the shared control kit has two looks |
+| A85 | **Extra logins on one Xtream provider stay separate sources; their shared catalog is merged by a `duplicate` flag, and playback picks any login with a free slot (#297)** | Each login has its own credentials and connection limit, which the budget already models per source. Grouping by server address needs no new admin UI. Flagging rows at refresh time keeps listing queries a plain `duplicate = 0` filter. Keeping each login's import means titles only one login's package has still show | Each login still imports the full catalog (stored twice, and refreshes call the provider once per login). Two different providers behind one host and port would be merged. M3U sources aren't grouped |
 
 ## 6. Data model (essentials)
 
@@ -321,6 +330,7 @@ The shell has one navigation per form factor. **Desktop and TV** use the fixed t
 `genres`, `collections` · `watch_state`, `playback_sessions` · `requests`, `request_downloads`, `arr_servers`,
 `download_clients`, `notification_targets` · `iptv_sources` (+ `epg_urls`), `channels`, `channel_aliases`,
 `epg_programs`, `epg_channels`, `iptv_epg_sources`, `user_channel_favorites` · VOD catalog tables, `omdb_cache`.
+`channels`, `vod_movies` and `vod_series` carry a `duplicate` flag for logins that share a provider (A85).
 Migrations are in `server/crates/core/migrations` and applied on startup.
 
 ## 7. Security model (summary)

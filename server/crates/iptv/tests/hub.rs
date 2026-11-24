@@ -234,6 +234,44 @@ async fn connection_budget_evicts_warm_channels_and_refuses_when_all_watched() {
 }
 
 #[tokio::test]
+async fn a_second_login_takes_the_next_viewer_instead_of_failing() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (_d, path) = temp_ts(4);
+    let prov = Provider::start(&path, 4, 2.0).await;
+    let res = Arc::new(MapResolver::default());
+    // two single-connection logins (sources 7 and 8) on one provider (#297)
+    for (id, n) in [(1, "one"), (2, "two")] {
+        res.add(
+            id,
+            &n.to_uppercase(),
+            vec![
+                cand(id, 7, prov.url(&format!("{n}-u1")), Some(1)),
+                cand(id + 100, 8, prov.url(&format!("{n}-u2")), Some(1)),
+            ],
+        );
+    }
+    let hub = ChannelHub::new(fast_cfg(), res);
+    hub.spawn_reaper();
+    let mut s1 = hub.subscribe(1, Some(1)).await.unwrap();
+    assert!(read_bytes(&mut s1, 10_000).await >= 10_000);
+    assert_eq!(hub.channel_budget(2).await.unwrap(), Some((8, 1)));
+    let mut s2 = hub.subscribe(2, Some(2)).await.unwrap();
+    assert!(read_bytes(&mut s2, 10_000).await >= 10_000);
+    assert_eq!(prov.counters("one-u1").total.load(SeqCst), 1);
+    assert_eq!(prov.counters("two-u2").total.load(SeqCst), 1);
+    assert_eq!(prov.counters("two-u1").total.load(SeqCst), 0);
+    let by = hub.connections_by_source();
+    assert_eq!((by.get(&7), by.get(&8)), (Some(&1), Some(&1)));
+    // both logins busy: the main login's limit is reported, as before
+    drop(s2);
+    let _vod = hub.external_slot(8, Some(1)).unwrap();
+    assert_eq!(hub.channel_budget(2).await.unwrap(), Some((7, 1)));
+    hub.shutdown();
+}
+
+#[tokio::test]
 async fn warm_channels_use_free_slots_and_pinning_survives_grace() {
     if !have_ffmpeg() {
         return;

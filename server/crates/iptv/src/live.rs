@@ -437,11 +437,12 @@ impl LiveManager {
         channel_id: i64,
         takeover: bool,
     ) -> Result<LiveSessionInfo> {
-        let spec = self
+        let mut spec = self
             .hub
             .channel_spec(channel_id)
             .await?
             .ok_or_else(|| Error::NotFound("channel".into()))?;
+        self.hub.prefer_free(&mut spec);
         let cand = spec
             .candidates
             .first()
@@ -624,6 +625,12 @@ impl LiveManager {
             max,
             holders: others.iter().map(Held::holder).collect(),
         })
+    }
+
+    /// Would a VOD play on `source_id` get a connection without stopping another stream?
+    pub fn vod_slot_free(&self, source_id: i64, max: Option<u32>) -> bool {
+        max.filter(|m| *m > 0)
+            .is_none_or(|m| self.hub.slot_available(source_id, m, i64::MIN))
     }
 
     /// Claim one provider connection for VOD playback by `user_id` (same policy as live tunes).
