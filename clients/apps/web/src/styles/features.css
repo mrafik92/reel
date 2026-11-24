@@ -21,11 +21,11 @@
 .btn--danger,
 html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   background: var(--danger);
-  color: #1a0503;
+  color: var(--on-light);
 }
 .btn--danger:focus {
   background: var(--danger);
-  color: #1a0503;
+  color: var(--on-light);
 }
 .actions--center {
   justify-content: center;
@@ -57,10 +57,9 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
 .page--center {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
   min-height: 100vh;
-  padding-left: calc(var(--gutter) * 2);
 }
 
 /* ---------- Toasts ------------------------------------------------------- */
@@ -77,11 +76,12 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   display: flex;
   align-items: flex-start;
   margin-bottom: 0.6rem;
-  padding: 0.95rem 1.1rem;
+  padding: 0.85rem 1.05rem;
   border-radius: var(--radius);
-  background: var(--bg-3);
-  box-shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.55);
-  font: 400 0.95rem/1.4 var(--font-body);
+  background: var(--ink);
+  color: var(--on-light);
+  box-shadow: 0 0.8rem 2rem rgba(0, 0, 0, 0.55);
+  font: 500 0.95rem/1.4 var(--font-body);
   pointer-events: auto;
   cursor: pointer;
   animation: toast-in 280ms var(--ease-out) both;
@@ -91,14 +91,12 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   margin: 0.1rem 0.7rem 0 0;
   font-size: 1.15rem;
 }
-.toast--success .icon {
-  color: var(--ok);
+/* Status toasts: a 4px bar on the left, the icon stays dark on the white fill. */
+.toast--success {
+  box-shadow: inset 4px 0 0 var(--ok), 0 0.8rem 2rem rgba(0, 0, 0, 0.55);
 }
 .toast--error {
-  box-shadow: inset 3px 0 0 var(--danger), 0 1rem 2.5rem rgba(0, 0, 0, 0.55);
-}
-.toast--error .icon {
-  color: var(--danger);
+  box-shadow: inset 4px 0 0 var(--danger), 0 0.8rem 2rem rgba(0, 0, 0, 0.55);
 }
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(-0.6rem); }
@@ -213,7 +211,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
 .subform__more summary {
   display: inline-block;
   padding: 0.5rem 0.9rem;
-  border-radius: 999px;
+  border-radius: var(--radius);
   color: var(--ink-2);
   font-weight: 700;
   cursor: pointer;
@@ -305,60 +303,38 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   position: relative;
   display: flex;
   align-items: center;
+  justify-content: center;
   min-height: 100vh;
-  padding: 4rem calc(var(--gutter) * 1.5);
-  overflow: hidden;
-}
-.auth__glow {
-  position: absolute;
-  top: -20%;
-  left: -10%;
-  width: 80%;
-  height: 120%;
-  background:
-    radial-gradient(ellipse 45% 40% at 30% 40%, rgba(var(--accent-rgb), 0.12), rgba(var(--accent-rgb), 0) 70%),
-    radial-gradient(ellipse 60% 50% at 60% 70%, rgba(80, 90, 160, 0.18), rgba(80, 90, 160, 0) 70%);
-  pointer-events: none;
-}
-.auth__intro,
-.auth__panel {
-  position: relative;
-}
-.auth__intro {
-  flex: 1 1 50%;
-  max-width: 40rem;
-  padding-right: 4rem;
+  padding: 5rem var(--gutter) 3rem;
+  background: var(--bg);
 }
 .logo--auth {
-  margin-bottom: 3.5rem;
-}
-.logo--auth .logo__mark {
-  width: 2.8rem;
-  height: 2.8rem;
-}
-.logo--auth .logo__word {
-  font-size: 2.2rem;
-}
-.auth__title {
-  margin: 0.6rem 0 1rem;
-  font: 800 4.4rem/0.92 var(--font-display);
-  letter-spacing: -0.04em;
-}
-.auth__lede {
-  max-width: 30rem;
-  font-size: 1.15rem;
-  color: var(--ink-2);
+  position: absolute;
+  top: 1.4rem;
+  left: var(--gutter);
 }
 .auth__panel {
-  flex: 0 0 30rem;
+  width: 28rem;
   max-width: 100%;
+  padding: 3rem;
+  border-radius: var(--radius-l);
+  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
+}
+.auth__panel .eyebrow {
+  color: var(--ink-3);
+}
+.auth__title {
+  margin: 0.45rem 0 0.5rem;
+  font: 700 2rem/1.15 var(--font-display);
+  letter-spacing: -0.01em;
+}
+.auth__lede {
+  margin-bottom: 1.4rem;
+  font-size: 0.95rem;
+  color: var(--ink-3);
 }
 .auth__form {
-  padding: 2.25rem 2.25rem 1.5rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-l);
-  background: rgba(var(--bg-1-rgb), 0.92);
-  box-shadow: 0 2rem 4rem rgba(0, 0, 0, 0.45);
+  padding: 0;
 }
 .auth__form .btn--block {
   margin-top: 0.6rem;
@@ -366,9 +342,12 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
 .auth__error {
   display: flex;
   align-items: flex-start;
-  margin: 0.2rem 0 0.6rem;
-  color: var(--danger);
-  font-size: 0.95rem;
+  margin: 0 0 0.9rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius);
+  background: var(--danger);
+  color: var(--on-light);
+  font-size: 0.92rem;
 }
 .auth__error .icon {
   flex-shrink: 0;
@@ -381,7 +360,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   color: var(--ink-3);
 }
 .auth__steps {
-  margin: 2rem 0 0;
+  margin: 0 0 1.2rem;
   padding: 0;
   list-style: none;
   counter-reset: s;
@@ -410,12 +389,12 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   color: var(--ink);
 }
 .auth__steps li.is-current::before {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--on-light);
 }
 .auth__libs {
-  margin-top: 2rem;
+  margin-bottom: 1.2rem;
 }
 .auth__libs ul {
   margin: 0.7rem 0 0;
@@ -430,7 +409,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
 }
 .auth__libs li .icon {
   margin-right: 0.6rem;
-  color: var(--accent-hi);
+  color: var(--ok);
 }
 
 /* ---------- Shell extras ------------------------------------------------- */
@@ -1265,4 +1244,10 @@ html.reel-avplay-active .grain {
 .admin__about-reload {
   margin-top: 0.75rem;
   font-size: 0.8rem;
+}
+
+@media (max-width: 760px) {
+  .auth__panel {
+    padding: 1.75rem 1.4rem;
+  }
 }

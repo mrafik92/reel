@@ -478,7 +478,7 @@ html[data-input="key"] .live__screen:focus {
   height: 2.4rem;
   padding: 0 1rem;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--accent);
   color: var(--accent-ink);
   font: 700 0.9rem/1 var(--font-body);
@@ -1203,7 +1203,7 @@ html[data-input="pointer"] .live__hints {
   flex-shrink: 0;
   margin-left: 1.2rem;
   padding: 0.45rem 0.8rem;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--accent-dim);
   color: var(--accent-hi);
   font: 800 0.75rem/1 var(--font-body);
@@ -2036,7 +2036,7 @@ html.tv .later__list li:nth-child(n + 4) {
   height: 2.8rem;
   margin: 0 1.5rem 0.6rem;
   padding: 0 0.6rem 0 0.9rem;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--ink-5);
   box-shadow: inset 0 0 0 1.5px transparent;
   color: var(--ink-3);

@@ -6,24 +6,23 @@ import { acceptInvite, authStatus, bootstrap, createAdmin, login } from "../lib/
 import { Field, PasswordField, useCountdown } from "../components/Form";
 import { href } from "../lib/mode";
 
-/** Two-column auth layout: wordmark + message left, form right. Stacks on narrow screens. */
+/** One centred glass panel, with the logo at the page's top left. */
 function AuthLayout(props: ParentProps<{ eyebrow: string; title: string; lede: string; aside?: JSX.Element }>): JSX.Element {
   let el!: HTMLDivElement;
   onMount(() => requestAnimationFrame(() => focusFirst(el)));
   return (
     <div class="auth" ref={el}>
-      <div class="auth__glow" aria-hidden="true" />
-      <section class="auth__intro">
-        <span class="logo logo--auth">
-          <span class="logo__mark" aria-hidden="true"><i /></span>
-          <span class="logo__word">reel</span>
-        </span>
-        <p class="eyebrow eyebrow--accent">{props.eyebrow}</p>
+      <span class="logo logo--auth">
+        <span class="logo__mark" aria-hidden="true"><i /></span>
+        <span class="logo__word">reel</span>
+      </span>
+      <section class="auth__panel glass">
+        <p class="eyebrow">{props.eyebrow}</p>
         <h1 class="auth__title">{props.title}</h1>
         <p class="auth__lede">{props.lede}</p>
         {props.aside}
+        {props.children}
       </section>
-      <section class="auth__panel">{props.children}</section>
     </div>
   );
 }
@@ -76,7 +75,7 @@ export function Login(): JSX.Element {
             <Icon name="alert" /> {left() > 0 ? lockoutText(left()) : error()}
           </p>
         </Show>
-        <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() || left() > 0 ? "true" : undefined}>
+        <button type="submit" class="btn btn--accent btn--lg btn--block" aria-disabled={busy() || left() > 0 ? "true" : undefined}>
           <span>{busy() ? "Signing in…" : "Sign in"}</span>
         </button>
         <p class="auth__foot">Got an invite link? Open it on this device to create your account.</p>
@@ -141,7 +140,7 @@ export function Setup(): JSX.Element {
         <Show when={error()}>
           <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
         </Show>
-        <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
+        <button type="submit" class="btn btn--accent btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
           <span>{busy() ? "Creating…" : "Create admin account"}</span>
         </button>
       </form>
@@ -215,7 +214,7 @@ export function Invite(): JSX.Element {
               <Show when={error()}>
                 <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
               </Show>
-              <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
+              <button type="submit" class="btn btn--accent btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
                 <span>{busy() ? "Creating account…" : "Create account"}</span>
               </button>
             </form>
@@ -258,7 +257,7 @@ export function Connect(): JSX.Element {
         <Show when={error()}>
           <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
         </Show>
-        <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
+        <button type="submit" class="btn btn--accent btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
           <span>{busy() ? "Connecting…" : "Connect"}</span>
         </button>
       </form>
