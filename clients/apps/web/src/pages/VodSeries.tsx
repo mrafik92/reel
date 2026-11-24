@@ -1,6 +1,6 @@
-import { createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createMemo, createResource, createSignal, For, Show, type JSX } from "solid-js";
 import { useParams } from "@solidjs/router";
-import { Backdrop, Icon, Img, Row, formatRuntime } from "@reel/ui";
+import { Icon, Img, Row, formatRuntime } from "@reel/ui";
 import { vod, type VodEpisode, type VodSeason, type VodSeries as Series } from "../api/vod";
 import { usePageFocus } from "../lib/focus";
 import { itemHref } from "../lib/links";
@@ -9,6 +9,7 @@ import { RatingsStrip, ReviewsSection, useReviews } from "../components/Reviews"
 import { CastTile } from "../components/Cast";
 import { vodPlayHref } from "../components/vod/links";
 import { TrailerModal, VodEyebrow, VodFineprint, VodSkeleton } from "../components/vod/Detail";
+import { SeasonPicker, TitleSheet } from "../components/TitleSheet";
 
 /** An IPTV series: hero, season tabs, and the episode list with progress. */
 export default function VodSeries(): JSX.Element {
@@ -17,17 +18,8 @@ export default function VodSeries(): JSX.Element {
   let el!: HTMLDivElement;
   usePageFocus(() => !!s() || !!s.error, () => el);
 
-  const [scrolled, setScrolled] = createSignal(false);
-  onMount(() => {
-    const onScroll = () => setScrolled(window.pageYOffset > window.innerHeight * 0.3);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    onCleanup(() => window.removeEventListener("scroll", onScroll));
-  });
-
   return (
-    <div class="page detail vdetail" ref={el} classList={{ "is-scrolled": scrolled() }}>
-      <Backdrop src={s()?.backdrop_url} class="page-backdrop" />
-      <div class="page-scrim page-scrim--detail" aria-hidden="true" />
+    <div class="page detail vdetail" ref={el}>
       <Show when={!s.error} fallback={<ErrorState error={s.error} title="Couldn't open this IPTV series" onRetry={refetch} />}>
         <Show when={s()} fallback={<VodSkeleton />}>
           {(x) => <SeriesBody s={x()} />}
@@ -66,37 +58,11 @@ function SeriesBody(props: { s: Series }): JSX.Element {
   const playEp = (_sn: VodSeason, ep: VodEpisode, fromStart = false) =>
     vodPlayHref("episode", ep.id, { series: s().id, fromStart, t: !fromStart && live(ep) && ep.runtime_s ? ep.progress! * ep.runtime_s : 0 });
 
-  let seasonTimer: ReturnType<typeof setTimeout> | undefined;
-  onCleanup(() => seasonTimer && clearTimeout(seasonTimer));
-  const pickSeason = (n: number, delay: number) => {
-    if (seasonTimer) clearTimeout(seasonTimer);
-    seasonTimer = setTimeout(() => setSeasonNo(n), delay);
-  };
-
-  return (
+  const head = (
     <>
-      <section class="detail__hero" data-nav-anchor style={{ "--nav-anchor-top": "0px" }}>
         <VodEyebrow kind="series" categoryId={s().category_id} />
         <h1 class="detail__title" dir="auto">{s().title}</h1>
-        <p class="meta">
-          <Show when={s().year}><span>{s().year}</span></Show>
-          <Show when={seasons().length}>
-            <span>{seasons().length} {seasons().length === 1 ? "season" : "seasons"} · {nEpisodes()} episodes</span>
-          </Show>
-          <Show when={(s().genres ?? []).length}><span>{s().genres!.slice(0, 3).join(" / ")}</span></Show>
-          <Show when={s().rating}>
-            <span class="meta__rating"><Icon name="star" filled /> {s().rating!.toFixed(1)}</span>
-          </Show>
-        </p>
-        <RatingsStrip data={reviews()} />
-        <Show when={local()}>
-          <p class="vlib"><Icon name="check" /> <span><strong>Also in your library.</strong> Open it there to play from your own server.</span></p>
-        </Show>
-        <Show when={s().overview}>
-          <p class="detail__overview" dir="auto">{s().overview}</p>
-        </Show>
-
-        <div class="actions" data-nav-group>
+        <div class="actions tsheet__actions" data-nav-group>
           <Show when={local()}>
             <a class="btn btn--primary btn--lg" href={itemHref({ id: local()!, kind: "show" })} data-autofocus>
               <Icon name="play" /> <span>Watch from your library</span>
@@ -120,37 +86,51 @@ function SeriesBody(props: { s: Series }): JSX.Element {
             </button>
           </Show>
         </div>
+    </>
+  );
+
+  return (
+    <TitleSheet backdrop={s().backdrop_url} head={head}>
+      <section class="tinfo" data-nav-anchor>
+        <div class="tinfo__main">
+        <p class="meta">
+          <Show when={s().year}><span>{s().year}</span></Show>
+          <Show when={seasons().length}>
+            <span>{seasons().length} {seasons().length === 1 ? "season" : "seasons"} · {nEpisodes()} episodes</span>
+          </Show>
+          <Show when={(s().genres ?? []).length}><span>{s().genres!.slice(0, 3).join(" / ")}</span></Show>
+          <Show when={s().rating}>
+            <span class="meta__rating"><Icon name="star" filled /> {s().rating!.toFixed(1)}</span>
+          </Show>
+        </p>
+        <RatingsStrip data={reviews()} />
+        <Show when={local()}>
+          <p class="vlib"><Icon name="check" /> <span><strong>Also in your library.</strong> Open it there to play from your own server.</span></p>
+        </Show>
+        <Show when={s().overview}>
+          <p class="detail__overview" dir="auto">{s().overview}</p>
+        </Show>
+
         <VodFineprint local={!!local()} />
+        </div>
       </section>
 
       <Show when={seasons().length}>
-        <section class="seasons vseasons" data-nav-anchor>
-          <Show when={seasons().length > 1}>
-            <nav class="tabs tabs--seasons" aria-label="Seasons" data-nav-group>
-              <For each={seasons()}>
-                {(sn) => (
-                  <button
-                    type="button"
-                    class="tab"
-                    aria-current={sn.season_no === seasonNo() ? "true" : undefined}
-                    data-nav-default={sn.season_no === seasonNo() ? "" : undefined}
-                    data-fid={"vs:" + sn.season_no}
-                    onFocus={() => pickSeason(sn.season_no, 220)}
-                    onClick={() => pickSeason(sn.season_no, 0)}
-                  >
-                    {/^season \d+$/i.test(sn.name ?? "") || !sn.name ? `Season ${sn.season_no}` : <span dir="auto">{sn.name}</span>}
-                  </button>
-                )}
-              </For>
-            </nav>
-          </Show>
+        <section class="tepisodes" data-nav-anchor>
+          <header class="tepisodes__head">
+            <h2 class="section-title">Episodes</h2>
+            <SeasonPicker
+              seasons={seasons().map((sn) => ({
+                value: sn.season_no,
+                label: /^season \d+$/i.test(sn.name ?? "") || !sn.name ? `Season ${sn.season_no}` : sn.name,
+              }))}
+              selected={seasonNo()}
+              onSelect={(v) => setSeasonNo(v)}
+            />
+          </header>
           <Show when={season()} keyed>
             {(sn) => (
               <div class="eplist" data-nav-group role="list" aria-label={`Season ${sn.season_no} episodes`}>
-                <p class="eplist__head">
-                  <span class="eyebrow">Season {sn.season_no}</span>
-                  <span>{sn.episodes.length} episodes · {sn.episodes.filter((e) => e.played).length} watched</span>
-                </p>
                 <For each={sn.episodes}>
                   {(ep) => <EpisodeRow season={sn} ep={ep} href={playEp(sn, ep)} next={up()?.ep.id === ep.id} />}
                 </For>
@@ -171,7 +151,7 @@ function SeriesBody(props: { s: Series }): JSX.Element {
       <Show when={trailer() && s().trailer_youtube_id}>
         <TrailerModal youtubeId={s().trailer_youtube_id!} title={s().title} onClose={() => setTrailer(false)} />
       </Show>
-    </>
+    </TitleSheet>
   );
 }
 
@@ -192,20 +172,20 @@ function EpisodeRow(props: { season: VodSeason; ep: VodEpisode; href: string; ne
       role="listitem"
       aria-label={`Episode ${e().episode_no}${generic() ? "" : ": " + e().title}${e().played ? ", watched" : p() ? `, ${left()} minutes left` : ""}`}
     >
+      <span class="eprow__index" aria-hidden="true">{e().episode_no}</span>
       <div class="eprow__still">
-        <Img src={e().still_url} width={400} alt="" fallback={<span class="eprow__num" aria-hidden="true">{e().episode_no}</span>} />
+        <Img src={e().still_url} width={342} alt="" fallback={<span class="eprow__nostill" />} />
         <span class="eprow__play" aria-hidden="true"><Icon name="play" /></span>
         <Show when={e().played}><span class="card__played"><Icon name="check" /></span></Show>
         <Show when={p()}><div class="card__progress"><i style={{ width: `${p() * 100}%` }} /></div></Show>
       </div>
       <div class="eprow__body">
-        <p class="eprow__meta">
-          <span class="eprow__code">E{e().episode_no}</span>
-          <Show when={e().runtime_s}><span>{formatRuntime(e().runtime_s)}</span></Show>
-          <Show when={p()}><span class="eprow__left">{left()} min left</span></Show>
-          <Show when={props.next && !p()}><span class="eprow__left">Up next</span></Show>
+        <p class="eprow__line">
+          <span class="eprow__title" dir="auto">{generic() ? `Episode ${e().episode_no}` : e().title}</span>
+          <Show when={p()} fallback={<Show when={e().runtime_s}><span class="eprow__runtime">{formatRuntime(e().runtime_s)}</span></Show>}>
+            <span class="eprow__runtime">{left()} min left</span>
+          </Show>
         </p>
-        <h3 class="eprow__title" dir="auto">{generic() ? `Episode ${e().episode_no}` : e().title}</h3>
         <Show when={e().overview}><p class="eprow__overview" dir="auto">{e().overview}</p></Show>
       </div>
     </a>

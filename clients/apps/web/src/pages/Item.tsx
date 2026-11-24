@@ -1,7 +1,7 @@
-import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show, type JSX } from "solid-js";
-import { useBeforeLeave, useNavigate, useParams } from "@solidjs/router";
+import { createEffect, createMemo, createResource, createSignal, For, on, Show, type JSX } from "solid-js";
+import { useNavigate, useParams } from "@solidjs/router";
 import {
-  Backdrop, Icon, Img, PosterCard, Row, Sheet,
+  Icon, Row, Sheet, focusElement,
   audioLabel, codecName, channelsLabel, episodeCode, fileTags, formatBytes, formatRemaining, formatRuntime,
   hdrLabel, resolutionLabel, subtitleLabel,
   type ItemDetail, type ItemSummary, type MediaFile,
@@ -21,8 +21,9 @@ import { RatingsStrip, ReviewsSection, useReviews } from "../components/Reviews"
 import { CastTile } from "../components/Cast";
 import { href } from "../lib/mode";
 import { itemActivity } from "../lib/downloads";
-
-import { enterPoster, leavePoster } from "../lib/posterMotion";
+import { episodeTag } from "../lib/continue";
+import { CastText, InfoLine, RoundAction, SeasonPicker, TitleSheet } from "../components/TitleSheet";
+import { EpisodeList } from "../components/EpisodeList";
 
 type Picker = "audio" | "sub" | "version" | "cast" | null;
 /** Sheet value for "Automatic" (use my playback settings). */
@@ -37,18 +38,8 @@ export default function Item(): JSX.Element {
   let el!: HTMLDivElement;
   usePageFocus(() => (!!item() && bodyReady()) || !!item.error, () => el);
 
-  // Dim the backdrop once the viewer moves past the hero into rows.
-  const [scrolled, setScrolled] = createSignal(false);
-  onMount(() => {
-    const onScroll = () => setScrolled(window.pageYOffset > window.innerHeight * 0.3);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    onCleanup(() => window.removeEventListener("scroll", onScroll));
-  });
-
   return (
-    <div class="page detail" ref={el} classList={{ "is-scrolled": scrolled() }}>
-      <Backdrop src={item()?.backdrop_url} class="page-backdrop" />
-      <div class="page-scrim page-scrim--detail" aria-hidden="true" />
+    <div class="page detail" ref={el}>
       <Show when={!item.error} fallback={<ErrorState error={item.error} onRetry={refetch} />}>
         <Show when={item()} fallback={<DetailSkeleton />}>
           {(it) => <DetailBody item={it()} onReady={() => setBodyReady(true)} />}
@@ -59,8 +50,6 @@ export default function Item(): JSX.Element {
 }
 
 function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Element {
-  let poster: HTMLDivElement | undefined;
-  useBeforeLeave(() => leavePoster(poster, props.item.id));
   const it = () => props.item;
   const isShow = () => it().kind === "show" || it().kind === "season";
 
@@ -148,19 +137,6 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
     return eps.find((e) => e.progress) ?? eps.find((e) => !e.played) ?? eps[0];
   });
 
-  let seasonTimer: ReturnType<typeof setTimeout> | undefined;
-  onCleanup(() => seasonTimer && clearTimeout(seasonTimer));
-  const pickSeason = (id: number, delay: number) => {
-    if (seasonTimer) clearTimeout(seasonTimer);
-    seasonTimer = setTimeout(() => setSeasonId(id), delay);
-  };
-
-  // Focused episode → overview (fetched once the viewer settles).
-  const [epFocus, setEpFocus] = createSignal<ItemSummary>();
-  const [epDetail] = createResource(epFocus, (e) => new Promise<ItemDetail>((res, rej) => {
-    setTimeout(() => api.item(e.id).then(res, rej), 300);
-  }));
-
   const [played, setPlayedLocal] = createSignal(props.item.played);
   const [savingPlayed, setSavingPlayed] = createSignal(false);
   const togglePlayed = async () => {
@@ -189,157 +165,161 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
   );
   const activity = () => itemActivity(it().id);
 
-  return (
-    <>
-      <section class="detail__hero" classList={{ "detail__hero--poster": !!it().poster_url }} data-nav-anchor style={{ "--nav-anchor-top": "0px" }}>
-        <Show when={it().poster_url}>
-          <div class="detail__poster" ref={(el) => {
-            poster = el;
-            el.addEventListener("load", () => enterPoster(el), true);
-          }} aria-hidden="true">
-            <Img src={it().poster_url} width={342} eager />
-          </div>
-        </Show>
-        <p class="eyebrow">
-          {it().kind === "show" ? "Series" : it().kind === "season" ? "Season" : it().kind === "episode" ? episodeCode(it()) : "Film"}
-        </p>
-        <h1 class="detail__title">{it().title}</h1>
-        <p class="meta">
-          <Show when={it().year}><span>{it().year}</span></Show>
-          <Show when={it().content_rating}><span class="badge">{it().content_rating}</span></Show>
-          <Show when={!isShow() && runtime()}><span>{formatRuntime(runtime())}</span></Show>
-          <Show when={it().kind === "show" && it().children_count}>
-            <span>{it().children_count} {it().children_count === 1 ? "season" : "seasons"}</span>
-          </Show>
-          <Show when={it().genres.length}><span>{it().genres.slice(0, 3).join(" / ")}</span></Show>
-          <Show when={it().rating}>
-            <span class="meta__rating"><Icon name="star" filled /> {it().rating!.toFixed(1)}</span>
-          </Show>
-          <Show when={played()}><span class="meta__watched"><Icon name="check" /> Watched</span></Show>
-        </p>
-        <RatingsStrip data={reviews()} />
-        <Show when={activity()}>
-          {(a) => (
-            <p class="detail__activity">
-              <span class="pulse" aria-hidden="true" />
-              {a().state === "downloading" ? `Downloading${a().count > 1 ? ` ${a().count} files` : ""} · ${Math.floor(a().progress * 100)}%` : a().state === "importing" ? "Importing new files" : a().state === "queued" ? "Queued for download" : a().state === "stalled" ? "Download stalled" : "Download failed"}
-              <a href={href("/downloads")}>See downloads</a>
-            </p>
-          )}
-        </Show>
-        <Show when={tags().length}>
-          <ul class="tags" aria-label="Video and audio">
-            <For each={tags()}>{(t) => <li class="tag" classList={{ "tag--hdr": /HDR|Dolby Vision|HLG/.test(t) }}>{t}</li>}</For>
-          </ul>
-        </Show>
-        <Show when={it().overview}>
-          <p class="detail__overview">{it().overview}</p>
-        </Show>
+  const epProgress = (ep: ItemSummary) => (ep.progress && ep.progress > 0.005 && ep.progress < 0.995 ? ep.progress : 0);
+  const castNames = () => it().cast.map((c) => c.name);
+  const jumpToCast = () => {
+    const link = document.querySelector<HTMLElement>(".row--cast a, .row--cast [data-focusable]");
+    if (link) focusElement(link);
+  };
 
-        <div class="actions" data-nav-group>
-          <Show when={isShow()} fallback={
-            <Show when={file()} fallback={<p class="note"><Icon name="alert" /> No playable file for this title yet.</p>}>
-              <a class="btn btn--primary btn--lg" href={playHref(it(), trackOpts())} data-autofocus>
-                <Icon name="play" />
-                <span>{progress() ? "Resume" : "Play"}</span>
-                <Show when={progress() && runtime()}>
-                  <small class="btn__aside">{formatRemaining(runtime()!, progress())}</small>
-                </Show>
-              </a>
-              <Show when={progress()}>
-                <a class="btn" href={playHref(it(), { ...trackOpts(), fromStart: true })}>
-                  <Icon name="restart" /> <span>From the beginning</span>
-                </a>
+  const head = (
+    <>
+      <Show when={it().kind === "episode"}>
+        <p class="eyebrow">{episodeCode(it())}</p>
+      </Show>
+      <h1 class="detail__title">{it().title}</h1>
+      <div class="actions tsheet__actions" data-nav-group>
+        <Show when={isShow()} fallback={
+          <Show when={file()} fallback={<p class="note"><Icon name="alert" /> No playable file for this title yet.</p>}>
+            <a class="btn btn--primary btn--lg tsheet__play" href={playHref(it(), trackOpts())} data-autofocus>
+              <Icon name="play" />
+              <span>{progress() ? "Resume" : "Play"}</span>
+              <Show when={progress() && runtime()}>
+                <small class="btn__aside">{formatRemaining(runtime()!, progress())}</small>
               </Show>
-              <button type="button" class="btn btn--select" onClick={() => setPicker("audio")} disabled={!file()!.audio.length}>
+            </a>
+            <Show when={progress()}>
+              <RoundAction icon={<Icon name="replay" />} label="From the beginning" href={playHref(it(), { ...trackOpts(), fromStart: true })} />
+            </Show>
+          </Show>
+        }>
+          <Show when={nextUp()} fallback={<span class="btn btn--primary btn--lg tsheet__play is-disabled"><Icon name="play" /> <span>Loading episodes…</span></span>}>
+            {(ep) => (
+              <>
+                <a class="btn btn--primary btn--lg tsheet__play" href={playHref(ep())} data-autofocus>
+                  <Icon name="play" />
+                  <span>{epProgress(ep()) ? "Resume" : "Play"} {episodeTag(ep())}</span>
+                  <Show when={epProgress(ep()) && ep().runtime_s}>
+                    <small class="btn__aside">{formatRemaining(ep().runtime_s!, epProgress(ep()))}</small>
+                  </Show>
+                </a>
+                <Show when={epProgress(ep())}>
+                  <RoundAction icon={<Icon name="replay" />} label="From the beginning" href={playHref(ep(), { fromStart: true })} />
+                </Show>
+              </>
+            )}
+          </Show>
+        </Show>
+        <RoundAction
+          icon={<Icon name={played() ? "eyeoff" : "check"} />}
+          label={played() ? "Mark unwatched" : "Mark watched"}
+          pressed={played()}
+          disabled={savingPlayed()}
+          onClick={() => void togglePlayed()}
+        />
+        <Show when={!TV && !isShow() && file()}>
+          <RoundAction
+            icon={<Icon name="cast" />}
+            label={castNow() ? `On ${castNow()!.remote.device()}` : "Play on…"}
+            onClick={() => setPicker("cast")}
+          />
+        </Show>
+      </div>
+    </>
+  );
+
+  return (
+    <TitleSheet backdrop={it().backdrop_url} head={head}>
+      <section class="tinfo" data-nav-anchor>
+        <div class="tinfo__main">
+          <p class="meta">
+            <Show when={it().year}><span>{it().year}</span></Show>
+            <Show when={it().content_rating}><span class="badge">{it().content_rating}</span></Show>
+            <Show when={!isShow() && runtime()}><span>{formatRuntime(runtime())}</span></Show>
+            <Show when={it().kind === "show" && it().children_count}>
+              <span>{it().children_count} {it().children_count === 1 ? "season" : "seasons"}</span>
+            </Show>
+            <For each={tags()}>{(t) => <span class="tag" classList={{ "tag--hdr": /HDR|Dolby Vision|HLG/.test(t) }}>{t}</span>}</For>
+            <Show when={it().rating}>
+              <span class="meta__rating"><Icon name="star" filled /> {it().rating!.toFixed(1)}</span>
+            </Show>
+            <Show when={played()}><span class="meta__watched"><Icon name="check" /> Watched</span></Show>
+          </p>
+          <RatingsStrip data={reviews()} />
+          <Show when={activity()}>
+            {(a) => (
+              <p class="detail__activity">
+                <span class="pulse" aria-hidden="true" />
+                {a().state === "downloading" ? `Downloading${a().count > 1 ? ` ${a().count} files` : ""} · ${Math.floor(a().progress * 100)}%` : a().state === "importing" ? "Importing new files" : a().state === "queued" ? "Queued for download" : a().state === "stalled" ? "Download stalled" : "Download failed"}
+                <a href={href("/downloads")}>See downloads</a>
+              </p>
+            )}
+          </Show>
+          <Show when={it().overview}>
+            <p class="detail__overview">{it().overview}</p>
+          </Show>
+          <Show when={!isShow() && file()}>
+            <div class="tinfo__selects" data-nav-group>
+              <button type="button" class="btn btn--sm btn--select" onClick={() => setPicker("audio")} disabled={!file()!.audio.length}>
                 <Icon name="audio" /> <span class="btn__label">Audio</span> <span class="btn__value">{audioText()}</span>
               </button>
-              <button type="button" class="btn btn--select" onClick={() => setPicker("sub")}>
+              <button type="button" class="btn btn--sm btn--select" onClick={() => setPicker("sub")}>
                 <Icon name="cc" /> <span class="btn__label">Subtitles</span> <span class="btn__value">{subText()}</span>
                 <Show when={sub() == null && preview()}><small class="btn__tag">Auto</small></Show>
               </button>
-              <Show when={!TV}>
-                <button type="button" class="btn btn--select" onClick={() => setPicker("cast")}>
-                  <Icon name="cast" /> <span class="btn__label">{castNow() ? `On ${castNow()!.remote.device()}` : "Play on…"}</span>
-                </button>
-              </Show>
               <Show when={it().files.length > 1}>
-                <button type="button" class="btn btn--select" onClick={() => setPicker("version")}>
+                <button type="button" class="btn btn--sm btn--select" onClick={() => setPicker("version")}>
                   <Icon name="layers" /> <span class="btn__label">Version</span>
                   <span class="btn__value">{tags().slice(0, 2).join(" ")}</span>
                 </button>
               </Show>
-            </Show>
-          }>
-            <Show when={nextUp()} fallback={<span class="btn btn--primary btn--lg is-disabled"><Icon name="play" /> <span>Loading episodes…</span></span>}>
-              {(ep) => (
-                <a class="btn btn--primary btn--lg" href={playHref(ep())} data-autofocus>
-                  <Icon name="play" />
-                  <span>{ep().progress ? "Resume" : "Play"} {episodeCode(ep())}</span>
-                </a>
-              )}
-            </Show>
+            </div>
           </Show>
-          <button type="button" class="btn" aria-pressed={played()} aria-disabled={savingPlayed() ? "true" : undefined} onClick={() => void togglePlayed()}>
-            <Icon name={played() ? "eyeoff" : "check"} />
-            <span>{played() ? "Mark unwatched" : "Mark watched"}</span>
-          </button>
+        </div>
+        <div class="tinfo__side">
+          <Show when={it().cast.length}>
+            <InfoLine label="Cast">
+              {/* On TV the names aren't extra focus stops: the cast row below has them. */}
+              <Show when={!TV} fallback={<CastText names={castNames().slice(0, 4)} />}>
+                <For each={it().cast.slice(0, 4)}>
+                  {(c, i) => (
+                    <>
+                      {i() > 0 ? ", " : ""}
+                      <Show when={c.person_tmdb_id} fallback={c.name}>
+                        <a class="tinfo__link" href={href(`/person/${c.person_tmdb_id}`)}>{c.name}</a>
+                      </Show>
+                    </>
+                  )}
+                </For>
+                <Show when={it().cast.length > 4}>
+                  {", "}
+                  <button type="button" class="tinfo__more" onClick={jumpToCast}>more</button>
+                </Show>
+              </Show>
+            </InfoLine>
+          </Show>
+          <Show when={it().genres.length}>
+            <InfoLine label="Genres">{it().genres.join(", ")}</InfoLine>
+          </Show>
         </div>
       </section>
 
-      <Show when={it().kind === "show" && seasons() && seasons()!.length}>
-        <section class="seasons" data-nav-anchor>
-          <nav class="tabs tabs--seasons" aria-label="Seasons" data-nav-group>
-            <For each={seasons()}>
-              {(s) => (
-                <button
-                  type="button"
-                  class="tab"
-                  aria-current={s.id === seasonId() ? "true" : undefined}
-                  data-nav-default={s.id === seasonId() ? "" : undefined}
-                  data-fid={s.id}
-                  onFocus={() => pickSeason(s.id, 220)}
-                  onClick={() => pickSeason(s.id, 0)}
-                >
-                  {s.title}
-                </button>
-              )}
-            </For>
-          </nav>
-        </section>
-      </Show>
-
       <Show when={isShow()}>
-        <Show when={episodes()} fallback={<div class="episodes-loading" />}>
-          {(eps) => (
-            <>
-              <Row title={`${eps().length} episodes`} variant="landscape" class="row--episodes">
-                <For each={eps()}>
-                  {(ep) => (
-                    <PosterCard
-                      item={ep}
-                      variant="landscape"
-                      href={playHref(ep)}
-                      subtitle={`${/^Episode \d+$/i.test(ep.title) ? episodeCode(ep) : `Episode ${ep.episode_no ?? ""}`}${ep.played ? " · Watched" : ""}`}
-                      onFocus={setEpFocus}
-                    />
-                  )}
-                </For>
-              </Row>
-              <div class="episode-note" aria-live="polite">
-                <Show when={epFocus() && epDetail() && epDetail()!.id === epFocus()!.id && epDetail()}>
-                  {(d) => (
-                    <>
-                      <p class="eyebrow">{episodeCode(d())} · {formatRuntime(d().runtime_s)}</p>
-                      <h3>{d().title}</h3>
-                      <p>{d().overview}</p>
-                    </>
-                  )}
-                </Show>
-              </div>
-            </>
-          )}
-        </Show>
+        <section class="tepisodes" data-nav-anchor>
+          <header class="tepisodes__head">
+            <h2 class="section-title">Episodes</h2>
+            <Show when={it().kind === "show" && seasons() && seasons()!.length}>
+              <SeasonPicker
+                seasons={seasons()!.map((x) => ({ value: x.id, label: x.title }))}
+                selected={seasonId() ?? seasons()![0]!.id}
+                onSelect={(v) => setSeasonId(v)}
+              />
+            </Show>
+          </header>
+          <Show when={episodes()} fallback={<div class="episodes-loading" />} keyed>
+            {(eps) => <EpisodeList episodes={eps} nextId={nextUp()?.id} />}
+          </Show>
+        </section>
       </Show>
 
       <Show when={it().cast.length}>
@@ -353,6 +333,13 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
       </Show>
 
       <ReviewsSection data={reviews()} />
+
+      <section class="tabout" data-nav-anchor>
+        <h2 class="section-title">About {it().title}</h2>
+        <Show when={it().genres.length}><InfoLine label="Genres">{it().genres.join(", ")}</InfoLine></Show>
+        <Show when={it().content_rating}><InfoLine label="Maturity rating">{it().content_rating}</InfoLine></Show>
+        <Show when={it().cast.length}><InfoLine label="Cast"><CastText names={castNames()} /></InfoLine></Show>
+      </section>
 
       <Show when={it().files.length}>
         <section class="tech" data-nav-anchor>
@@ -450,18 +437,25 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
           onClose={() => setPicker(null)}
         />
       </Show>
-    </>
+    </TitleSheet>
   );
 }
 
 function DetailSkeleton(): JSX.Element {
   return (
-    <section class="detail__hero" aria-busy="true" aria-label="Loading">
-      <span class="skel skel--text" style={{ width: "6rem" }} />
-      <span class="skel skel--title" />
-      <span class="skel skel--text" style={{ width: "22rem" }} />
-      <span class="skel skel--text" style={{ width: "34rem" }} />
-      <span class="skel skel--text" style={{ width: "30rem" }} />
-    </section>
+    <TitleSheet head={
+      <div aria-busy="true" aria-label="Loading">
+        <span class="skel skel--title" />
+        <span class="skel skel--text" style={{ width: "14rem", height: "3.25rem" }} />
+      </div>
+    }>
+      <section class="tinfo">
+        <div class="tinfo__main">
+          <span class="skel skel--text" style={{ width: "60%" }} />
+          <span class="skel skel--text" style={{ width: "90%" }} />
+          <span class="skel skel--text" style={{ width: "80%" }} />
+        </div>
+      </section>
+    </TitleSheet>
   );
 }
