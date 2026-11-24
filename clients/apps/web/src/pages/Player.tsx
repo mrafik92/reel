@@ -2,8 +2,8 @@ import { startupTiming, type StartupTiming } from "../lib/startupTiming";
 import { createEffect, createResource, createSignal, For, onCleanup, onMount, Show, useContext, type JSX } from "solid-js";
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
-  Icon, Sheet, audioLabel, codecShort, createPlayerAdapter, episodeCode, focusElement, iso1, isSdh,
-  AvPlayAdapter, mediaUrl, onBack, onRemoteKey, playsHlsWithHlsJs, subtitleLabel,
+  Icon, Sheet, audioLabel, createPlayerAdapter, episodeCode, focusElement, formatRuntime, iso1,
+  AvPlayAdapter, mediaUrl, onBack, onRemoteKey, playsHlsWithHlsJs, resolutionLabel, subtitleLabel,
   type IconName, type ItemDetail, type MediaFile, type PlayerAdapter, type PlayerTracks,
 } from "@reel/ui";
 import { api, ApiError, invalidate, type DecideResponse, type Quality, type SubtitleOption, type VariantOption } from "../api";
@@ -28,6 +28,8 @@ import { TV, href } from "../lib/mode";
 import { toast } from "../lib/toast";
 import { ErrorState } from "../components/States";
 import { CtlButton, Osd, Scrubber, Transport, Volume, useOsd, type ScrubberApi } from "../components/player/Controls";
+import { playerHeading, volumeIcon } from "../lib/playerChrome";
+import { TracksMenu } from "../components/player/TracksMenu";
 import { playHref, toPath } from "../lib/links";
 import { createDoubleTap, createTapToggle, pointerKind, zoneOf, type TapResult } from "../lib/tap";
 import { CastSheet } from "../components/casting/CastSheet";
@@ -146,7 +148,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
   /** The server no longer knows this session (reaped, server restarted): reopen on the next play. */
   let gone = false;
   const [scrub, setScrub] = createSignal<number | null>(null);
-  const [picker, setPicker] = createSignal<"audio" | "sub" | null>(null);
+  const [picker, setPicker] = createSignal<"tracks" | null>(null);
   const [series, setSeries] = createSignal<string>();
   const [session, setSession] = createSignal<DecideResponse>();
   const [info, setInfo] = createSignal(false);
@@ -742,10 +744,11 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
     if (!isAdaptive(s)) return s?.quality;
     return variantOf(s, variantId())?.id;
   };
-  /** Compact value next to the icon: what is playing now. */
-  const qualityValue = () => {
+  /** The badge on the quality button: the size that is playing now ("1080p", "4K"), else the pick. */
+  const qualityBadge = () => {
     const q = playingQuality();
-    return q ? (q === "original" ? "Orig" : QUALITY_NAME[q]) : QUALITY_NAME[quality()];
+    if (!q) return QUALITY_NAME[quality()];
+    return q === "original" ? resolutionLabel(file?.video) || "Orig" : QUALITY_NAME[q];
   };
   const qualityDesc = () => {
     const limit = userLimitKbps();
@@ -950,7 +953,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
     setMuted(m);
     if (!m && volume() === 0) changeVolume(0.5);
     else applyVolume(volume(), m);
-    flash({ icon: m ? "mute" : "volume", text: m ? "Muted" : `Volume ${Math.round(volume() * 100)}%` });
+    flash({ icon: m ? "mute" : volumeIcon(volume()), text: m ? "Muted" : `Volume ${Math.round(volume() * 100)}%` });
   };
   const changeSpeed = (v: number) => {
     setSpeed(v);
@@ -1220,7 +1223,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
       if ((k === "ArrowUp" || k === "ArrowDown") && !TV && htmlVideo()) {
         take();
         changeVolume(volume() * (muted() ? 0 : 1) + (k === "ArrowUp" ? 0.05 : -0.05));
-        flash({ icon: volume() === 0 ? "mute" : "volume", text: `Volume ${Math.round(volume() * 100)}%` });
+        flash({ icon: volumeIcon(volume()), text: `Volume ${Math.round(volume() * 100)}%` });
         return poke();
       }
       if (hidden && /^(ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Enter)$/.test(k)) {
@@ -1310,28 +1313,16 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
   /** Session list (has VTT urls); falls back to the file's streams while (re)deciding. */
   const subList = (): { index: number; language?: string | null; title?: string | null; forced: boolean; external: boolean; url?: string | null }[] =>
     session()?.subtitles ?? file?.subtitles ?? [];
-  /** Compact choices for the control bar: "EN · 5.1", "EN SDH", "Off". */
-  const CH: Record<number, string> = { 1: "1.0", 2: "2.0", 6: "5.1", 8: "7.1" };
-  const audioShort = () => {
-    const a = audioList().find((x) => x.index === audio());
-    if (!a) return "Default";
-    const lang = iso1(a.language).toUpperCase() || codecShort(a.codec);
-    return `${lang} · ${CH[a.channels] ?? `${a.channels}ch`}`;
-  };
   const audioText = () => {
     const a = audioList().find((x) => x.index === audio());
     return a ? audioLabel(a).short : "Default";
-  };
-  const subShort = () => {
-    const x = subList().find((y) => y.index === sub());
-    if (!x) return "Off";
-    const lang = iso1(x.language).toUpperCase() || subLabel(x).short.slice(0, 2).toUpperCase();
-    return `${lang}${isSdh(x) ? " SDH" : ""}${x.forced ? " Forced" : ""}`;
   };
   const subText = () => {
     const x = subList().find((y) => y.index === sub());
     return x ? subLabel(x).short : "Off";
   };
+  /** After the button's name in its label: the subtitle when one is on, else the audio track. */
+  const tracksHint = () => (sub() >= 0 ? `${subText()}${subAuto() ? " (automatic)" : ""}` : audioText());
   const mode = () => session()?.mode;
   const transcoding = () => mode() === "transcode" || mode() === "audio_transcode";
   const shownPos = () => scrub() ?? pos();
@@ -1342,11 +1333,18 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
     const t = new Date(Date.now() + (Math.max(0, d - shownPos()) * 1000) / speed());
     return t.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   };
-  const topEyebrow = () =>
-    props.source?.eyebrow ??
-    (props.item.kind === "episode"
-      ? `${series() ?? ""}${series() ? " · " : ""}${episodeCode(props.item)}`
-      : [props.item.kind === "movie" ? "Film" : "", props.item.year ? String(props.item.year) : ""].filter(Boolean).join(" · "));
+  // Top bar: the series (or film) name, with one quiet line under it.
+  const heading = () =>
+    playerHeading({
+      kind: props.item.kind,
+      title: props.item.title,
+      year: props.item.year,
+      code: episodeCode(props.item),
+      runtime: formatRuntime(props.item.runtime_s ?? file?.duration_s),
+      series: series(),
+      eyebrow: props.source?.eyebrow,
+    });
+  const modeLabel = () => (transcoding() ? (mode() === "audio_transcode" ? "Audio transcode" : "Transcoding") : MODE_LABEL[mode()!] ?? mode());
 
   return (
     <div
@@ -1483,10 +1481,10 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
         <header class="pc__top">
           <CtlButton icon="back" label="Back" onClick={exit} />
           <div class="pc__titles">
-            <Show when={topEyebrow()}>
-              <p class="pc__eyebrow">{topEyebrow()}</p>
+            <h1 class="pc__title">{heading().title}</h1>
+            <Show when={heading().line}>
+              <p class="pc__line">{heading().line}</p>
             </Show>
-            <h1 class="pc__title">{props.item.title}</h1>
           </div>
           <div class="pc__meta">
             <Show when={endsAt()}>
@@ -1495,15 +1493,25 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
             <Show when={mode()}>
               <button
                 type="button"
-                class="pc__badge"
+                class="pc__mode"
                 classList={{ "is-transcode": transcoding() }}
                 aria-pressed={info()}
                 title="Stream info (I)"
                 onClick={() => setInfo((v) => !v)}
               >
                 <i aria-hidden="true" />
-                {transcoding() ? (mode() === "audio_transcode" ? "Audio transcode" : "Transcoding") : MODE_LABEL[mode()!] ?? mode()}
+                {modeLabel()}
               </button>
+            </Show>
+            {/* Phones have no room for it in the bottom row. */}
+            <Show when={!TV}>
+              <CtlButton
+                class="pc__cast pc__cast--top"
+                icon={airplaying() ? "airplay" : "cast"}
+                label={cast() ? `Playing on ${cast()!.remote.device()}` : "Play on TV"}
+                active={!!cast()}
+                onClick={() => setCastSheet(true)}
+              />
             </Show>
           </div>
         </header>
@@ -1535,50 +1543,60 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
               onToggle={toggle}
               onBack={() => seekBy(-10)}
               onForward={() => seekBy(30)}
-              next={nextEp() ? { label: `Next: ${episodeCode(nextEp()!)}`, onClick: playNext } : undefined}
               playRef={(el) => (playBtn = el)}
             />
 
+            {/* Every item has a fixed width and Next sits in the same row, so nothing can slide under it (#264). */}
             <div class="pc__side pc__side--end">
-              <CtlButton class="pc__audio" icon="audio" label={`Audio · ${audioText()}`} value={audioShort()} disabled={audioList().length < 2} onClick={() => setPicker("audio")} />
+              <Show when={nextEp()}>
+                {(n) => <CtlButton class="pc__next" icon="next" label={`Next: ${episodeCode(n())}`} text="Next episode" onClick={playNext} />}
+              </Show>
               <CtlButton
-                class="pc__subs"
-                icon="cc"
-                label={subAuto() ? `Subtitles · ${subText()} (automatic)` : `Subtitles · ${subText()}`}
-                value={subShort()}
-                tag={subAuto() && sub() >= 0 ? "Auto" : undefined}
+                class="pc__tracks"
+                icon="tracks"
+                label="Audio & subtitles"
+                hint={tracksHint()}
+                text="Audio & subtitles"
                 active={sub() >= 0}
-                disabled={!subList().length}
-                onClick={() => setPicker("sub")}
+                disabled={audioList().length < 2 && !subList().length}
+                onClick={() => setPicker("tracks")}
               />
               <Show when={qualityOk()}>
                 <CtlButton
                   class="pc__quality"
                   icon="quality"
-                  label={`Quality · ${QUALITY_NAME[quality()]}${playingQuality() ? `, playing ${QUALITY_NAME[playingQuality()!]}` : ""}`}
-                  value={qualityValue()}
-                  tag={quality() === "auto" ? "Auto" : undefined}
+                  badge={qualityBadge()}
+                  label="Quality"
+                  hint={`${QUALITY_NAME[quality()]}${playingQuality() && playingQuality() !== quality() ? `, playing ${QUALITY_NAME[playingQuality()!]}` : ""}`}
+                  text="Quality"
                   onClick={() => session() && setQualitySheet(true)}
                 />
               </Show>
               <Show when={htmlVideo()}>
-                <CtlButton class="pc__speed" icon="speed" label="Playback speed" value={speed() !== 1 ? `${speed()}×` : undefined} active={speed() !== 1} onClick={() => setSpeedSheet(true)} />
+                <CtlButton
+                  class="pc__speed"
+                  icon="speed"
+                  label="Playback speed"
+                  hint={speed() !== 1 ? `${speed()}×` : undefined}
+                  text={speed() !== 1 ? `${speed()}×` : "Speed"}
+                  active={speed() !== 1}
+                  onClick={() => setSpeedSheet(true)}
+                />
               </Show>
-              <span class="pc__sep" aria-hidden="true" />
               <Show when={!TV}>
                 <CtlButton
+                  class="pc__cast"
                   icon={airplaying() ? "airplay" : "cast"}
                   label={cast() ? `Playing on ${cast()!.remote.device()}` : "Play on TV"}
                   active={!!cast()}
                   onClick={() => setCastSheet(true)}
                 />
               </Show>
-              <CtlButton class="pc__info" icon="info" label="Stream info" pressed={info()} onClick={() => setInfo((v) => !v)} />
               <Show when={pipOk() && htmlVideo()}>
                 <CtlButton class="pc__pip" icon="pip" label="Picture in picture" onClick={togglePip} />
               </Show>
               <Show when={!TV}>
-                <CtlButton icon="fullscreen" label="Full screen (F)" onClick={fullscreen} />
+                <CtlButton class="pc__fs" icon="fullscreen" label="Full screen (F)" onClick={fullscreen} />
               </Show>
             </div>
           </div>
@@ -1587,6 +1605,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
 
       <Show when={qualitySheet()}>
         <Sheet
+          variant="pop"
           title="Quality"
           selected={quality()}
           description={qualityDesc()}
@@ -1615,6 +1634,7 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
 
       <Show when={speedSheet()}>
         <Sheet
+          variant="pop"
           title="Playback speed"
           selected={speed()}
           options={SPEEDS.map((v) => ({ value: v, title: v === 1 ? "Normal" : `${v}×`, detail: v === 1 ? "1×" : undefined }))}
@@ -1626,41 +1646,34 @@ export function PlayerView(props: { item: ItemDetail; source?: PlaySource; start
         />
       </Show>
 
-      <Show when={picker() === "audio"}>
-        <Sheet
-          title="Audio"
-          selected={audio() ?? -1}
-          options={audioList().map((a) => ({ value: a.index, ...audioLabel(a) }))}
-          onSelect={chooseAudio}
-          onClose={() => {
-            setPicker(null);
-            poke();
-          }}
-        />
-      </Show>
-      <Show when={picker() === "sub"}>
-        <Sheet
-          title="Subtitles"
-          selected={sub()}
-          options={[{ value: -1, title: "Off" } as { value: number; title: string; detail?: string }].concat(
-            subList().map((s) => {
-              const l = subLabel(s);
+      <Show when={picker() === "tracks"}>
+        <TracksMenu
+          audio={audioList().map((a) => {
+            const l = audioLabel(a);
+            return { value: a.index, title: l.title, detail: l.detail || undefined };
+          })}
+          audioSelected={audio() ?? -1}
+          onAudio={chooseAudio}
+          subs={[{ value: -1, title: "Off" } as { value: number; title: string; detail?: string }].concat(
+            subList().map((x) => {
+              const l = subLabel(x);
               // No VTT url in the session = image subs: they're burned in (forces a transcode).
-              const burn = session() && !s.url ? " · burned in (transcodes)" : "";
-              return { value: s.index, title: l.title, detail: l.detail + burn };
+              const burn = session() && !x.url ? " · burned in (transcodes)" : "";
+              return { value: x.index, title: l.title, detail: l.detail + burn };
             }),
           )}
-          onSelect={chooseSub}
-          onClose={() => {
-            setPicker(null);
-            poke();
-          }}
-          description={subAuto() && sub() >= 0 ? "Turned on automatically from your playback settings." : undefined}
+          subSelected={sub()}
+          onSub={chooseSub}
+          note={subAuto() && sub() >= 0 ? "Subtitles were turned on automatically from your playback settings." : undefined}
           footer={
             <a class="sheet__link" href={href("/settings/playback")}>
               <Icon name="gear" /> Subtitle & audio preferences
             </a>
           }
+          onClose={() => {
+            setPicker(null);
+            poke();
+          }}
         />
       </Show>
 

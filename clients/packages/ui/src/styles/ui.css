@@ -1086,6 +1086,128 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
   color: var(--ink);
   text-decoration: underline;
 }
+/* Compact corner panel (`variant="pop"`, #293): the player's menus. The picture stays visible, so
+   there is no dimming scrim, and the panel sits above the control row instead of filling the side. */
+.sheet--pop .sheet__scrim {
+  background: transparent;
+  animation: none;
+}
+.sheet--pop .sheet__panel {
+  top: auto;
+  right: var(--gutter, 0.75rem);
+  bottom: 7.9rem;
+  width: 24rem;
+  max-height: calc(100% - 9.4rem);
+  animation: sheet-pop 220ms var(--ease-out) both;
+}
+html.tv .sheet--pop .sheet__panel {
+  bottom: 8.6rem;
+  max-height: calc(100% - 10.2rem);
+}
+.sheet--pop .sheet__head {
+  padding: 1.05rem 3.6rem 0.45rem 1.25rem;
+}
+.sheet--pop .sheet__head h2 {
+  font: 600 1rem/1.3 var(--font-body);
+  letter-spacing: 0;
+}
+.sheet--pop .sheet__close {
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 2.2rem;
+  height: 2.2rem;
+  font-size: 1.05rem;
+}
+.sheet--pop .sheet__desc {
+  margin-top: 0.3rem;
+  font-size: 0.82rem;
+}
+.sheet--pop .sheet__list {
+  padding: 0.25rem 0.5rem 0.5rem;
+}
+.sheet--pop .sheet__opt {
+  min-height: 2.6rem;
+  padding: 0.35rem 0.75rem 0.35rem 0;
+  margin-bottom: 0.1rem;
+}
+.sheet--pop .sheet__mark {
+  order: 0;
+  flex: none;
+  width: 2.5rem;
+  margin: 0;
+  font-size: 1.1rem;
+}
+.sheet--pop .sheet__title {
+  font-size: 0.92rem;
+}
+.sheet--pop .sheet__detail {
+  font-size: 0.78rem;
+}
+.sheet--pop .sheet__foot {
+  padding: 0.55rem 1.1rem 0.65rem;
+  border-top: 1px solid var(--glass-line);
+}
+/* Two lists side by side (audio and subtitles) */
+.sheet--duo .sheet__panel {
+  width: 39rem;
+}
+.sheet--duo .sheet__close {
+  z-index: 1;
+}
+.sheet__cols {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.sheet__col {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  padding-top: 1rem;
+}
+.sheet__col + .sheet__col {
+  border-left: 1px solid var(--glass-line);
+}
+.sheet__colhead {
+  margin: 0 0 0.35rem;
+  padding: 0 3rem 0 3rem;
+  font: 600 0.75rem/1.5rem var(--font-body);
+  color: var(--ink-3);
+}
+.sheet--duo .sheet__desc {
+  margin: 0;
+  padding: 0.5rem 1.1rem 0.6rem;
+  border-top: 1px solid var(--glass-line);
+}
+.sheet--duo .sheet__desc + .sheet__foot {
+  border-top: 0;
+  padding-top: 0;
+}
+/* Phones: hug the corner; in a narrow window the two lists stack and scroll as one */
+@media (max-width: 760px), (max-height: 500px) {
+  html:not(.tv) .sheet--pop .sheet__panel {
+    right: 0.75rem;
+    bottom: 0.75rem;
+    max-height: calc(100% - 1.5rem);
+  }
+}
+@media (max-width: 560px) {
+  html:not(.tv) .sheet--duo .sheet__cols {
+    display: block;
+    overflow-y: auto;
+  }
+  html:not(.tv) .sheet--duo .sheet__col + .sheet__col {
+    border-left: 0;
+    border-top: 1px solid var(--glass-line);
+  }
+  html:not(.tv) .sheet--duo .sheet__list {
+    overflow: visible;
+  }
+}
+@keyframes sheet-pop {
+  from { opacity: 0; transform: translateY(0.6rem); }
+}
 @keyframes sheet-in {
   from { transform: translateX(calc(100% + 0.75rem)); }
   to { transform: none; }
