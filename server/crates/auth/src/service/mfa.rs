@@ -77,6 +77,8 @@ struct PendingLogin {
     expires: Instant,
     attempts: u8,
     passkey: Option<PasskeyAuthentication>,
+    /// Emergency sign-in without a password: only a passkey may finish it (#287).
+    passkey_only: bool,
 }
 
 struct PendingRegistration {
@@ -244,8 +246,14 @@ impl AuthService {
         })
     }
 
-    /// Ask for the password again before a change to the account's sign-in methods. Failures count
-    /// against their own per-account lock, so a stolen session can't guess the password for free.
+    /// The server can do WebAuthn.
+    pub fn passkeys_available(&self) -> bool {
+        self.mfa.webauthn.is_some()
+    }
+
+    /// Ask for the password again before a change to the account's sign-in methods, or for an
+    /// authenticator code on an account without one. Failures count against their own per-account
+    /// lock, so a stolen session can't guess for free.
     async fn reauthenticate(&self, user: &User, password: &str) -> AuthResult<()> {
         let key = format!("reauth:{}", user.id);
         let max = self.opts.limiter.user_max_failures;
@@ -254,7 +262,12 @@ impl AuthService {
             .bind(user.id)
             .fetch_one(&self.pool)
             .await?;
-        let ok = match self.verify_pw(password, &phc).await {
+        let checked = if phc == password::NO_PASSWORD {
+            self.consume_totp(user.id, password).await
+        } else {
+            self.verify_pw(password, &phc).await
+        };
+        let ok = match checked {
             Ok(v) => v,
             Err(e) => {
                 self.limiter.refund(&key, max);
@@ -316,6 +329,7 @@ impl AuthService {
                     expires: Instant::now() + CHALLENGE_TTL,
                     attempts: 0,
                     passkey: None,
+                    passkey_only: false,
                 },
             );
         }
@@ -334,6 +348,41 @@ impl AuthService {
             .lock()
             .unwrap()
             .retain(|_, p| p.user_id != user_id);
+    }
+
+    /// Emergency sign-in with a Reel passkey alone, for when the provider is unavailable (#287).
+    /// The API allows it only from the LAN or Tailscale.
+    pub async fn passkey_login_start(
+        &self,
+        username: &str,
+        dev: &Device,
+    ) -> AuthResult<(String, Value)> {
+        let key = format!("passkeylogin:{}", ip_bucket(dev.ip.as_deref()));
+        self.limiter.reserve(&key, 10).map_err(AuthError::Locked)?;
+        let name: String = username.trim().chars().take(32).collect();
+        let row = sqlx::query(&format!("{USER_SELECT} WHERE u.username = ?"))
+            .bind(&name)
+            .fetch_optional(&self.pool)
+            .await?;
+        let user = row
+            .map(|r| user_from_row(&r))
+            .filter(|u| !u.disabled)
+            .ok_or(AuthError::InvalidCredentials)?;
+        if self.load_passkeys(user.id).await?.is_empty() {
+            return Err(AuthError::InvalidCredentials);
+        }
+        let c = self.issue_challenge(&user, dev, false).await?;
+        if let Some(p) = self
+            .mfa
+            .logins
+            .lock()
+            .unwrap()
+            .get_mut(&hash_token(&c.token))
+        {
+            p.passkey_only = true;
+        }
+        let options = self.challenge_passkey_options(&c.token).await?;
+        Ok((c.token, options))
     }
 
     /// Options for `navigator.credentials.get()` during step two.
@@ -391,6 +440,10 @@ impl AuthService {
         let put_back = |p: PendingLogin| {
             self.mfa.logins.lock().unwrap().insert(key.clone(), p);
         };
+        if pending.passkey_only && !matches!(proof, MfaProof::Passkey(_)) {
+            put_back(pending);
+            return Err(AuthError::InvalidCredentials);
+        }
         if let Err(wait) = self.limiter.reserve(&ip_key, ip_max) {
             put_back(pending);
             return Err(AuthError::Locked(wait));
@@ -690,6 +743,11 @@ impl AuthService {
         if !s.totp {
             return Err(AuthError::NotFound);
         }
+        if !self.has_password(user.id).await? {
+            return Err(AuthError::Conflict(
+                "this app confirms account changes while the account has no password".into(),
+            ));
+        }
         self.guard_last_factor(user, !s.passkeys.is_empty()).await?;
         sqlx::query("DELETE FROM user_totp WHERE user_id = ?")
             .bind(user.id)
@@ -802,7 +860,10 @@ impl AuthService {
             None,
         )
         .await;
-        self.first_recovery_codes(user.id).await
+        let codes = self.first_recovery_codes(user.id).await?;
+        // a passkey is what an admin's password was waiting for
+        self.retire_password(user.id).await?;
+        Ok(codes)
     }
 
     pub async fn passkey_rename(&self, user_id: i64, id: i64, name: &str) -> AuthResult<()> {
@@ -822,6 +883,11 @@ impl AuthService {
         let s = self.mfa_status(user.id).await?;
         if !s.passkeys.iter().any(|p| p.id == id) {
             return Err(AuthError::NotFound);
+        }
+        if user.has_admin_role() && s.passkeys.len() == 1 && !self.has_password(user.id).await? {
+            return Err(AuthError::Conflict(
+                "this passkey is your emergency sign-in; add another before removing it".into(),
+            ));
         }
         self.guard_last_factor(user, s.totp || s.passkeys.len() > 1)
             .await?;

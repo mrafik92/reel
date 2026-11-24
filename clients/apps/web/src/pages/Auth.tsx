@@ -3,10 +3,13 @@ import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import { focusFirst, getServerUrl, Icon, isFileOrigin, setServerUrl } from "@reel/ui";
 import { api, ApiError, type Me, type MfaChallenge } from "../api";
 import { acceptInvite, afterLogin, authStatus, bootstrap, completeMfa, completeMfaWithPasskey, createAdmin, login, MIN_PASSWORD } from "../lib/auth";
-import { passkeyCancelled, passkeysSupported } from "../lib/webauthn";
+import { passkeyCancelled, passkeysSupported, usePasskey } from "../lib/webauthn";
 import { Field, PasswordField, useCountdown } from "../components/Form";
-import { href } from "../lib/mode";
-import { clearInviteLink, inviteLink, takePendingChallenge } from "../lib/oidc";
+import { href, TV } from "../lib/mode";
+import { deviceFields } from "../lib/device";
+import { PairingPanel } from "./DeviceLink";
+import "../styles/account.css";
+import { clearInviteLink, inviteLink, oidcSupported, takePendingChallenge } from "../lib/oidc";
 import { OidcButtons } from "../components/OidcButtons";
 
 /** One centred glass panel, with the logo at the page's top left. */
@@ -53,6 +56,11 @@ export function Login(): JSX.Element {
   const [code, setCode] = createSignal("");
   const [useRecovery, setUseRecovery] = createSignal(!!returned && !returned.methods.includes("totp") && !returned.methods.includes("passkey"));
   const done = (me: Me) => navigate(afterLogin(me, safeNext(params.next)), { replace: true });
+  // With a provider configured the screen is QR + email; a password is only a way back in (#287).
+  const [options] = createResource(() => api.loginOptions().catch(() => null));
+  const [view, setView] = createSignal<"hosted" | "password" | "passkey">("hosted");
+  const hosted = () => !!options()?.providers.length;
+  const showQr = TV || (typeof matchMedia === "function" ? matchMedia("(min-width: 641px)").matches : true);
   const has = (m: string) => !!challenge()?.methods.includes(m);
 
   const failSecondStep = (err: unknown) => {
@@ -96,6 +104,27 @@ export function Login(): JSX.Element {
     } finally {
       setBusy(false);
     }
+  };
+
+  const submitEmergency = async (e: Event) => {
+    e.preventDefault();
+    if (busy() || left() > 0) return;
+    if (!username().trim()) return setError("Enter your username.");
+    setBusy(true);
+    setError(undefined);
+    try {
+      const r = await api.passkeyLogin({ username: username().trim(), ...deviceFields() });
+      done(await completeMfa({ mfa_token: r.mfa_token, passkey: await usePasskey(r.options) }));
+    } catch (err) {
+      failSecondStep(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const switchView = (v: "hosted" | "password" | "passkey") => {
+    setError(undefined);
+    setView(v);
   };
 
   const submit = async (e: Event) => {
@@ -166,6 +195,55 @@ export function Login(): JSX.Element {
         </AuthLayout>
       }
     >
+    <Show when={!options.loading} fallback={<div class="splash" aria-busy="true" />}>
+    <Switch>
+    <Match when={hosted() && view() === "hosted"}>
+      <AuthLayout
+        eyebrow="Welcome back"
+        title={showQr ? "Scan to sign in" : "Sign in"}
+        lede={!showQr ? "Your films, your shows, your server." : TV ? "Use the camera on your phone. Nothing to type with the remote." : "Point your phone's camera at the code. No password to remember."}
+      >
+        <div class="auth__form auth__form--center">
+          <Show when={showQr}><PairingPanel onSignedIn={done} /></Show>
+          <Show when={oidcSupported()}>
+            <Show when={showQr}><div class="auth__or">or</div></Show>
+            <OidcButtons purpose="login" primary next={safeNext(params.next)} onError={setError} />
+            <p class="auth__foot">We'll email you a 6-digit code, then ask for your authenticator app.</p>
+            <Show when={!showQr}>
+              <div class="auth__or">or</div>
+              <p class="state__body">On a TV or computer? Scan the code it shows with this phone.</p>
+            </Show>
+          </Show>
+          <Show when={error()}><p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p></Show>
+          <div class="auth__methods">
+            <Show when={options()?.password_login}>
+              <button type="button" class="btn btn--quiet btn--sm" onClick={() => switchView("password")}><span>Use a password</span></button>
+            </Show>
+            <Show when={options()?.passkey_login && passkeysSupported()}>
+              <button type="button" class="btn btn--quiet btn--sm" onClick={() => switchView("passkey")}><span>Emergency passkey</span></button>
+            </Show>
+            <Show when={isFileOrigin()}>
+              <a class="btn btn--quiet btn--sm" href={href("/connect")}><Icon name="server" /> <span>Server: {getServerUrl().replace(/^https?:\/\//, "")} · change</span></a>
+            </Show>
+          </div>
+        </div>
+      </AuthLayout>
+    </Match>
+    <Match when={hosted() && view() === "passkey"}>
+      <AuthLayout eyebrow="Emergency sign-in" title="Use your passkey" lede="For when the sign-in provider is unavailable. Works from your home network or Tailscale.">
+        <form class="auth__form" onSubmit={submitEmergency} novalidate>
+          <Field label="Username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocomplete="username webauthn" autocapitalize="off" spellcheck={false} data-autofocus />
+          <Show when={left() > 0 || error()}>
+            <p class="auth__error" role="alert"><Icon name="alert" /> {left() > 0 ? lockoutText(left()) : error()}</p>
+          </Show>
+          <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() || left() > 0 ? "true" : undefined}>
+            <Icon name="key" /> <span>{busy() ? "Waiting for your passkey…" : "Use a passkey"}</span>
+          </button>
+          <button type="button" class="btn btn--quiet btn--sm" onClick={() => switchView("hosted")}><Icon name="back" /> <span>Back</span></button>
+        </form>
+      </AuthLayout>
+    </Match>
+    <Match when={true}>
     <AuthLayout eyebrow="Welcome back" title="Sign in" lede="Your films, your shows, your server.">
       <form class="auth__form" onSubmit={submit} novalidate>
         <Field label="Username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocomplete="username" autocapitalize="off" spellcheck={false} data-autofocus />
@@ -178,11 +256,19 @@ export function Login(): JSX.Element {
         <button type="submit" class="btn btn--accent btn--lg btn--block" aria-disabled={busy() || left() > 0 ? "true" : undefined}>
           <span>{busy() ? "Signing in…" : "Sign in"}</span>
         </button>
-        <OidcButtons purpose="login" next={safeNext(params.next)} onError={setError} />
-        <a class="btn btn--block" href={href("/login/device")}>
-          <Icon name="tv" /> <span>Sign in with your phone</span>
-        </a>
-        <p class="auth__foot">Got an invite link? Open it on this device to create your account.</p>
+        <Show
+          when={hosted()}
+          fallback={
+            <>
+              <a class="btn btn--block" href={href("/login/device")}>
+                <Icon name="tv" /> <span>Sign in with your phone</span>
+              </a>
+              <p class="auth__foot">Got an invite link? Open it on this device to create your account.</p>
+            </>
+          }
+        >
+          <button type="button" class="btn btn--quiet btn--sm" onClick={() => switchView("hosted")}><Icon name="back" /> <span>Back</span></button>
+        </Show>
         <Show when={isFileOrigin()}>
           <a class="btn btn--quiet btn--sm" href={href("/connect")}>
             <Icon name="server" /> <span>Server: {getServerUrl().replace(/^https?:\/\//, "")} · change</span>
@@ -190,6 +276,9 @@ export function Login(): JSX.Element {
         </Show>
       </form>
     </AuthLayout>
+    </Match>
+    </Switch>
+    </Show>
     </Show>
   );
 }
@@ -257,6 +346,10 @@ export function Invite(): JSX.Element {
   const navigate = useNavigate();
   const params = useParams<{ code: string }>();
   const [info] = createResource(() => params.code, (c) => api.inviteInfo(c));
+  // with a provider configured an account has no password: it signs up there first (#287)
+  const [inviteOptions] = createResource(() => api.loginOptions().catch(() => null));
+  const needsProvider = () => !!inviteOptions()?.providers.length;
+  const linked = () => inviteLink(params.code);
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
   const [error, setError] = createSignal<string>();
@@ -266,11 +359,11 @@ export function Invite(): JSX.Element {
     e.preventDefault();
     if (busy()) return;
     if (!username().trim()) return setError("Pick a username.");
-    if (password().length < MIN_PASSWORD) return setError(`The password needs at least ${MIN_PASSWORD} characters.`);
+    if (!linked() && password().length < MIN_PASSWORD) return setError(`The password needs at least ${MIN_PASSWORD} characters.`);
     setBusy(true);
     setError(undefined);
     try {
-      await acceptInvite(params.code, username().trim(), password(), inviteLink(params.code));
+      await acceptInvite(params.code, username().trim(), linked() ? undefined : password(), linked());
       clearInviteLink();
       navigate("/", { replace: true });
     } catch (err) {
@@ -317,18 +410,24 @@ export function Invite(): JSX.Element {
             <form class="auth__form" onSubmit={submit} novalidate>
               <Show
                 when={inviteLink(params.code)}
-                fallback={<OidcButtons purpose="invite" invite={params.code} onError={setError} />}
+                fallback={<OidcButtons purpose="invite" invite={params.code} primary={needsProvider()} onError={setError} />}
               >
-                {(l) => <p class="state__body" role="status"><Icon name="check" /> {l().provider} will be linked. Pick a username and a password to keep as a fallback.</p>}
+                {(l) => <p class="state__body" role="status"><Icon name="check" /> Signed in with {l().provider}. Pick a username to finish.</p>}
               </Show>
-              <Field label="Choose a username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocomplete="username" autocapitalize="off" spellcheck={false} data-autofocus />
-              <PasswordField label="Choose a password" hint={`At least ${MIN_PASSWORD} characters`} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
+              <Show when={linked() || !needsProvider()}>
+                <Field label="Choose a username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocomplete="username" autocapitalize="off" spellcheck={false} data-autofocus />
+              </Show>
+              <Show when={!linked() && !needsProvider()}>
+                <PasswordField label="Choose a password" hint={`At least ${MIN_PASSWORD} characters`} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
+              </Show>
               <Show when={error()}>
                 <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
               </Show>
-              <button type="submit" class="btn btn--accent btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
-                <span>{busy() ? "Creating account…" : "Create account"}</span>
-              </button>
+              <Show when={linked() || !needsProvider()}>
+                <button type="submit" class="btn btn--accent btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
+                  <span>{busy() ? "Creating account…" : "Create account"}</span>
+                </button>
+              </Show>
             </form>
           </AuthLayout>
         )}

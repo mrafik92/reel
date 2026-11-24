@@ -518,6 +518,8 @@ pub struct Me {
     pub second_factor: bool,
     /// An admin who must add a second factor before getting admin powers.
     pub must_enroll_second_factor: bool,
+    /// The account still has a stored password. False once it signs in through its provider.
+    pub has_password: bool,
     pub limits: LimitsDto,
     /// Effective permissions (all true for admins).
     pub permissions: PermissionsDto,
@@ -537,6 +539,7 @@ async fn me_dto(st: &AppState, u: &User) -> ApiResult<Me> {
         admin_powers: u.is_admin(),
         second_factor: st.auth.has_second_factor(u.id).await?,
         must_enroll_second_factor: st.auth.must_enroll(u).await?,
+        has_password: st.auth.has_password(u.id).await?,
         limits: u.limits.clone().into(),
         permissions: effective(u),
         direct_live: st.config.allow_direct_live && u.can_iptv(),
@@ -888,8 +891,9 @@ pub struct AcceptInviteBody {
     /// The browser secret that goes with `oidc_ticket`.
     pub oidc_binding: Option<String>,
     pub username: String,
-    /// At least 12 characters, and not a common password.
-    pub password: String,
+    /// At least 12 characters, and not a common password. Not used with a provider sign-in, and
+    /// refused without one once a provider is configured.
+    pub password: Option<String>,
     pub device_id: Option<String>,
     pub device_name: Option<String>,
     pub client: Option<String>,
@@ -923,12 +927,17 @@ pub async fn accept_invite(
         (None, None) => None,
         _ => return Err(ApiError::BadRequest("incomplete provider sign-in".into())),
     };
+    if identity.is_none() && st.auth.has_enabled_provider().await? {
+        return Err(ApiError::BadRequest(
+            "continue with the sign-in provider to create this account".into(),
+        ));
+    }
     let out = st
         .auth
         .accept_invite_with(
             &code,
             &b.username,
-            &b.password,
+            b.password.as_deref(),
             Device {
                 device_id: b.device_id,
                 device_name: b.device_name,

@@ -283,6 +283,8 @@ export function createMockApi(): MockApi {
     },
     linkApprove: ok,
     linkDeny: ok,
+    loginOptions: async () => ({ providers: mockOidc.filter((p) => p.enabled).map((p) => ({ slug: p.slug, name: p.name })), password_login: true, passkey_login: true }),
+    passkeyLogin: async () => { throw new ApiError(401, "no passkey for that account"); },
     oidcProviders: async () => mockOidc.filter((p) => p.enabled).map((p) => ({ slug: p.slug, name: p.name })),
     oidcStart: async () => { throw new ApiError(502, "Mock mode has no sign-in provider to go to"); },
     oidcExchange: async () => { throw new ApiError(401, "that sign-in isn't linked to a Reel account"); },

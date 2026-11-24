@@ -141,6 +141,68 @@ pub async fn login_mfa_passkey(
     Ok(Json(st.auth.challenge_passkey_options(&b.mfa_token).await?))
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct PasskeyLoginBody {
+    pub username: String,
+    pub device_id: Option<String>,
+    pub device_name: Option<String>,
+    pub client: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PasskeyLoginDto {
+    /// Send to `/auth/login/mfa` with the passkey assertion.
+    pub mfa_token: String,
+    /// WebAuthn options for `navigator.credentials.get()`.
+    #[schema(value_type = Object)]
+    pub options: Value,
+}
+
+/// Emergency sign-in with a Reel passkey, for when the provider is unavailable. LAN or Tailscale
+/// only.
+#[utoipa::path(
+    post,
+    path = "/auth/login/passkey",
+    security(()),
+    request_body = PasskeyLoginBody,
+    responses(
+        (status = 200, body = PasskeyLoginDto),
+        (status = 401, body = ErrorBody),
+        (status = 403, description = "Not on the LAN or Tailscale", body = ErrorBody),
+        (status = 429, body = ErrorBody)
+    )
+)]
+pub async fn login_passkey(
+    State(st): State<AppState>,
+    ClientIp(ip): ClientIp,
+    Peer(peer): Peer,
+    headers: HeaderMap,
+    Json(b): Json<PasskeyLoginBody>,
+) -> ApiResult<Json<PasskeyLoginDto>> {
+    if !on_admin_network(&st.config, peer, &headers) {
+        return Err(ApiError::Forbidden(
+            "emergency sign-in is only available from the home network or Tailscale".into(),
+        ));
+    }
+    let dev = reel_auth::Device {
+        device_id: b.device_id,
+        device_name: b.device_name,
+        client: b.client,
+        ip,
+    };
+    let (mfa_token, options) = st
+        .auth
+        .passkey_login_start(&b.username, &dev)
+        .await
+        .map_err(|e| match e {
+            AuthError::InvalidCredentials => {
+                ApiError::Unauthorized("no passkey for that account".into())
+            }
+            e => e.into(),
+        })?;
+    Ok(Json(PasskeyLoginDto { mfa_token, options }))
+}
+
 // ───────────────────────── account security ─────────────────────────
 
 #[derive(Debug, Serialize, ToSchema)]

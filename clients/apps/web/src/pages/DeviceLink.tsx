@@ -1,12 +1,12 @@
 import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { useNavigate, useSearchParams } from "@solidjs/router";
 import { focusFirst, Icon } from "@reel/ui";
-import { api, ApiError, type DeviceLinkInfo, type DevicePairing, type LoginResponse } from "../api";
+import { api, ApiError, type DeviceLinkInfo, type DevicePairing, type LoginResponse, type Me } from "../api";
 import { Field } from "../components/Form";
 import { QrCode } from "../components/QrCode";
 import { afterLogin, finishDeviceLogin } from "../lib/auth";
 import { deviceFields } from "../lib/device";
-import { href } from "../lib/mode";
+import { href, TV } from "../lib/mode";
 import "../styles/account.css";
 
 function Layout(props: { eyebrow: string; title: string; lede: string; children: JSX.Element }): JSX.Element {
@@ -28,9 +28,8 @@ function Layout(props: { eyebrow: string; title: string; lede: string; children:
   );
 }
 
-/** On the TV: show a code and a QR code, and wait for a signed-in phone to approve it (#147). */
-export function DeviceLogin(): JSX.Element {
-  const navigate = useNavigate();
+/** A live pairing: the code, its QR, and a poll that signs this screen in once a phone approves (#147, #287). */
+export function PairingPanel(props: { size?: number; onSignedIn: (me: Me) => void }): JSX.Element {
   const [pairing, setPairing] = createSignal<DevicePairing>();
   const [error, setError] = createSignal<string>();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -64,7 +63,8 @@ export function DeviceLogin(): JSX.Element {
       const r = await api.devicePoll(p.device_code);
       if (stopped) return;
       if (r && "token" in r) {
-        navigate(afterLogin(finishDeviceLogin(r as LoginResponse), "/"), { replace: true });
+        stopped = true;
+        props.onSignedIn(finishDeviceLogin(r as LoginResponse));
         return;
       }
       later(() => void poll(p), p.interval_s);
@@ -77,22 +77,30 @@ export function DeviceLogin(): JSX.Element {
   onMount(() => void start());
 
   return (
+    <Show when={pairing()} fallback={<p class="state__body" role="status">{error() ?? "Getting a code…"}</p>}>
+      {(p) => (
+        <div class="pairing">
+          <QrCode value={p().verification_uri_complete} label="QR code to sign in with your phone" size={props.size ?? (TV ? 340 : 232)} />
+          <Show when={TV}>
+            <p class="state__body">or open <strong>{p().verification_uri.replace(/^https?:\/\//, "")}</strong> and enter</p>
+          </Show>
+          <p class="devicelink__code">{p().user_code}</p>
+          <p class="state__body pairing__status" role="status"><span aria-hidden="true" /> Waiting for your phone…</p>
+        </div>
+      )}
+    </Show>
+  );
+}
+
+/** The phone-code screen on its own, for links and setups with no provider. */
+export function DeviceLogin(): JSX.Element {
+  const navigate = useNavigate();
+  return (
     <Layout eyebrow="Sign in" title="Use your phone" lede="Scan the code with a phone that's signed in to Reel, or open the address and enter the code.">
-      <div class="auth__form">
-        <Show when={pairing()} fallback={<p class="state__body" role="status">{error() ?? "Getting a code…"}</p>}>
-          {(p) => (
-            <div class="devicelink">
-              <QrCode value={p().verification_uri_complete} label="QR code to approve this TV" size={232} />
-              <div>
-                <p class="state__body">{p().verification_uri.replace(/^https?:\/\//, "")}</p>
-                <p class="devicelink__code">{p().user_code}</p>
-                <p class="state__body" role="status">Waiting for approval…</p>
-              </div>
-            </div>
-          )}
-        </Show>
+      <div class="auth__form auth__form--center">
+        <PairingPanel onSignedIn={(me) => navigate(afterLogin(me, "/"), { replace: true })} />
         <a class="btn btn--quiet btn--sm" href={href("/login")} data-autofocus>
-          <Icon name="back" /> <span>Use a password instead</span>
+          <Icon name="back" /> <span>Back to sign in</span>
         </a>
       </div>
     </Layout>

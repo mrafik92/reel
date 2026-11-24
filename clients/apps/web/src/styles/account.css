@@ -22,6 +22,23 @@
 .devicelink__code { margin: 0; font-size: 2.6rem; font-weight: 700; letter-spacing: 0.08em; white-space: nowrap; }
 .devicelink__facts { margin: 0 0 1rem; display: grid; grid-template-columns: auto 1fr; grid-gap: 0.25rem 0.9rem; }
 .devicelink__facts dd { margin: 0; overflow-wrap: anywhere; }
+.auth__form--center { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.auth__form--center > .btn, .auth__form--center > .auth__methods--stack { width: 100%; }
+.auth__form--center p { margin: 0; }
+/* No flex gap on the TV browsers: space the column with margins (doubled class outranks the p reset). */
+.auth__form--center.auth__form--center > * + * { margin-top: 16px; }
+.auth__form--center .auth__methods:not(.auth__methods--stack) { justify-content: center; }
+.auth__or { display: flex; align-items: center; width: 100%; font-size: 0.85em; opacity: 0.55; }
+.auth__or::before, .auth__or::after { content: ""; flex: 1; height: 1px; background: currentColor; }
+.auth__or::before { margin-right: 12px; }
+.auth__or::after { margin-left: 12px; }
+.pairing { display: flex; flex-direction: column; align-items: center; }
+.pairing > * { margin-top: 0; margin-bottom: 0; }
+.pairing > * + * { margin-top: 14px; }
+.pairing__status { display: flex; align-items: center; }
+.pairing__status span { flex: none; width: 9px; height: 9px; margin-right: 9px; border-radius: 50%; background: var(--accent, #e5534b); animation: pairing-pulse 1.6s ease-in-out infinite; }
+@keyframes pairing-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .pairing__status span { animation: none; } }
 .auth__methods { display: flex; flex-wrap: wrap; margin-top: 0.6rem; }
 .auth__methods > * { margin: 0 0.5rem 0.5rem 0; }
 .auth__methods--stack { flex-direction: column; }

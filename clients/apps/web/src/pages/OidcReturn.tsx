@@ -40,7 +40,8 @@ export default function OidcReturn(): JSX.Element {
         const r = await api.oidcExchange(ticket, pending.binding);
         if ("mfa_token" in r) {
           setPendingChallenge(r);
-          navigate("/login", { replace: true });
+          // keep the destination: a phone that scanned a QR code still has a device to approve
+          navigate(pending.next ? `/login?next=${encodeURIComponent(pending.next)}` : "/login", { replace: true });
         } else {
           navigate(afterLogin(finishExternalLogin(r as LoginResponse), pending.next ?? "/"), { replace: true });
         }
