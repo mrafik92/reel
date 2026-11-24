@@ -96,7 +96,10 @@ CT 113:  deploy/ct113/deploy.py on the Mac  (ssh minix-local → pct exec 113 �
   `clients/android-web/README.md`. `--dry-run` builds but only prints the Taildrop and GitHub commands.
   Passwords: see Credentials. The Compose app's old `android-v0.1.0`–`0.3.0` releases stay on GitHub. Sideloading:
   `clients/android-web/README.md` → Install a release.
-- Rollback: pin `image: ghcr.io/mrafik92/reel:sha-<previous>` in the compose file and run `up -d`.
+- Rollback: pin `image: ghcr.io/mrafik92/reel:sha-<previous>` in the compose file and run `up -d`. A build older than
+  `c03f32b` also needs the database from before migrations 0017 and 0018: stop Reel, restore
+  `/root/reel-backups/reel.db.pre-150-20261124T001917Z` (CT 113, root-only) over `/opt/appdata/reel/reel.db`, remove
+  the `-wal` and `-shm` files, and keep the owner uid and `0600`. Anything written since that backup is lost.
 
 ### Ticket flow (GitHub Project #1)
 
