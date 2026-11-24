@@ -13,6 +13,8 @@ import { activeCount, filterChips, filtersFrom, laneHref, paramsFrom, RUNTIMES, 
 import { EmptyState, ErrorState, FirstRun, SkeletonRow } from "../components/States";
 import { FilterPanel, GenreBar, Glyph, Spotlight } from "../components/Picker";
 import { VodBrowser } from "../components/vod/VodBrowser";
+import { cardPreview } from "../lib/preview";
+import { isPhoneWidth } from "../lib/viewport";
 import { rememberSource, SourceSwitch, storedSource, useVodCount, type Source } from "../components/vod/SourceSwitch";
 
 const SORTS: { value: LibrarySort; label: string; detail?: string }[] = [
@@ -24,7 +26,6 @@ const SORTS: { value: LibrarySort; label: string; detail?: string }[] = [
   { value: "random", label: "Shuffle", detail: "A fresh random order" },
 ];
 const PAGE = 60;
-const pad = (n: number) => (n < 10 ? "0" + n : String(n));
 
 interface GridState {
   items: ItemSummary[];
@@ -164,40 +165,49 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
   return (
     <div class="page library" classList={{ "library--grid": !iptv() && grid(), "library--browse": !iptv() && !grid(), "library--iptv": iptv() }} ref={el}>
       <Show when={!pending()} fallback={<div class="library__lanes library__pending"><SkeletonRow /><SkeletonRow /></div>}>
-      <Show when={!iptv()} fallback={<VodBrowser kind={movies ? "movie" : "series"} switcher={<div class="srcrow">{switcher()}</div>} onReady={() => setVodReady(true)} />}>
+      <Show when={!iptv()} fallback={<VodBrowser kind={movies ? "movie" : "series"} switcher={switcher()} onReady={() => setVodReady(true)} />}>
       <Show when={!libs.error} fallback={<ErrorState error={libs.error} onRetry={refetch} />}>
         <header class="page-head picker">
-          <Show when={vodOn() || ofKind().length > 1}>
-            <div class="srcrow">
-              {switcher()}
-              <Show when={ofKind().length > 1}>
-                <nav class="tabs" aria-label="Libraries" data-nav-group>
-                  <For each={ofKind()}>
-                    {(l) => (
-                      <a class="tab" href={libraryHref(l)} aria-current={l.id === lib()?.id ? "page" : undefined}>
-                        {l.name}
-                      </a>
-                    )}
-                  </For>
-                </nav>
-              </Show>
-            </div>
-          </Show>
-          <div class="page-head__row picker__title-row">
+          <div class="page-head__row picker__title-row" data-nav-group>
             <h1 class="page-title">
               {lib()?.name ?? (movies ? "Movies" : "Shows")}
               <Show when={lib()}>
-                <span class="page-title__count">
-                  {lib()!.item_count.toLocaleString()} {noun}
-                </span>
+                <span class="page-title__count">{lib()!.item_count.toLocaleString()}</span>
               </Show>
             </h1>
+            {switcher()}
+            <span class="picker__spacer" />
             <Show when={lib() && lib()!.item_count > 0}>
-              <button type="button" class="btn btn--primary btn--lg picker__surprise" onClick={() => setSpot(true)} data-autofocus={!grid() ? "" : undefined}>
+              <button type="button" class="btn picker__surprise" onClick={() => setSpot(true)} data-autofocus={!grid() ? "" : undefined}>
                 <Glyph name="dice" /> <span>Surprise me</span>
               </button>
+              <button type="button" class="btn picker__filters" onClick={() => setPanel(true)}>
+                <Glyph name="sliders" /> <span>Filters</span>
+                <Show when={nFilters()}><span class="picker__badge">{nFilters()}</span></Show>
+              </button>
+              <Show when={grid()}>
+                <button type="button" class="btn btn--dropdown picker__sort" aria-label={`Sort: ${sortLabel()}`} onClick={() => setSortSheet(true)}>
+                  <span>{sortLabel()}</span> <Icon name="down" />
+                </button>
+                <Show when={sort() === "random"}>
+                  <button type="button" class="iconbtn" aria-label="Shuffle again" title="Shuffle again" onClick={() => setSort("random")}>
+                    <Glyph name="shuffle" />
+                  </button>
+                </Show>
+              </Show>
             </Show>
           </div>
+          <Show when={ofKind().length > 1}>
+            <nav class="tabs picker__libs" aria-label="Libraries" data-nav-group>
+              <For each={ofKind()}>
+                {(l) => (
+                  <a class="tab" href={libraryHref(l)} aria-current={l.id === lib()?.id ? "page" : undefined}>
+                    {l.name}
+                  </a>
+                )}
+              </For>
+            </nav>
+          </Show>
 
           <Show when={lib() && lib()!.item_count > 0}>
             <div class="picker__bar" data-nav-group>
@@ -229,21 +239,6 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
                 <span class="chip__box" aria-hidden="true">{filters().unwatched ? <Icon name="check" /> : null}</span>
                 Unwatched
               </button>
-              <button type="button" class="btn picker__filters" onClick={() => setPanel(true)}>
-                <Glyph name="sliders" /> <span>Filters</span>
-                <Show when={nFilters()}><span class="picker__badge">{nFilters()}</span></Show>
-              </button>
-              <span class="picker__spacer" />
-              <Show when={grid()}>
-                <button type="button" class="btn btn--ghost picker__sort" onClick={() => setSortSheet(true)}>
-                  <Icon name="sort" /> <span class="btn__label">Sort</span> <span class="btn__value">{sortLabel()}</span>
-                </button>
-                <Show when={sort() === "random"}>
-                  <button type="button" class="iconbtn" aria-label="Shuffle again" title="Shuffle again" onClick={() => setSort("random")}>
-                    <Glyph name="shuffle" />
-                  </button>
-                </Show>
-              </Show>
             </div>
 
             <Show when={(genres() ?? []).length}>
@@ -287,12 +282,20 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
                   <Row
                     title={lane.title}
                     subtitle={lane.subtitle}
-                    index={pad(i() + 1)}
+                    variant={lane.kind === "top_unwatched" ? "ranked" : "poster"}
                     class={`row--lane row--lane-${lane.kind}`}
-                    action={laneHref(lane, libs() ?? []) ? { label: "See all", href: laneHref(lane, libs() ?? [])! } : undefined}
+                    action={laneHref(lane, libs() ?? []) ? { label: "Explore all", href: laneHref(lane, libs() ?? [])! } : undefined}
                   >
-                    <For each={lane.items}>
-                      {(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} />}
+                    <For each={lane.kind === "top_unwatched" ? lane.items.slice(0, 10) : lane.items}>
+                      {(it, n) => (
+                        <PosterCard
+                          item={it}
+                          href={itemHref(it)}
+                          rank={lane.kind === "top_unwatched" ? n() + 1 : undefined}
+                          activity={itemActivity(it.id)}
+                          preview={cardPreview(itemHref(it))}
+                        />
+                      )}
                     </For>
                   </Row>
                 )}
@@ -343,12 +346,12 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
                     class="library__grid"
                     items={items()}
                     total={total()}
-                    minColumnRem={tv ? 8.4 : 10.5}
+                    minColumnRem={tv ? 9.6 : isPhoneWidth() ? 6.4 : 10.5}
                     ratio={1.5}
-                    captionRem={tv ? 3 : 3.1}
-                    gapRem={tv ? 1.25 : 1.5}
+                    captionRem={isPhoneWidth() ? 3.1 : 0}
+                    gapRem={tv ? 0.7 : 0.5}
                     onRange={onRange}
-                    renderItem={(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} />}
+                    renderItem={(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} preview={cardPreview(itemHref(it))} />}
                     renderPlaceholder={() => (
                       <div class="card card--poster is-placeholder">
                         <div class="card__frame skel" />

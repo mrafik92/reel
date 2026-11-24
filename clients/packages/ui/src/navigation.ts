@@ -16,6 +16,9 @@
  *                        anchor sits at `--nav-anchor-top` (default 30vh).
  * - `data-nav-lateral`   only enterable with left/right (side rails), so up/down in
  *                        content never jumps into the nav.
+ * - `data-nav-top`       the top bar: a separate layer over the page. Left/right stay inside it,
+ *                        Down enters the page below it, and Up from the page only reaches it
+ *                        when nothing in the page is above.
  * - `data-nav-skip`      excluded from navigation.
  * - `data-autofocus`     preferred landing spot when nothing is focused.
  *
@@ -339,19 +342,25 @@ function score(from: Box, to: Box, dir: Direction): number {
 
 function findNext(cur: HTMLElement, dir: Direction, scope: Element): HTMLElement | null {
   const from = unscaledBox(cur);
-  let best: HTMLElement | null = null;
-  let bestScore = Infinity;
-  const list = candidates(scope);
   const vertical = dir === "up" || dir === "down";
   const curLateral = cur.closest("[data-nav-lateral]");
-  for (const el of list) {
-    if (el === cur || el.contains(cur)) continue;
-    if (vertical && el.closest("[data-nav-lateral]") !== curLateral) continue;
-    const s = score(from, box(el), dir);
-    if (s >= 0 && s < bestScore) {
-      bestScore = s;
-      best = el;
+  const all = candidates(scope);
+  const layers = scope === document.body ? splitTopLayer(cur, all, dir, from) : [all];
+  let list = all;
+  let best: HTMLElement | null = null;
+  for (const layer of layers) {
+    list = layer;
+    let bestScore = Infinity;
+    for (const el of layer) {
+      if (el === cur || el.contains(cur)) continue;
+      if (vertical && el.closest("[data-nav-lateral]") !== curLateral) continue;
+      const s = score(from, box(el), dir);
+      if (s >= 0 && s < bestScore) {
+        bestScore = s;
+        best = el;
+      }
     }
+    if (best) break;
   }
   // Left/right: stay on the same visual line when anything on it qualifies,
   // instead of sliding diagonally into the row above/below.
@@ -374,6 +383,22 @@ function findNext(cur: HTMLElement, dir: Direction, scope: Element): HTMLElement
   }
   if (!best) return null;
   return restoreFromGroup(cur, best, dir, from) ?? best;
+}
+
+/**
+ * The candidate lists to try, in order, around the fixed top bar. Page content scrolls behind the
+ * bar, so geometry alone would pick a tile hidden under it, or jump to the bar from a row whose
+ * neighbour above is further off to one side.
+ */
+function splitTopLayer(cur: HTMLElement, all: HTMLElement[], dir: Direction, from: Box): HTMLElement[][] {
+  const curTop = cur.closest("[data-nav-top]");
+  const inBar = all.filter((el) => !!el.closest("[data-nav-top]"));
+  const inPage = all.filter((el) => !el.closest("[data-nav-top]"));
+  if (dir === "left" || dir === "right") return [curTop ? inBar : inPage];
+  if (!curTop) return dir === "up" ? [inPage, inBar] : [inPage];
+  if (dir === "up") return [];
+  // Down from the bar: prefer what is fully below it.
+  return [inPage.filter((el) => box(el).t >= from.b - 2), inPage];
 }
 
 /** Entering a group from outside lands on its remembered (or default) child. */

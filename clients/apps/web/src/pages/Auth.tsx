@@ -12,24 +12,23 @@ import "../styles/account.css";
 import { clearInviteLink, inviteLink, oidcSupported, takePendingChallenge } from "../lib/oidc";
 import { OidcButtons } from "../components/OidcButtons";
 
-/** Two-column auth layout: wordmark + message left, form right. Stacks on narrow screens. */
+/** One centred glass panel, with the logo at the page's top left. */
 function AuthLayout(props: ParentProps<{ eyebrow: string; title: string; lede: string; aside?: JSX.Element }>): JSX.Element {
   let el!: HTMLDivElement;
   onMount(() => requestAnimationFrame(() => focusFirst(el)));
   return (
     <div class="auth" ref={el}>
-      <div class="auth__glow" aria-hidden="true" />
-      <section class="auth__intro">
-        <span class="logo logo--auth">
-          <span class="logo__mark" aria-hidden="true"><i /></span>
-          <span class="logo__word">reel</span>
-        </span>
-        <p class="eyebrow eyebrow--accent">{props.eyebrow}</p>
+      <span class="logo logo--auth">
+        <span class="logo__mark" aria-hidden="true"><i /></span>
+        <span class="logo__word">reel</span>
+      </span>
+      <section class="auth__panel glass">
+        <p class="eyebrow">{props.eyebrow}</p>
         <h1 class="auth__title">{props.title}</h1>
         <p class="auth__lede">{props.lede}</p>
         {props.aside}
+        {props.children}
       </section>
-      <section class="auth__panel">{props.children}</section>
     </div>
   );
 }
@@ -158,7 +157,7 @@ export function Login(): JSX.Element {
         <AuthLayout eyebrow="One more step" title="Confirm it's you" lede="Your account has a second sign-in step.">
           <form class="auth__form" onSubmit={submitCode} novalidate>
             <Show when={has("passkey") && passkeysSupported() && !useRecovery()}>
-              <button type="button" class="btn btn--primary btn--lg btn--block" data-autofocus aria-disabled={busy() || left() > 0 ? "true" : undefined} onClick={signInWithPasskey}>
+              <button type="button" class="btn btn--accent btn--lg btn--block" data-autofocus aria-disabled={busy() || left() > 0 ? "true" : undefined} onClick={signInWithPasskey}>
                 <Icon name="key" /> <span>Use a passkey</span>
               </button>
             </Show>
@@ -178,7 +177,7 @@ export function Login(): JSX.Element {
               <p class="auth__error" role="alert"><Icon name="alert" /> {left() > 0 ? lockoutText(left()) : error()}</p>
             </Show>
             <Show when={has("totp") || useRecovery()}>
-              <button type="submit" class="btn btn--lg btn--block" classList={{ "btn--primary": !has("passkey") || useRecovery() }} aria-disabled={busy() || left() > 0 ? "true" : undefined}>
+              <button type="submit" class="btn btn--lg btn--block" classList={{ "btn--accent": !has("passkey") || useRecovery() }} aria-disabled={busy() || left() > 0 ? "true" : undefined}>
                 <span>{busy() ? "Checking…" : "Continue"}</span>
               </button>
             </Show>
@@ -254,7 +253,7 @@ export function Login(): JSX.Element {
             <Icon name="alert" /> {left() > 0 ? lockoutText(left()) : error()}
           </p>
         </Show>
-        <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() || left() > 0 ? "true" : undefined}>
+        <button type="submit" class="btn btn--accent btn--lg btn--block" aria-disabled={busy() || left() > 0 ? "true" : undefined}>
           <span>{busy() ? "Signing in…" : "Sign in"}</span>
         </button>
         <Show
@@ -335,7 +334,7 @@ export function Setup(): JSX.Element {
         <Show when={error()}>
           <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
         </Show>
-        <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
+        <button type="submit" class="btn btn--accent btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
           <span>{busy() ? "Creating…" : "Create admin account"}</span>
         </button>
       </form>
@@ -425,7 +424,7 @@ export function Invite(): JSX.Element {
                 <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
               </Show>
               <Show when={linked() || !needsProvider()}>
-                <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
+                <button type="submit" class="btn btn--accent btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
                   <span>{busy() ? "Creating account…" : "Create account"}</span>
                 </button>
               </Show>
@@ -469,7 +468,7 @@ export function Connect(): JSX.Element {
         <Show when={error()}>
           <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
         </Show>
-        <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
+        <button type="submit" class="btn btn--accent btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}>
           <span>{busy() ? "Connecting…" : "Connect"}</span>
         </button>
       </form>

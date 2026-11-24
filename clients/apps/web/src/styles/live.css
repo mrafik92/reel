@@ -1,7 +1,7 @@
 /* ==========================================================================
    Live TV — channel list + player, guide grid, admin IPTV.
    Chromium 68 safe: no flex gap, no inset, no aspect-ratio, no clamp(),
-   no backdrop-filter, no :focus-visible.
+   no :focus-visible. backdrop-filter only inside @supports, never on TV.
    ========================================================================== */
 
 /* ---------- Shared bits -------------------------------------------------- */
@@ -45,7 +45,7 @@
 }
 .live__title {
   margin-top: 0.25rem;
-  font: 780 2.5rem/1 var(--font-display);
+  font: 800 2.5rem/1 var(--font-display);
   letter-spacing: -0.04em;
 }
 .live__count {
@@ -230,7 +230,7 @@ html[data-input="pointer"] .chrow.is-live:focus:not(:hover) {
 .chrow__num {
   flex-shrink: 0;
   width: 2.4rem;
-  font: 750 1rem/1 var(--font-display);
+  font: 700 1rem/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   text-align: right;
   color: var(--ink-3);
@@ -454,7 +454,7 @@ html[data-input="key"] .live__screen:focus {
 }
 .live__error h2 {
   margin: 0.5rem 0 0.4rem;
-  font: 750 1.45rem/1.15 var(--font-display);
+  font: 700 1.45rem/1.15 var(--font-display);
   letter-spacing: -0.02em;
 }
 .live__error p {
@@ -478,7 +478,7 @@ html[data-input="key"] .live__screen:focus {
   height: 2.4rem;
   padding: 0 1rem;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--accent);
   color: var(--accent-ink);
   font: 700 0.9rem/1 var(--font-body);
@@ -550,7 +550,7 @@ html[data-input="key"] .live__screen:focus {
   margin-right: 0.4rem;
 }
 .live__clock {
-  font: 750 1.6rem/1 var(--font-display);
+  font: 700 1.6rem/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
   text-shadow: 0 1px 10px rgba(0, 0, 0, 0.6);
@@ -606,7 +606,7 @@ html[data-input="pointer"] .live__hints {
   letter-spacing: -0.03em;
 }
 .nowp__name {
-  font: 750 1.3rem/1.15 var(--font-display);
+  font: 700 1.3rem/1.15 var(--font-display);
   letter-spacing: -0.015em;
 }
 .nowp__fav {
@@ -647,7 +647,7 @@ html[data-input="pointer"] .live__hints {
   margin-top: 1.1rem;
 }
 .nowp__title {
-  font: 780 2rem/1.05 var(--font-display);
+  font: 800 2rem/1.05 var(--font-display);
   letter-spacing: -0.035em;
 }
 .nowp__subtitle {
@@ -940,7 +940,7 @@ html[data-input="pointer"] .live__hints {
 .zapstats__sum dd {
   white-space: nowrap;
   margin: 0.2rem 0 0;
-  font: 750 1rem/1.1 var(--font-display);
+  font: 700 1rem/1.1 var(--font-display);
   font-variant-numeric: tabular-nums;
 }
 .zapstats__sum dd.is-hero {
@@ -1030,7 +1030,7 @@ html[data-input="pointer"] .live__hints {
   right: 0.9rem;
 }
 .miniguide__head strong {
-  font: 780 1.8rem/1.1 var(--font-display);
+  font: 800 1.8rem/1.1 var(--font-display);
   letter-spacing: -0.03em;
 }
 .miniguide__head span {
@@ -1186,7 +1186,7 @@ html[data-input="pointer"] .live__hints {
 }
 .guide__preview-title {
   margin-top: 0.25rem;
-  font: 780 2rem/1.1 var(--font-display);
+  font: 800 2rem/1.1 var(--font-display);
   letter-spacing: -0.035em;
   overflow: hidden;
   white-space: nowrap;
@@ -1203,7 +1203,7 @@ html[data-input="pointer"] .live__hints {
   flex-shrink: 0;
   margin-left: 1.2rem;
   padding: 0.45rem 0.8rem;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--accent-dim);
   color: var(--accent-hi);
   font: 800 0.75rem/1 var(--font-body);
@@ -1342,7 +1342,7 @@ html[data-input="pointer"] .grow__ch:focus:not(:hover) {
 .grow__num {
   flex-shrink: 0;
   width: 2rem;
-  font: 750 0.95rem/1 var(--font-display);
+  font: 700 0.95rem/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   text-align: right;
   color: var(--ink-3);
@@ -1539,7 +1539,7 @@ html[data-input="pointer"] .gcell:focus:not(:hover) .gcell__time {
 }
 .gdetail__title {
   margin-top: 1.4rem;
-  font: 780 2.4rem/1.05 var(--font-display);
+  font: 800 2.4rem/1.05 var(--font-display);
   letter-spacing: -0.035em;
 }
 .gdetail__sub {
@@ -1723,7 +1723,7 @@ html[data-input="pointer"] .gcell:focus:not(:hover) .gcell__time {
   flex-shrink: 0;
   width: 3rem;
   margin-right: 0.8rem;
-  font: 750 1.1rem/1 var(--font-display);
+  font: 700 1.1rem/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   text-align: right;
   color: var(--ink-3);
@@ -1766,7 +1766,7 @@ html[data-input="pointer"] .gcell:focus:not(:hover) .gcell__time {
 }
 .hub__h {
   margin: 1.4rem 0 0.6rem;
-  font: 750 1.05rem/1.2 var(--font-display);
+  font: 700 1.05rem/1.2 var(--font-display);
 }
 .hub__tablewrap {
   overflow-x: auto;
@@ -1862,11 +1862,6 @@ html.tv .live__info .nowp__actions {
 html.tv .later__list li:nth-child(n + 4) {
   display: none;
 }
-/* The floating search pill would sit on the picture / guide actions. */
-html.is-live-page .topsearch {
-  display: none;
-}
-
 /* Narrow windows (desktop): stack the list under the player. */
 @media (max-width: 900px) {
   .live {
@@ -2041,7 +2036,7 @@ html.is-live-page .topsearch {
   height: 2.8rem;
   margin: 0 1.5rem 0.6rem;
   padding: 0 0.6rem 0 0.9rem;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--ink-5);
   box-shadow: inset 0 0 0 1.5px transparent;
   color: var(--ink-3);
@@ -2152,7 +2147,7 @@ html[data-input="pointer"] .livechip--picker:focus:not(:hover) {
   padding: 0 1.5rem 1rem 1.8rem;
 }
 .gpick__title {
-  font: 780 2rem/1.05 var(--font-display);
+  font: 800 2rem/1.05 var(--font-display);
   letter-spacing: -0.035em;
 }
 .gpick__sub {
@@ -2260,7 +2255,7 @@ html[data-input="pointer"] .gpick__item[aria-current="true"]:focus:not(:hover) {
 }
 .guide__empty h2 {
   margin: 0.6rem 0 0.5rem;
-  font: 750 1.6rem/1.15 var(--font-display);
+  font: 700 1.6rem/1.15 var(--font-display);
   letter-spacing: -0.02em;
 }
 .guide__empty p {
@@ -2387,7 +2382,7 @@ html[data-input="pointer"] .gpick__item[aria-current="true"]:focus:not(:hover) {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font: 780 1.35rem/1.2 var(--font-display);
+  font: 800 1.35rem/1.2 var(--font-display);
   letter-spacing: -0.02em;
   color: var(--ink);
 }
@@ -2638,10 +2633,10 @@ html[data-input="pointer"] .chcard:focus:not(:hover) .chcard__now {
 }
 
 html.tv .live--rows {
-  padding-top: 1.6rem;
+  padding-top: calc(var(--topbar-h) + 0.7rem);
 }
 html.tv .live--rows:not(.is-full) .live__screen {
-  width: calc((100vh - 23rem) * 16 / 9);
+  width: calc((100vh - 23rem - var(--topbar-h)) * 16 / 9);
 }
 html.tv .live--rows .nowp__desc {
   display: none;
@@ -2764,7 +2759,7 @@ html[data-input="pointer"] .rowlabel__hint {
 }
 .gbrowse__title {
   margin-top: 0.2rem;
-  font: 780 2.8rem/1 var(--font-display);
+  font: 800 2.8rem/1 var(--font-display);
   letter-spacing: -0.04em;
 }
 .gbrowse__sub {
@@ -3145,17 +3140,6 @@ html[data-input="pointer"] .gmenu__item:focus:not(:hover) {
   cursor: default;
   z-index: 1;
 }
-.live__idle-glow {
-  position: absolute;
-  top: -20%;
-  left: 50%;
-  width: 60%;
-  height: 70%;
-  margin-left: -30%;
-  border-radius: 50%;
-  background: radial-gradient(closest-side, rgba(var(--accent-rgb), 0.08), rgba(var(--accent-rgb), 0));
-  pointer-events: none;
-}
 .chlogo--hero {
   width: 9rem;
   height: 5.6rem;
@@ -3175,7 +3159,7 @@ html[data-input="pointer"] .gmenu__item:focus:not(:hover) {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font: 780 2.1rem/1.1 var(--font-display);
+  font: 800 2.1rem/1.1 var(--font-display);
   letter-spacing: -0.035em;
 }
 .live__idle-num {
@@ -3592,4 +3576,560 @@ html[data-input="pointer"] .guide-pick:focus:not(:hover) {
 .guide-row__avail {
   margin-left: 0.3em;
   color: var(--ink-3);
+}
+
+/* ==========================================================================
+   Streaming look (#281): the same structure and behaviour, restyled. Roles:
+   --live for Live badges, the tuned outline and the guide's now line; white
+   for programme progress; --warn for favourites. Red stays for the brand.
+   ========================================================================== */
+.live,
+.guide,
+.live-empty {
+  background: var(--bg);
+}
+.live--rows {
+  position: relative;
+  padding: calc(var(--topbar-h) + 0.9rem) var(--gutter) 0.9rem;
+}
+/* The channel's logo, stretched and dimmed: colour behind the hero without a blur filter. */
+.live__ambient {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 34rem;
+  overflow: hidden;
+  pointer-events: none;
+}
+.live__ambient img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.4;
+}
+.live__ambient::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(180deg, rgba(var(--bg-rgb), 0.45) 0%, var(--bg) 100%);
+}
+.live--rows > section {
+  position: relative;
+}
+.live.is-full .live__ambient {
+  visibility: hidden;
+}
+.live__screen {
+  border-radius: var(--radius-l);
+  overflow: hidden;
+}
+@media (min-width: 901px) {
+  .live--rows .live__screen {
+    width: calc((100vh - 22.6rem - var(--topbar-h)) * 16 / 9);
+  }
+}
+.live--rows .live__info,
+.live.is-full .live__top,
+.live.is-full .live__osd,
+.miniguide,
+.numentry,
+.zapstats,
+.live__error,
+.live__error.is-calm,
+.guide__preview,
+.gdetail,
+.gbrowse,
+.gmenu {
+  border: 1px solid var(--glass-line);
+  background: var(--glass-strong);
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  html:not(.tv) .live--rows .live__info,
+  html:not(.tv) .live.is-full .live__top,
+  html:not(.tv) .live.is-full .live__osd,
+  html:not(.tv) .miniguide,
+  html:not(.tv) .numentry,
+  html:not(.tv) .zapstats,
+  html:not(.tv) .live__error,
+  html:not(.tv) .guide__preview,
+  html:not(.tv) .gdetail,
+  html:not(.tv) .gbrowse,
+  html:not(.tv) .gmenu {
+    background: var(--glass-raised);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
+}
+.live--rows .live__info {
+  margin-left: 1.5rem;
+  padding: 1.1rem 1.4rem;
+  border-radius: var(--radius-l);
+}
+.live__infohead .eyebrow {
+  display: flex;
+  align-items: center;
+  color: var(--ink);
+  letter-spacing: 0.12em;
+}
+.live__infohead .eyebrow::before {
+  content: "";
+  width: 3px;
+  height: 0.9rem;
+  margin-right: 0.55rem;
+  background: var(--accent);
+}
+.live--rows .nowp--panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.live--rows .nowp--panel .nowp__title {
+  font: 800 1.9rem/1.1 var(--font-display);
+  letter-spacing: -0.02em;
+}
+.live--rows .nowp--panel .nowp__actions {
+  margin-top: auto;
+  padding-top: 0.8rem;
+}
+.nowp__num {
+  color: var(--ink-3);
+}
+.nowp__bar i,
+.chrow__bar i,
+.chrow.is-live .chrow__bar i,
+.chcard__bar i,
+.chcard.is-live .chcard__bar i,
+.gcell__bar i,
+.live__idle-bar i {
+  background: var(--ink);
+  box-shadow: none;
+}
+.nowp__bar,
+.chrow__bar,
+.chcard__bar {
+  background: var(--ink-4);
+}
+.live__idle {
+  background: var(--bg-1);
+}
+.live__idle-num,
+.numentry__digits {
+  color: var(--ink);
+}
+.live__unmute {
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: var(--on-light);
+}
+
+/* Groups and the channel rail */
+.rowlabel {
+  font: 700 1.05rem/1.2 var(--font-display);
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: rgba(var(--ink-rgb), 0.9);
+}
+.rowlabel__hint {
+  margin-left: 0.8rem;
+  font: 400 0.82rem/1.2 var(--font-body);
+}
+.rowlabel__title {
+  font: 700 1.2rem/1.2 var(--font-display);
+  letter-spacing: -0.01em;
+}
+.livesearch {
+  border-radius: var(--radius);
+  background: var(--fill-input);
+  box-shadow: none;
+}
+.livechip--picker,
+.livechip--browse,
+html[data-input="pointer"] .livechip--picker:focus:not(:hover),
+html[data-input="pointer"] .livechip--browse:focus:not(:hover) {
+  border-color: var(--ink-3);
+  background: var(--fill-chip);
+  color: var(--ink);
+}
+.livechip--picker:hover,
+.livechip--browse:hover {
+  border-color: var(--ink);
+  background: var(--fill-row);
+  color: var(--ink);
+}
+.livechip--picker:focus,
+.livechip--browse:focus {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--on-light);
+}
+/* Room for the focus scale and ring; the card's width and step are unchanged. */
+.chrail {
+  height: 11.7rem;
+  padding-top: 1.05rem;
+  padding-bottom: 1.05rem;
+}
+.chcard {
+  border-radius: var(--radius);
+  background: var(--fill-chip);
+  box-shadow: inset 0 0 0 1px var(--glass-line);
+  overflow: hidden;
+}
+.chcard:hover {
+  background: var(--fill-row);
+}
+.chcard__art {
+  background: rgba(0, 0, 0, 0.35);
+}
+.chcard__logo.chlogo {
+  border-radius: var(--radius-s);
+}
+.chcard__live {
+  border-radius: var(--radius-s);
+  background: var(--live);
+  color: var(--on-light);
+}
+.chcard__live .chrow__eq i {
+  background: var(--on-light);
+}
+.chcard__now {
+  color: var(--ink-2);
+}
+.chcard__now--none {
+  color: var(--ink-3);
+}
+.chcard.is-live,
+html[data-input="pointer"] .chcard.is-live:focus:not(:hover) {
+  box-shadow: 0 0 0 2px var(--live);
+}
+.chcard.is-pending {
+  box-shadow: 0 0 0 2px rgba(var(--live-rgb), 0.45);
+}
+.chcard:focus {
+  transform: scale(var(--focus-scale));
+  background: var(--bg-3);
+  color: var(--ink);
+  box-shadow: var(--focus-ring);
+}
+.chcard:focus .chcard__now {
+  color: var(--ink-2);
+}
+.chcard:focus .chcard__bar {
+  background: var(--ink-4);
+}
+.chcard:focus .chcard__bar i {
+  background: var(--ink);
+}
+
+/* Full screen: everything over the picture floats as glass */
+.live.is-full .live__top {
+  top: 1.25rem;
+  left: 1.5rem;
+  right: 1.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-l);
+  background-image: none;
+}
+.live.is-full .live__osd {
+  left: 1.5rem;
+  right: 1.5rem;
+  bottom: 1.25rem;
+  padding: 1.1rem 1.5rem;
+  border-radius: var(--radius-l);
+  background-image: none;
+}
+.live.is-full.has-mini .live__osd {
+  left: 37rem;
+}
+.nowp--overlay {
+  max-width: none;
+  text-shadow: none;
+}
+.nowp--overlay .nowp__title {
+  font-size: 2rem;
+}
+.nowp--overlay .nowp__num {
+  font-size: 1.5rem;
+}
+.nowp--overlay .nowp__name {
+  font-size: 1.25rem;
+}
+.nowp--overlay .nowp__bar {
+  max-width: none;
+}
+.miniguide {
+  top: 1.25rem;
+  left: 1.5rem;
+  bottom: 1.25rem;
+  padding-top: 1.1rem;
+  border-radius: var(--radius-l);
+  overflow: hidden;
+  box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.6);
+}
+.miniguide__head strong {
+  font: 700 1.3rem/1.2 var(--font-display);
+  letter-spacing: -0.01em;
+}
+.miniguide__scrim {
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0) 60%);
+}
+.chrow {
+  border-radius: var(--radius);
+}
+.chrow::before {
+  display: none;
+}
+.chrow:hover {
+  background: var(--fill-chip);
+}
+.chrow.is-live,
+.chrow.is-pending,
+html[data-input="pointer"] .chrow.is-live:focus:not(:hover) {
+  background: var(--fill-row);
+}
+.chrow.is-live .chrow__num {
+  color: var(--ink);
+}
+.chrow__eq i {
+  background: var(--live);
+}
+.chrow:focus,
+.chrow.is-live:focus,
+.chrow.is-pending:focus {
+  background: var(--ink);
+  color: var(--on-light);
+}
+.chrow:focus .chrow__num,
+.chrow:focus .chrow__now {
+  color: rgba(0, 0, 0, 0.65);
+}
+.chrow:focus .chrow__bar {
+  background: rgba(0, 0, 0, 0.15);
+}
+.chrow:focus .chrow__bar i,
+.chrow:focus .chrow__eq i {
+  background: var(--on-light);
+}
+.numentry,
+.zapstats,
+.live__error {
+  border-radius: var(--radius-l);
+}
+.zapstats__tag {
+  border-radius: var(--radius-s);
+}
+.zapstats__tag.is-warm {
+  background: var(--fill-row);
+  color: var(--ink);
+}
+.zapstats__sum dd.is-hero,
+.zapstats__head strong .icon {
+  color: var(--ink);
+}
+
+/* Group browser */
+.gbrowse {
+  border: 0;
+  background-image: none;
+}
+.gbrowse__title {
+  font: 800 2.2rem/1.1 var(--font-display);
+  letter-spacing: -0.02em;
+}
+.gbrowse__quick .btn.is-current {
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+.gbrowse__jumpbtn {
+  background: var(--fill-chip);
+}
+.gsec__title {
+  font: 700 1.25rem/1.2 var(--font-display);
+}
+.gtile {
+  border-radius: var(--radius);
+  background: var(--fill-chip);
+  box-shadow: inset 0 0 0 1px var(--glass-line);
+  overflow: hidden;
+}
+.gtile:hover {
+  background: var(--fill-row);
+}
+.gtile__now {
+  border-radius: var(--radius-s);
+  background: var(--live);
+  color: var(--on-light);
+}
+.gtile[aria-current="true"] {
+  box-shadow: 0 0 0 2px var(--live);
+}
+.gmenu {
+  border-radius: var(--radius-l);
+}
+.gpick__item > .icon {
+  color: var(--ink);
+}
+.gpick__item[aria-current="true"],
+html[data-input="pointer"] .gpick__item[aria-current="true"]:focus:not(:hover) {
+  background: var(--fill-row);
+  box-shadow: none;
+}
+
+/* Guide: title, filter chips and Now on one line */
+.guide__head {
+  align-items: center;
+  padding: calc(var(--topbar-h) + 0.9rem) var(--gutter) 0.3rem;
+}
+.guide__head .live__title {
+  font: 800 2.2rem/1.1 var(--font-display);
+  letter-spacing: -0.02em;
+}
+.guide__titles {
+  flex-shrink: 0;
+}
+.guide__actions {
+  flex-shrink: 0;
+}
+.guide__head .guide__filters {
+  flex: 1;
+  min-width: 0;
+  margin: 0 1rem;
+  padding: 0.35rem 0.3rem;
+}
+.guide__preview .btn {
+  flex-shrink: 0;
+  margin-left: 0.8rem;
+}
+.guide__preview {
+  margin: 0.4rem var(--gutter) 0.7rem;
+  padding: 0 1.2rem;
+  border-radius: var(--radius-l);
+}
+.guide__preview-title {
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+.guide__onnow {
+  border-radius: var(--radius);
+  background: var(--fill-row);
+  color: var(--ink);
+}
+.guide__onnow i,
+.guide__now {
+  background: var(--live);
+  box-shadow: none;
+}
+.guide__nowtick {
+  border-radius: var(--radius-s);
+  background: var(--live);
+  color: var(--on-light);
+  box-shadow: none;
+}
+.guide__empty-icon {
+  color: var(--ink-3);
+}
+.grow__ch {
+  border-radius: var(--radius);
+}
+.gcell {
+  border-radius: var(--radius);
+  background: var(--fill-chip);
+}
+.gcell:hover {
+  background: var(--fill-row);
+}
+.gcell.is-airing,
+html[data-input="pointer"] .gcell.is-airing:focus:not(:hover) {
+  background: rgba(var(--ink-rgb), 0.14);
+  box-shadow: none;
+}
+.gcell.is-airing:hover {
+  background: rgba(var(--ink-rgb), 0.18);
+}
+.gcell.is-past {
+  background: rgba(var(--ink-rgb), 0.04);
+}
+.gcell__bar {
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.gcell:focus,
+.gcell.is-airing:focus {
+  background: rgba(var(--ink-rgb), 0.22);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+.gcell:focus .gcell__title {
+  color: var(--ink);
+}
+.gcell:focus .gcell__time {
+  color: var(--ink-2);
+}
+.gcell:focus .gcell__bar i {
+  background: var(--ink);
+}
+.gdetail {
+  border-radius: var(--radius-l);
+}
+.guide-row__stat.is-ok::before {
+  background: var(--ok);
+}
+.guide-pick.is-added .guide-pick__size,
+.guidepanel__title .icon,
+.guidepanel__mode--xmltv,
+.guidepanel__dirty .icon,
+.iptv-note,
+.testres__filled,
+.iptv-src__busy {
+  color: var(--ink);
+}
+.guidepanel__dirty {
+  background: var(--fill-row);
+}
+.loadjob {
+  background: var(--fill-chip);
+  box-shadow: inset 0 0 0 1px var(--glass-line);
+}
+.loadjob__bar i {
+  box-shadow: none;
+}
+
+/* Phone keeps its stacked arrangement: panels run edge to edge. */
+@media (max-width: 760px) {
+  html:not(.tv) .live--rows {
+    padding: 0.9rem var(--gutter) 0.9rem;
+  }
+  html:not(.tv) .live--rows .live__info {
+    margin: 0.9rem 0 0;
+  }
+  html:not(.tv) .miniguide {
+    top: 0;
+    left: 0;
+    bottom: 0;
+    border-radius: 0;
+  }
+  html:not(.tv) .live.is-full .live__top {
+    top: 0.5rem;
+    left: 0.5rem;
+    right: 0.5rem;
+  }
+  html:not(.tv) .live.is-full .live__osd {
+    left: 0.5rem;
+    right: 0.5rem;
+    bottom: 0.5rem;
+  }
+  html:not(.tv) .live.is-full.has-mini .live__osd {
+    left: 0.5rem;
+  }
+  html:not(.tv) .guide__head {
+    flex-wrap: wrap;
+  }
+  html:not(.tv) .guide__head .guide__filters {
+    order: 3;
+    flex: 1 0 100%;
+    margin: 0.4rem 0 0;
+  }
 }

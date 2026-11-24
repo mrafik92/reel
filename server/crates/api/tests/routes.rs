@@ -290,6 +290,78 @@ async fn home_continue_watching() {
     assert_eq!(h["rows"][0]["title"], "Movies");
 }
 
+/// Continue watching lists titles: one entry per series (its latest episode) next to the films.
+#[tokio::test]
+async fn continue_watching_groups_episodes_by_series() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = reel_core::db::connect_url("sqlite::memory:").await.unwrap();
+    sqlx::query(
+        "INSERT INTO libraries (id, name, kind, paths_json) VALUES \
+         (1, 'Films', 'movies', '[]'), (2, 'Series', 'shows', '[]')",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO media_items (id, library_id, kind, parent_id, title, season_no, episode_no, \
+         runtime_s, poster, backdrop) VALUES \
+         (1, 1, 'movie', NULL, 'Film', NULL, NULL, 100, NULL, NULL), \
+         (10, 2, 'show', NULL, 'Series A', NULL, NULL, NULL, 'p.jpg', 'b.jpg'), \
+         (11, 2, 'season', 10, 'Season 1', 1, NULL, NULL, NULL, NULL), \
+         (12, 2, 'season', 10, 'Season 2', 2, NULL, NULL, NULL, NULL), \
+         (13, 2, 'episode', 11, 'Older episode', 1, 3, 100, NULL, NULL), \
+         (14, 2, 'episode', 12, 'Latest episode', 2, 1, 100, NULL, NULL), \
+         (20, 2, 'show', NULL, 'Series B', NULL, NULL, NULL, NULL, NULL), \
+         (21, 2, 'episode', 20, 'Flat episode', 1, 1, 100, NULL, NULL), \
+         (22, 2, 'episode', 20, 'Finished episode', 1, 2, 100, NULL, NULL)",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let cfg = reel_core::Config {
+        data_dir: dir.path().join("data"),
+        ..Default::default()
+    };
+    let state = AppState::new(db.clone(), cfg);
+    let app = common::authed(&state, app(state.clone())).await;
+    sqlx::query(
+        "INSERT INTO watch_state (user_id, item_id, position_s, played, last_played_at) VALUES \
+         (1, 1, 10, 0, 300), (1, 13, 20, 0, 100), (1, 14, 30, 0, 400), \
+         (1, 21, 40, 0, 200), (1, 22, 50, 1, 500)",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+
+    let (_, h) = get(&app, "/api/v1/home").await;
+    let cw = h["continue_watching"].as_array().unwrap();
+    let ids: Vec<i64> = cw.iter().map(|e| e["id"].as_i64().unwrap()).collect();
+    assert_eq!(ids, [14, 1, 21], "latest episode per series, newest first");
+    assert_eq!(cw[0]["title"], "Latest episode");
+    assert_eq!(cw[0]["season_no"], 2);
+    assert_eq!(cw[0]["progress"], 0.3);
+    assert_eq!(cw[0]["series"]["id"], 10);
+    assert_eq!(cw[0]["series"]["title"], "Series A");
+    assert!(
+        cw[0]["series"]["poster_url"]
+            .as_str()
+            .unwrap()
+            .contains("/poster/10")
+    );
+    assert!(
+        cw[0]["series"]["backdrop_url"]
+            .as_str()
+            .unwrap()
+            .contains("/backdrop/10")
+    );
+    assert!(cw[1].get("series").is_none(), "films carry no series");
+    assert_eq!(
+        cw[2]["series"]["id"], 20,
+        "an episode directly under its show"
+    );
+    assert!(cw[2]["series"].get("poster_url").is_none());
+}
+
 #[tokio::test]
 async fn direct_range_and_images() {
     let Some(fx) = fixture().await else { return };

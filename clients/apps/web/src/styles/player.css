@@ -31,7 +31,6 @@
   bottom: 0;
   height: 22rem;
   background:
-    radial-gradient(ellipse 34% 55% at 50% 100%, rgba(var(--accent-rgb), 0.07) 0%, rgba(var(--accent-rgb), 0) 70%),
     linear-gradient(0deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.74) 26%, rgba(0, 0, 0, 0.42) 56%, rgba(0, 0, 0, 0.14) 82%, rgba(0, 0, 0, 0) 100%);
 }
 .pc__top,
@@ -115,9 +114,9 @@
   height: 2rem;
   padding: 0 0.8rem 0 0.7rem;
   border: 1px solid rgba(var(--ink-rgb), 0.16);
-  border-radius: 999px;
+  border-radius: var(--radius-s);
   background: rgba(0, 0, 0, 0.28);
-  color: var(--ink-3);
+  color: var(--ink-2);
   font: 700 0.68rem/1 var(--font-body);
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -130,12 +129,10 @@
   height: 0.42rem;
   margin-right: 0.5rem;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 8px rgba(var(--accent-hi-rgb), 0.6);
+  background: var(--ok);
 }
 .pc__badge.is-transcode i {
   background: var(--warn);
-  box-shadow: 0 0 8px rgba(var(--warn-rgb), 0.55);
 }
 .pc__badge:hover,
 .pc__badge[aria-pressed="true"] {
@@ -193,8 +190,8 @@ html.tv .pc__side--end {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--ink-2);
-  font: 700 0.95rem/1 var(--font-body);
+  color: var(--ink);
+  font: 700 0.9rem/1 var(--font-body);
   font-variant-numeric: tabular-nums;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6);
 }
@@ -222,7 +219,7 @@ html.tv .pc__side--end {
   width: 100%;
   height: 0.3rem;
   border-radius: 1rem;
-  background: rgba(var(--ink-rgb), 0.2);
+  background: rgba(var(--ink-rgb), 0.3);
   overflow: hidden;
   transition: height 180ms var(--ease);
 }
@@ -236,7 +233,7 @@ html.tv .pc__side--end {
   border-radius: 1rem;
 }
 .pscrub__buf {
-  background: rgba(var(--ink-rgb), 0.3);
+  background: rgba(var(--ink-rgb), 0.5);
 }
 .pscrub__ghost {
   background: rgba(var(--ink-rgb), 0.42);
@@ -251,8 +248,8 @@ html.tv .pc__side--end {
   height: 1.05rem;
   margin: -0.525rem 0 0 -0.525rem;
   border-radius: 50%;
-  background: var(--ink);
-  box-shadow: 0 0 0 0.18rem rgba(0, 0, 0, 0.35), 0 2px 10px rgba(0, 0, 0, 0.5);
+  background: var(--accent);
+  box-shadow: 0 0 0 0.18rem rgba(0, 0, 0, 0.35);
   transform: scale(0);
   transition: transform 200ms var(--ease-out), background-color var(--t-fast) var(--ease);
   pointer-events: none;
@@ -270,11 +267,11 @@ html.tv .pc__side--end {
 html[data-input="key"] .pscrub__bar:focus .pscrub__thumb,
 .pscrub.is-seeking .pscrub__thumb {
   background: var(--accent);
-  box-shadow: 0 0 0 0.22rem rgba(0, 0, 0, 0.45), 0 0 0 0.42rem var(--accent), 0 0 18px rgba(var(--accent-hi-rgb), 0.5);
+  box-shadow: 0 0 0 0.2rem rgba(0, 0, 0, 0.5), 0 0 0 0.38rem var(--ink);
   transform: scale(1.2);
 }
 html[data-input="key"] .pscrub__bar:focus .pscrub__track {
-  box-shadow: 0 0 0 1px rgba(var(--accent-hi-rgb), 0.35);
+  box-shadow: 0 0 0 1px rgba(var(--ink-rgb), 0.5);
 }
 /* Time tooltip (+ trickplay frame when the server has one) */
 .pscrub__tip {
@@ -324,13 +321,13 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
   padding: 0.12rem 0.4rem;
 }
 .pscrub__tipline strong {
-  font: 750 1.1rem/1 var(--font-display);
+  font: 700 1.1rem/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
 }
 .pscrub__tipline small {
   margin-left: 0.5rem;
-  color: var(--accent-hi);
+  color: var(--ink-2);
   font: 800 0.8rem/1 var(--font-body);
   font-variant-numeric: tabular-nums;
 }
@@ -384,18 +381,30 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
   height: 4.6rem;
   border-radius: 50%;
   background: var(--ink);
-  color: var(--bg);
+  color: var(--on-light);
   font-size: 1.9rem;
   box-shadow: 0 0.6rem 1.8rem rgba(0, 0, 0, 0.45);
 }
 .ptx__play:hover {
-  background: var(--accent);
-  color: var(--accent-ink);
-  transform: scale(1.04);
+  background: var(--ink);
+  color: var(--on-light);
+  transform: scale(1.08);
+}
+/* Transport icons: white at 0.9, full and a little larger under the pointer. */
+.ptx__skip,
+.ctl {
+  opacity: 0.9;
+}
+.ptx__skip:hover,
+.ctl:hover,
+.ptx__skip:focus,
+.ctl:focus {
+  opacity: 1;
 }
 .ptx__skip:hover,
 .ctl:hover {
-  background: rgba(var(--ink-rgb), 0.14);
+  background: transparent;
+  transform: scale(1.15);
 }
 .ptx__skip:active,
 .ptx__play:active,
@@ -428,7 +437,7 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
   display: inline-flex;
   align-items: center;
   margin-left: 0.5rem;
-  font: 750 0.82rem/1 var(--font-body);
+  font: 700 0.82rem/1 var(--font-body);
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -436,9 +445,9 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
 .ctl__tag {
   margin-left: 0.4rem;
   padding: 0.14rem 0.32rem;
-  border-radius: 0.3rem;
-  background: rgba(var(--accent-rgb), 0.16);
-  color: var(--accent-hi);
+  border-radius: var(--radius-s);
+  background: var(--fill-row);
+  color: var(--ink);
   font: 800 0.56rem/1 var(--font-body);
   font-style: normal;
   letter-spacing: 0.08em;
@@ -458,7 +467,7 @@ html[data-input="key"] .pscrub__bar:focus .pscrub__track {
   border-radius: 0.45rem;
   background: var(--ink);
   color: var(--bg);
-  font: 750 0.75rem/1 var(--font-body);
+  font: 700 0.75rem/1 var(--font-body);
   letter-spacing: 0.01em;
   white-space: nowrap;
   opacity: 0;
@@ -508,21 +517,21 @@ html[data-input="pointer"] .ptx__skip:focus:not(:hover) .ctl__tip {
   transform: none;
 }
 
-/* Keyboard / remote focus: cream fill, crimson halo — unmistakable over any picture */
+/* Keyboard / remote focus: a white disc with a black icon, unmistakable over any picture */
 html[data-input="key"] .ctl:focus,
 html[data-input="key"] .ptx__skip:focus {
   background: var(--ink);
-  color: var(--bg);
-  box-shadow: 0 0 0 0.2rem rgba(0, 0, 0, 0.5), 0 0 0 0.4rem var(--accent);
+  color: var(--on-light);
+  box-shadow: 0 0 0 0.2rem rgba(0, 0, 0, 0.5), 0 0 0 0.38rem var(--ink);
 }
 html[data-input="key"] .ctl:focus .ctl__tag {
   background: rgba(0, 0, 0, 0.12);
-  color: var(--bg);
+  color: var(--on-light);
 }
 html[data-input="key"] .ptx__play:focus {
-  background: var(--accent);
-  color: var(--accent-ink);
-  box-shadow: 0 0 0 0.25rem rgba(0, 0, 0, 0.5), 0 0 0 0.5rem var(--accent), 0 0 2.4rem rgba(var(--accent-hi-rgb), 0.45);
+  background: var(--ink);
+  color: var(--on-light);
+  box-shadow: 0 0 0 0.25rem rgba(0, 0, 0, 0.5), 0 0 0 0.45rem var(--ink);
   transform: scale(1.06);
 }
 html.tv .ctl:focus,
@@ -592,7 +601,7 @@ html[data-input="key"] .pvol__bar:focus .pvol__knob {
   background: var(--accent);
 }
 html[data-input="key"] .pvol__bar:focus .pvol__knob {
-  box-shadow: 0 0 0 0.25rem rgba(var(--accent-hi-rgb), 0.35);
+  box-shadow: 0 0 0 0.25rem rgba(var(--ink-rgb), 0.35);
 }
 .pvol.is-unknown .pvol__track i {
   width: 100% !important;
@@ -615,7 +624,7 @@ html[data-input="key"] .pvol__bar:focus .pvol__knob {
   height: 5.2rem;
   margin: -2.6rem 0 0;
   padding: 0 1.2rem;
-  border-radius: 999px;
+  border-radius: var(--radius-l);
   background: rgba(var(--bg-rgb), 0.72);
   color: var(--ink);
   font-size: 2.1rem;
@@ -629,7 +638,7 @@ html[data-input="key"] .pvol__bar:focus .pvol__knob {
   font-size: 1.4rem;
 }
 .posd span {
-  font: 750 1.1rem/1 var(--font-body);
+  font: 700 1.1rem/1 var(--font-body);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -660,23 +669,25 @@ html[data-input="key"] .pvol__bar:focus .pvol__knob {
   z-index: 4;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
   height: 3.2rem;
   margin-top: -1.6rem;
   padding: 0 1.1rem;
-  border-radius: 999px;
+  border-radius: var(--radius-l);
   background: rgba(var(--bg-rgb), 0.62);
   color: var(--ink);
   font-size: 1.3rem;
   pointer-events: none;
   animation: pripple 750ms var(--ease-out) both;
 }
+.pripple > * + * {
+  margin-left: 0.5rem;
+}
 .pripple--back {
   right: auto;
   left: 12%;
 }
 .pripple span {
-  font: 750 1rem/1 var(--font-body);
+  font: 700 1rem/1 var(--font-body);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -697,7 +708,7 @@ html[data-input="key"] .pvol__bar:focus .pvol__knob {
   opacity: 1;
 }
 .player__stage.is-seekmode .pscrub__time:first-child {
-  color: var(--accent-hi);
+  color: var(--ink);
 }
 
 /* ---------- Sizes ------------------------------------------------------------------- */
@@ -825,4 +836,30 @@ html[data-input="key"] .pvol__bar:focus {
   html:not(.tv) .pc__pip {
     display: none;
   }
+}
+
+/* ---------- Chrome bands: glass over the picture (#281) ---------------------------- */
+.pc__top,
+.pc__bottom {
+  background: rgba(var(--bg-1-rgb), 0.62);
+}
+.pc__top {
+  border-bottom: 1px solid var(--glass-line);
+}
+.pc__bottom {
+  border-top: 1px solid var(--glass-line);
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  html:not(.tv) .pc__top,
+  html:not(.tv) .pc__bottom {
+    background: var(--glass-raised);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
+}
+/* The bands carry the contrast now, so the scrims only soften their edges. */
+.pc__scrim--top,
+.pc__scrim--bottom {
+  height: 8rem;
+  opacity: 0.55;
 }

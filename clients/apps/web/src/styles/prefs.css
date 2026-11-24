@@ -217,7 +217,7 @@ html[data-input="key"] .prefs__mode:focus {
 }
 .prefs__sub {
   margin: 0 0 0.5rem;
-  font: 750 1.1rem/1.2 var(--font-display);
+  font: 700 1.1rem/1.2 var(--font-display);
 }
 .is-dim {
   opacity: 0.55;
@@ -245,7 +245,7 @@ html[data-input="key"] .prefs__mode:focus {
 .prefs__example > strong {
   display: block;
   margin-bottom: 0.55rem;
-  font: 750 1.05rem/1.2 var(--font-display);
+  font: 700 1.05rem/1.2 var(--font-display);
 }
 .prefs__example dl {
   display: flex;

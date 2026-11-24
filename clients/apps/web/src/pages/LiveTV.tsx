@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, type JSX } from "solid-js";
 import { useNavigate, useSearchParams } from "@solidjs/router";
-import { focusElement, Icon, onBack, onRemoteKey, SheetClose } from "@reel/ui";
+import { focusElement, Icon, mediaUrl, onBack, onRemoteKey, SheetClose } from "@reel/ui";
+import { useAmbientArt } from "../lib/ambient";
 import "../styles/live.css";
 import { iptv, type IptvChannel } from "../api/iptv";
 import { href } from "../lib/mode";
@@ -78,6 +79,8 @@ function Watch(): JSX.Element {
   const idle = () => tuner.phase() === "idle" && !pending();
   /** What the overlays describe: the zap target while it's pending, else the tuned channel. */
   const shown = () => pending() ?? tuned();
+  // Colour behind the hero: the channel's logo, stretched (no blur filter). Purely decorative.
+  const ambient = useAmbientArt(() => heroCh()?.logo_url);
   // Tizen's AVPlay draws on a full-screen plane behind the page: no windowed preview there.
   const isFull = () => full() || (tuner.nativePlane() && tuner.phase() !== "idle");
   /** What's in the side list: search results or the current group / favourites. */
@@ -421,6 +424,13 @@ function Watch(): JSX.Element {
 
   return (
     <div class="live live--rows" classList={{ "is-full": isFull(), "is-native": tuner.nativePlane(), "has-mini": mini() }}>
+      <Show when={ambient()} keyed>
+        {(url) => (
+          <div class="live__ambient" aria-hidden="true">
+            <img src={mediaUrl(url)} alt="" decoding="async" onError={(e) => (e.currentTarget.style.display = "none")} />
+          </div>
+        )}
+      </Show>
       <section class="live__hero">
         <div
           ref={screen}
@@ -787,7 +797,6 @@ function IdleHero(props: { channel: IptvChannel; onWatch: () => void }): JSX.Ele
   const nn = () => nowNext(props.channel.id);
   return (
     <div class="live__idle" onClick={(e) => e.stopPropagation()}>
-      <div class="live__idle-glow" aria-hidden="true" />
       <ChannelLogo channel={props.channel} class="chlogo--hero" />
       <p class="eyebrow">{lastChannel()?.id === props.channel.id ? "Last watched" : "Ready to watch"}</p>
       <h2 class="live__idle-name" dir="auto">

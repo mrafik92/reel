@@ -12,9 +12,8 @@
   align-items: center;
   height: 1.65rem;
   padding: 0 0.6rem;
-  border-radius: 999px;
+  border-radius: var(--radius-s);
   background: rgba(var(--bg-rgb), 0.86);
-  box-shadow: 0 0.25rem 0.9rem rgba(0, 0, 0, 0.45);
   font: 700 0.78rem/1 var(--font-body);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -42,6 +41,157 @@ html[data-input="key"] .card:focus .card__meta {
   }
 }
 
+/* Desktop and TV: this strip lives in the preview card; only phones keep it on the tile. */
+@media (min-width: 761px) {
+  .card__meta {
+    display: none;
+  }
+}
+
+/* ---------- Preview card (hover and key focus) --------------------------- */
+.preview {
+  position: fixed;
+  z-index: 49;
+  border-radius: var(--radius-l);
+  overflow: hidden;
+  box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.75);
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
+}
+.preview.is-in {
+  opacity: 1;
+  transform: none;
+  transition: opacity 200ms var(--ease), transform 200ms var(--ease-out);
+}
+/* Key focus: the tile underneath is covered, so the card carries the white ring. */
+.preview--focus {
+  box-shadow: var(--focus-ring), 0 0.6rem 2rem rgba(0, 0, 0, 0.75);
+  overflow: visible;
+  pointer-events: none;
+}
+/* No blur on TV: the tile under the card must not read through its text. */
+html.tv .preview {
+  background: rgba(var(--bg-1-rgb), 0.97);
+}
+html[data-input="key"] .card.is-previewed .card__frame {
+  box-shadow: none;
+}
+.preview--focus .preview__art {
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  overflow: hidden;
+}
+.preview__art {
+  position: relative;
+  display: block;
+  height: 0;
+  padding-top: 56.25%;
+  color: var(--ink);
+  text-decoration: none;
+  background: var(--bg-2);
+}
+.preview__art > .img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+.preview__img--poster img {
+  object-position: 50% 0;
+}
+.preview__noart {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-2);
+}
+.preview__shade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 60%;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0) 100%);
+}
+.preview__title {
+  position: absolute;
+  left: 0.9rem;
+  right: 0.9rem;
+  bottom: 0.7rem;
+  font: 800 1.15rem/1.15 var(--font-display);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.preview__progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(var(--ink-rgb), 0.3);
+}
+.preview__progress i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.preview__body {
+  padding: 0.75rem 0.9rem 0.95rem;
+}
+.preview__actions {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.7rem;
+}
+.preview__actions > * + * {
+  margin-left: 0.5rem;
+}
+.preview__more {
+  margin-left: auto !important;
+}
+.preview__episode {
+  margin-bottom: 0.35rem;
+  color: var(--ink);
+  font: 700 0.88rem/1.3 var(--font-body);
+}
+.preview__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  color: var(--ink-2);
+  font: 400 0.88rem/1.5 var(--font-body);
+}
+.preview__meta > * {
+  margin-right: 0.65rem;
+}
+.preview__rating {
+  color: var(--ink);
+  font-weight: 700;
+}
+.preview__rating .icon {
+  margin: -0.12em 0.2rem 0 0;
+  color: var(--accent-hi);
+}
+.preview__genres {
+  margin-top: 0.3rem;
+  color: var(--ink);
+  font: 400 0.88rem/1.4 var(--font-body);
+}
+.preview__genres i {
+  margin: 0 0.45rem;
+  color: var(--ink-3);
+  font-style: normal;
+}
+@media (prefers-reduced-motion: reduce) {
+  .preview,
+  .preview.is-in {
+    transform: none;
+    transition: opacity 100ms linear !important;
+  }
+}
+
 /* ---------- Row subtitle ------------------------------------------------- */
 .row__sub {
   margin-left: 0.85rem;
@@ -50,108 +200,12 @@ html[data-input="key"] .card:focus .card__meta {
   color: var(--ink-3);
 }
 
-/* ---------- Global search entry ----------------------------------------- */
-.topsearch {
-  position: fixed;
-  top: 1.1rem;
-  right: var(--gutter);
-  z-index: 45;
-  display: flex;
-  align-items: center;
-  min-width: 15rem;
-  height: 2.7rem;
-  padding: 0 0.55rem 0 1rem;
-  border-radius: 999px;
-  background: rgba(var(--bg-1-rgb), 0.78);
-  box-shadow: inset 0 0 0 1px var(--ink-4), 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
-  color: var(--ink-2);
-  font: 700 0.95rem/1 var(--font-body);
-  text-decoration: none;
-  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease),
-    transform var(--t) var(--ease-out), opacity var(--t) var(--ease);
-}
-.topsearch__icon {
-  margin-right: 0.6rem;
-  font-size: 1.2rem;
-  color: var(--accent-hi);
-}
-.topsearch__label {
-  flex: 1;
-  margin-right: 1.5rem;
-}
-.topsearch__keys .keycap {
-  background: var(--ink-5);
-}
-.topsearch__keys .keycap + .keycap {
-  margin-left: 0.2rem;
-}
-.topsearch:hover {
-  background: rgba(var(--bg-2-rgb), 0.95);
-  color: var(--ink);
-  box-shadow: inset 0 0 0 1px rgba(var(--accent-hi-rgb), 0.5), 0 0.6rem 1.6rem rgba(0, 0, 0, 0.4);
-}
-.topsearch:focus {
-  background: var(--ink);
-  color: var(--bg);
-  transform: scale(1.04);
-}
-.topsearch:focus .topsearch__icon {
-  color: var(--bg);
-}
-html[data-input="key"] .topsearch:focus {
-  box-shadow: var(--focus-ring);
-}
-html[data-input="pointer"] .topsearch:focus:not(:hover) {
-  background: rgba(var(--bg-1-rgb), 0.78);
-  color: var(--ink-2);
-  transform: none;
-}
-html[data-input="pointer"] .topsearch:focus:not(:hover) .topsearch__icon {
-  color: var(--accent-hi);
-}
-.topsearch.is-tucked {
-  opacity: 0;
-  transform: translateY(-0.6rem);
-  pointer-events: none;
-}
-html.tv .topsearch {
-  top: 1.5rem;
-  min-width: 0;
-  padding-right: 1.2rem;
-}
-html.tv .topsearch__label {
-  margin-right: 0;
-}
-
-/* Rail: Search leads, ringed in the accent */
-.rail__list li:first-child {
-  margin-bottom: 1.2rem;
-}
-.rail__link--search {
-  color: var(--ink);
-  box-shadow: inset 0 0 0 1.5px rgba(var(--accent-hi-rgb), 0.55);
-}
-.rail__link--search .rail__icon {
-  color: var(--accent-hi);
-}
-/* Gated like the rail's inverted focus pill (#180): a tapped Search keeps focus, not a dark icon. */
-html[data-input="key"] .rail__link--search:focus .rail__icon,
-html.tv .rail__link--search:focus .rail__icon {
-  color: var(--bg);
-}
-
 /* ---------- Library: browse-first picker -------------------------------- */
 .page.library {
-  padding-top: 4.6rem;
   padding-left: 0;
   padding-right: 0;
 }
 .segmented__btn {
-  white-space: nowrap;
-}
-.row__action {
-  flex-shrink: 0;
-  margin-left: 1rem;
   white-space: nowrap;
 }
 .library .page-head,
@@ -164,10 +218,16 @@ html.tv .rail__link--search:focus .rail__icon {
   margin-bottom: 1.4rem;
 }
 .picker__title-row {
-  align-items: flex-end;
+  align-items: center;
 }
-.picker__surprise {
-  box-shadow: 0 0.7rem 2.2rem rgba(var(--accent-hi-rgb), 0.22);
+.picker__title-row > * {
+  margin-bottom: 0.5rem;
+}
+.picker__title-row > .btn + .btn {
+  margin-left: 0.5rem;
+}
+.picker__libs {
+  margin: 0.2rem 0 0.2rem;
 }
 .picker__surprise .icon {
   font-size: 1.45em;
@@ -185,7 +245,7 @@ html[data-input="pointer"] .picker__surprise:focus:not(:hover) .icon {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  margin-top: 1.5rem;
+  margin-top: 0.7rem;
 }
 .picker__bar > * {
   margin: 0 0.8rem 0.7rem 0;
@@ -231,9 +291,6 @@ html[data-input="pointer"] .picker__surprise:focus:not(:hover) .icon {
   color: var(--accent-ink);
   font: 800 0.78rem/1 var(--font-body);
 }
-.picker__sort {
-  margin-right: 0.4rem;
-}
 
 /* Toggle chip (Unwatched) + pressed chips */
 .chip {
@@ -242,14 +299,16 @@ html[data-input="pointer"] .picker__surprise:focus:not(:hover) .icon {
   text-decoration: none;
 }
 .chip[aria-pressed="true"],
-.chip[aria-checked="true"] {
-  border-color: rgba(var(--accent-hi-rgb), 0.6);
-  background: var(--accent-dim);
-  color: var(--ink);
+.chip[aria-checked="true"],
+html[data-input="pointer"] .chip[aria-pressed="true"]:focus:not(:hover),
+html[data-input="pointer"] .chip[aria-checked="true"]:focus:not(:hover) {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--on-light);
 }
 .chip__check {
   margin: 0 0.35rem 0 -0.2rem;
-  color: var(--accent-hi);
+  color: inherit;
 }
 .chip:focus .chip__check {
   color: inherit;
@@ -263,14 +322,18 @@ html[data-input="pointer"] .picker__surprise:focus:not(:hover) .icon {
   height: 1.15rem;
   margin-right: 0.55rem;
   border: 1.5px solid currentColor;
-  border-radius: 0.3rem;
+  border-radius: var(--radius-s);
   font-size: 0.85rem;
 }
-.chip[aria-checked="true"] .chip__box,
+.chip[aria-checked="true"] .chip__box {
+  border-color: var(--on-light);
+  background: var(--on-light);
+  color: var(--ink);
+}
 .spot__toggle[aria-checked="true"] .spot__tick {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--on-light);
 }
 .chip--toggle {
   margin-bottom: 0.7rem;
@@ -313,51 +376,55 @@ html[data-input="pointer"] .picker__surprise:focus:not(:hover) .icon {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  height: 2.65rem;
-  padding: 0 1.15rem;
-  border: 0;
+  height: 2.4rem;
+  padding: 0 1rem;
+  border: 1px solid var(--ink-4);
   border-radius: 999px;
-  background: var(--ink-5);
+  background: var(--fill-chip);
   color: var(--ink-2);
-  font: 700 0.98rem/1 var(--font-body);
+  font: 600 0.92rem/1 var(--font-body);
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t) var(--ease-out);
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), transform var(--t) var(--ease-out);
 }
 .gchip + .gchip {
-  margin-left: 0.55rem;
+  margin-left: 0.5rem;
 }
 .gchip__count {
-  margin-left: 0.5rem;
+  margin-left: 0.45rem;
   font-weight: 400;
   font-size: 0.8em;
   font-variant-numeric: tabular-nums;
   opacity: 0.6;
 }
 .gchip:hover {
-  background: var(--ink-4);
+  border-color: var(--ink-3);
   color: var(--ink);
 }
 .gchip[aria-pressed="true"] {
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--on-light);
 }
 .gchip:focus {
+  border-color: var(--ink);
   background: var(--ink);
-  color: var(--bg);
+  color: var(--on-light);
   transform: scale(1.05);
 }
 html[data-input="key"] .gchip:focus {
   box-shadow: var(--focus-ring);
 }
 html[data-input="pointer"] .gchip:focus:not(:hover) {
-  background: var(--ink-5);
+  border-color: var(--ink-4);
+  background: var(--fill-chip);
   color: var(--ink-2);
   transform: none;
 }
 html[data-input="pointer"] .gchip[aria-pressed="true"]:focus:not(:hover) {
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--on-light);
 }
 
 /* Active filters */
@@ -372,7 +439,7 @@ html[data-input="pointer"] .gchip[aria-pressed="true"]:focus:not(:hover) {
 }
 .picker__found {
   margin-right: 0.9rem;
-  font: 750 1.1rem/1 var(--font-display);
+  font: 700 1.1rem/1 var(--font-display);
   letter-spacing: -0.01em;
 }
 .fchip {
@@ -380,9 +447,9 @@ html[data-input="pointer"] .gchip[aria-pressed="true"]:focus:not(:hover) {
   align-items: center;
   height: 2.1rem;
   padding: 0 0.65rem 0 0.9rem;
-  border: 1.5px solid rgba(var(--accent-hi-rgb), 0.45);
+  border: 1px solid var(--ink-3);
   border-radius: 999px;
-  background: var(--accent-dim);
+  background: var(--fill-chip);
   color: var(--ink);
   font: 700 0.86rem/1 var(--font-body);
   cursor: pointer;
@@ -404,7 +471,7 @@ html[data-input="pointer"] .gchip[aria-pressed="true"]:focus:not(:hover) {
 .fchip:focus {
   border-color: var(--ink);
   background: var(--ink);
-  color: var(--bg);
+  color: var(--on-light);
   text-decoration: none;
 }
 html[data-input="key"] .fchip:focus {
@@ -425,9 +492,9 @@ html.tv .library__lanes .row {
   justify-content: space-between;
   margin: 2.2rem var(--gutter) 0;
   padding: 1.5rem 1.8rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--glass-line);
   border-radius: var(--radius-l);
-  background: linear-gradient(100deg, var(--bg-1), rgba(var(--bg-1-rgb), 0.4));
+  background: var(--fill-chip);
 }
 .lane-cta p {
   margin: 0.3rem 1.5rem 0.3rem 0;
@@ -437,7 +504,7 @@ html.tv .library__lanes .row {
 .lane-cta strong {
   margin-right: 0.4rem;
   color: var(--ink);
-  font: 750 1.15rem/1.2 var(--font-display);
+  font: 700 1.15rem/1.2 var(--font-display);
 }
 
 /* ---------- Filter panel ------------------------------------------------- */
@@ -449,7 +516,7 @@ html.tv .library__lanes .row {
 }
 .fpanel__head h2 {
   margin: 0.35rem 0 0;
-  font: 750 2rem/1.1 var(--font-display);
+  font: 700 2rem/1.1 var(--font-display);
   letter-spacing: -0.025em;
 }
 .fpanel__body {
@@ -483,7 +550,7 @@ html.tv .library__lanes .row {
   margin-left: 0.5rem;
   text-transform: none;
   letter-spacing: 0;
-  color: var(--accent-hi);
+  color: var(--ink-2);
 }
 .fpanel__foot {
   display: flex;
@@ -518,11 +585,11 @@ html.tv .library__lanes .row {
   transition: transform var(--t) var(--ease-out), background-color var(--t) var(--ease);
 }
 .switch[aria-checked="true"] {
-  background: var(--accent);
+  background: var(--ink);
 }
 .switch[aria-checked="true"] i {
   transform: translateX(1.5rem);
-  background: var(--accent-ink);
+  background: var(--on-light);
 }
 html[data-input="key"] .switch:focus {
   box-shadow: var(--focus-ring);
@@ -573,9 +640,21 @@ html[data-input="key"] .switch:focus {
   height: 100%;
   padding: 5rem calc(var(--gutter) + 1.5rem) 4rem;
 }
+/* The copy reads from a glass panel over the art. */
 .spot__copy {
   flex: 1;
-  max-width: 48rem;
+  max-width: 42rem;
+  padding: 1.8rem 2rem;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius-l);
+  background: var(--glass-strong);
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  html:not(.tv) .spot__copy {
+    background: var(--glass-raised);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
 }
 .spot__eyebrow {
   display: flex;
@@ -597,13 +676,13 @@ html[data-input="key"] .switch:focus {
   text-transform: uppercase;
 }
 .spot__title {
-  margin: 1.4rem 0 1rem;
-  font: 780 5.4rem/0.92 var(--font-display);
-  letter-spacing: -0.045em;
+  margin: 1rem 0 0.8rem;
+  font: 800 3.4rem/1 var(--font-display);
+  letter-spacing: -0.02em;
   text-shadow: 0 0.2rem 2.5rem rgba(0, 0, 0, 0.4);
 }
 .spot__title--none {
-  font-size: 3.4rem;
+  font-size: 2.4rem;
 }
 .spot__overview {
   max-width: 40rem;
@@ -654,7 +733,6 @@ html[data-input="key"] .switch:focus {
   overflow: hidden;
   background: var(--bg-2);
   box-shadow: 0 0 0 1px var(--line), 0 2.4rem 5rem rgba(0, 0, 0, 0.75);
-  transform: rotate(2.5deg);
   animation: spot-poster 720ms var(--ease-out) both;
   transition: opacity 200ms var(--ease);
 }
@@ -676,8 +754,8 @@ html[data-input="key"] .switch:focus {
   to { opacity: 1; transform: none; }
 }
 @keyframes spot-poster {
-  from { opacity: 0; transform: translateY(2.5rem) rotate(8deg) scale(0.94); }
-  to { opacity: 1; transform: rotate(2.5deg); }
+  from { opacity: 0; transform: translateY(2.5rem) scale(0.94); }
+  to { opacity: 1; transform: none; }
 }
 @keyframes dice-roll {
   0% { transform: rotate(0) scale(1); }
@@ -711,8 +789,13 @@ html[data-input="key"] .switch:focus {
 .search__group {
   margin-bottom: 2.4rem;
 }
+/* Group heads read as row titles. */
 .search__group .eyebrow {
-  margin-bottom: 0.9rem;
+  margin-bottom: 0.7rem;
+  font: 700 1.35rem/1.2 var(--font-display);
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: rgba(var(--ink-rgb), 0.9);
 }
 .search__group-head {
   display: flex;
@@ -735,7 +818,7 @@ html[data-input="key"] .switch:focus {
 .linkbtn:hover,
 .linkbtn:focus {
   background: var(--ink);
-  color: var(--bg);
+  color: var(--on-light);
   text-decoration: none;
 }
 html[data-input="key"] .linkbtn:focus {
@@ -782,7 +865,7 @@ html[data-input="key"] .linkbtn:focus {
 .chip__main:focus,
 .chip__x:focus {
   background: var(--ink);
-  color: var(--bg);
+  color: var(--on-light);
 }
 .chip__main:focus .icon,
 .chip__main:hover .icon {
@@ -804,7 +887,7 @@ html.tv .row--results {
   --nav-anchor-top: 24vh;
 }
 .person__role--lib {
-  color: var(--accent-hi);
+  color: var(--ink-2);
 }
 .search__fine {
   color: var(--ink-3);
@@ -813,17 +896,8 @@ html.tv .row--results {
 
 /* ---------- Small screens ------------------------------------------------ */
 @media (max-width: 760px) {
-  html:not(.tv) .topsearch {
-    display: none;
-  }
-  html:not(.tv) .rail__list li:first-child {
-    margin-bottom: 0;
-  }
-  html:not(.tv) .rail__link--search {
-    box-shadow: none;
-  }
   .page.library {
-    padding-top: 2.5rem;
+    padding-top: 1.6rem;
   }
   .picker__time {
     flex-wrap: wrap;
@@ -843,7 +917,16 @@ html.tv .row--results {
     display: none;
   }
   .spot__title {
-    font-size: 3rem;
+    font-size: 2.2rem;
+  }
+  .spot__copy {
+    padding: 1.2rem 1.25rem;
+  }
+  .picker__title-row {
+    justify-content: flex-start;
+  }
+  .picker__title-row .page-title {
+    flex: 1 0 100%;
   }
   .spot__stage {
     padding: 4rem var(--gutter) 2.5rem;

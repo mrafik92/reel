@@ -115,6 +115,21 @@ pub struct ItemSummary {
     /// Genre names (list endpoints only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub genres: Option<Vec<String>>,
+    /// The series an episode belongs to (only on Home's `continue_watching`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub series: Option<SeriesRef>,
+}
+
+/// The series identity of an episode in Continue watching, so a client can show the title and art
+/// of the series while Play still resumes the episode.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SeriesRef {
+    pub id: i64,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poster_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backdrop_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -53,12 +53,11 @@ export default function OidcReturn(): JSX.Element {
 
   return (
     <div class="auth">
-      <div class="auth__glow" aria-hidden="true" />
-      <section class="auth__panel">
+      <section class="auth__panel glass">
         <Show when={error()} fallback={<p class="state__body" role="status">Finishing sign-in…</p>}>
           <div class="auth__form">
             <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
-            <a class="btn btn--primary btn--lg btn--block" href={href("/login")} data-autofocus><span>Back to sign in</span></a>
+            <a class="btn btn--accent btn--lg btn--block" href={href("/login")} data-autofocus><span>Back to sign in</span></a>
           </div>
         </Show>
       </section>

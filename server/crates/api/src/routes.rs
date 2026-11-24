@@ -98,6 +98,7 @@ pub(crate) fn summary_from_row(r: &SqliteRow, sg: &reel_auth::UrlSigner) -> Item
         rating: None,
         runtime_s: None,
         genres: None,
+        series: None,
     }
 }
 
@@ -607,6 +608,48 @@ async fn recent_in(
     summaries(st, &rows, &sg).await
 }
 
+/// Fills `series` on the episodes in `items` (a parent is a season or, for flat shows, the show).
+async fn attach_series(
+    st: &AppState,
+    items: &mut [ItemSummary],
+    sg: &reel_auth::UrlSigner,
+) -> ApiResult<()> {
+    let ids: Vec<i64> = items
+        .iter()
+        .filter(|i| matches!(i.kind, ItemKind::Episode))
+        .map(|i| i.id)
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    type SeriesRow = (i64, i64, String, Option<String>, Option<String>);
+    let rows: Vec<SeriesRow> = sqlx::query_as(
+        "SELECT e.id, s.id, s.title, s.poster, s.backdrop FROM media_items e \
+         JOIN media_items p ON p.id = e.parent_id \
+         JOIN media_items s ON s.id = CASE WHEN p.kind = 'season' THEN p.parent_id ELSE p.id END \
+         WHERE s.kind = 'show' AND e.id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(serde_json::to_string(&ids).unwrap_or_else(|_| "[]".into()))
+    .fetch_all(&st.db)
+    .await?;
+    let mut by: std::collections::HashMap<i64, SeriesRef> = Default::default();
+    for (episode, id, title, poster, backdrop) in rows {
+        by.insert(
+            episode,
+            SeriesRef {
+                id,
+                title,
+                poster_url: poster.map(|_| image_url(sg, "poster", id, 342)),
+                backdrop_url: backdrop.map(|_| image_url(sg, "backdrop", id, 780)),
+            },
+        );
+    }
+    for i in items {
+        i.series = by.remove(&i.id);
+    }
+    Ok(())
+}
+
 /// Home screen: continue watching, recently added, and one row per visible library.
 #[utoipa::path(get, path = "/home", responses((status = 200, body = Home)))]
 pub async fn home(State(st): State<AppState>, u: AuthUser) -> ApiResult<Json<Home>> {
@@ -617,11 +660,22 @@ pub async fn home(State(st): State<AppState>, u: AuthUser) -> ApiResult<Json<Hom
         summary_from(u.id()),
         st.signer(u.id()),
     );
+    // One entry per title: every film, and the most recently played in-progress episode of each
+    // series. The partition key is the show's id for episodes and a negated item id otherwise, so
+    // films and episodes without a parent never group with anything.
     let rows = sqlx::query(&format!(
-        "{sel}{frm} WHERE w.user_id = ? AND w.position_s > 0 \
-         AND w.played = 0 AND i.kind IN ('movie','episode') AND {} \
+        "WITH latest AS (SELECT m.id AS item_id, ROW_NUMBER() OVER (PARTITION BY \
+            CASE WHEN m.kind = 'episode' AND p.id IS NOT NULL \
+                THEN CASE WHEN p.kind = 'season' THEN COALESCE(p.parent_id, p.id) ELSE p.id END \
+                ELSE -m.id END \
+            ORDER BY COALESCE(ws.last_played_at, 0) DESC, m.id DESC) AS rn \
+         FROM watch_state ws JOIN media_items m ON m.id = ws.item_id \
+         LEFT JOIN media_items p ON p.id = m.parent_id \
+         WHERE ws.user_id = ? AND ws.position_s > 0 AND ws.played = 0 \
+         AND m.kind IN ('movie','episode') AND {}) \
+         {sel}{frm} JOIN latest l ON l.item_id = i.id AND l.rn = 1 \
          ORDER BY COALESCE(w.last_played_at, 0) DESC, i.id DESC LIMIT ?",
-        vis_clause("i.library_id")
+        vis_clause("m.library_id")
     ))
     .bind(u.id())
     .bind(&vis)
@@ -629,7 +683,8 @@ pub async fn home(State(st): State<AppState>, u: AuthUser) -> ApiResult<Json<Hom
     .bind(ROW_LIMIT)
     .fetch_all(&st.db)
     .await?;
-    let continue_watching = summaries(&st, &rows, &sg).await?;
+    let mut continue_watching = summaries(&st, &rows, &sg).await?;
+    attach_series(&st, &mut continue_watching, &sg).await?;
     let libs: Vec<(i64, String)> = sqlx::query_as(&format!(
         "SELECT id, name FROM libraries WHERE {} ORDER BY id",
         vis_clause("id")

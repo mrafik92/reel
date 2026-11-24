@@ -11,6 +11,7 @@ import { DiscoverTile, useDiscoverSheet } from "../components/Discover";
 import { clearRecent, forgetRecent, recentSearches, rememberSearch } from "../lib/recent";
 import { VodCard } from "../components/vod/VodCard";
 import type { SearchAllVod, VodCard as VodHit } from "../api/vod";
+import { cardPreview } from "../lib/preview";
 
 const MOCK_SUGGESTIONS = ["Lantern", "Harbour", "Night", "Comet", "Glass", "Kingfisher"];
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -290,7 +291,7 @@ export default function Search(): JSX.Element {
         <div class="search__results" classList={{ "is-stale": stale() }} ref={results} onClick={onResultsClick}>
           <Show when={lib().length}>
             <Row title="In your library" subtitle={String(lib().length)} class="row--results">
-              <For each={lib()}>{(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} />}</For>
+              <For each={lib()}>{(it) => <PosterCard item={it} href={itemHref(it)} activity={itemActivity(it.id)} preview={cardPreview(itemHref(it))} />}</For>
             </Row>
           </Show>
           <Show when={eps().length}>
