@@ -248,6 +248,36 @@
 .castview__controls .ptx {
   margin: 0 2rem 0.6rem -0.3rem;
 }
+/* The remote view is a page, not a picture: its transport keeps filled buttons (#293 changed the kit). */
+.castview__controls .ptx__play {
+  width: 4.6rem;
+  height: 4.6rem;
+  background: var(--ink);
+  color: var(--on-light);
+  font-size: 1.9rem;
+  box-shadow: 0 0.6rem 1.8rem rgba(0, 0, 0, 0.45);
+}
+.castview__controls .ptx__play:hover {
+  transform: scale(1.06);
+}
+.castview__controls .ptx__skip {
+  width: 3.4rem;
+  height: 3.4rem;
+  background: rgba(var(--ink-rgb), 0.06);
+  font-size: 1.85rem;
+}
+html[data-input="key"] .castview__controls .ptx__skip:focus {
+  background: var(--ink);
+}
+.castview__opts .ctl.is-active {
+  color: var(--accent-hi);
+}
+.castview__opts .ctl.is-active::after {
+  display: none;
+}
+html[data-input="key"] .castview__opts .ctl.is-active:focus {
+  color: var(--on-light);
+}
 .castview__opts {
   display: flex;
   align-items: center;
