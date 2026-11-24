@@ -833,7 +833,7 @@ html.tv .row__scroller {
 .row__nav:hover .icon {
   transform: scale(1.2);
 }
-@media (hover: hover) {
+@media (hover: hover) and (min-width: 761px) {
   html[data-input="pointer"]:not(.tv) .row__nav {
     display: flex;
     align-items: center;
