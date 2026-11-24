@@ -14,17 +14,16 @@ function Layout(props: { eyebrow: string; title: string; lede: string; children:
   onMount(() => requestAnimationFrame(() => focusFirst(el)));
   return (
     <div class="auth" ref={el}>
-      <div class="auth__glow" aria-hidden="true" />
-      <section class="auth__intro">
-        <span class="logo logo--auth">
-          <span class="logo__mark" aria-hidden="true"><i /></span>
-          <span class="logo__word">reel</span>
-        </span>
-        <p class="eyebrow eyebrow--accent">{props.eyebrow}</p>
+      <span class="logo logo--auth">
+        <span class="logo__mark" aria-hidden="true"><i /></span>
+        <span class="logo__word">reel</span>
+      </span>
+      <section class="auth__panel glass">
+        <p class="eyebrow">{props.eyebrow}</p>
         <h1 class="auth__title">{props.title}</h1>
         <p class="auth__lede">{props.lede}</p>
+        {props.children}
       </section>
-      <section class="auth__panel">{props.children}</section>
     </div>
   );
 }
@@ -148,7 +147,7 @@ export function DeviceLink(): JSX.Element {
           <p class="state__body" role="status">
             <Icon name="check" /> {result() === "approved" ? "Approved. The TV will sign in within a few seconds." : "Refused. That code no longer works."}
           </p>
-          <button type="button" class="btn btn--primary btn--lg btn--block" data-autofocus onClick={() => navigate("/", { replace: true })}><span>Done</span></button>
+          <button type="button" class="btn btn--accent btn--lg btn--block" data-autofocus onClick={() => navigate("/", { replace: true })}><span>Done</span></button>
         </Show>
         <Show when={!result() && info()}>
           {(i) => (
@@ -160,7 +159,7 @@ export function DeviceLink(): JSX.Element {
                 <dt>Code</dt><dd>{code().toUpperCase()}</dd>
               </dl>
               <Show when={error()}><p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p></Show>
-              <button type="button" class="btn btn--primary btn--lg btn--block" data-autofocus aria-disabled={busy() ? "true" : undefined} onClick={() => void act(async () => { await api.linkApprove(code().trim()); setResult("approved"); })}>
+              <button type="button" class="btn btn--accent btn--lg btn--block" data-autofocus aria-disabled={busy() ? "true" : undefined} onClick={() => void act(async () => { await api.linkApprove(code().trim()); setResult("approved"); })}>
                 <span>Approve this device</span>
               </button>
               <button type="button" class="btn btn--lg btn--block" aria-disabled={busy() ? "true" : undefined} onClick={() => void act(async () => { await api.linkDeny(code().trim()); setResult("denied"); })}>
@@ -173,7 +172,7 @@ export function DeviceLink(): JSX.Element {
           <form onSubmit={lookup} novalidate>
             <Field label="Code on the TV" placeholder="BCDF-GHJK" value={code()} onInput={(e) => setCode(e.currentTarget.value)} autocapitalize="characters" autocomplete="off" spellcheck={false} maxLength={12} data-autofocus />
             <Show when={error()}><p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p></Show>
-            <button type="submit" class="btn btn--primary btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}><span>{busy() ? "Checking…" : "Continue"}</span></button>
+            <button type="submit" class="btn btn--accent btn--lg btn--block" aria-disabled={busy() ? "true" : undefined}><span>{busy() ? "Checking…" : "Continue"}</span></button>
           </form>
         </Show>
       </div>

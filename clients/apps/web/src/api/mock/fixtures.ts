@@ -253,7 +253,9 @@ export function buildDb(): Db {
             id: epId, kind: "episode", title, season_no: seasonNo, episode_no: e, parent_id: seasonId,
             year: s.year + k, poster_url: null,
             backdrop_url: bare ? missingImage("backdrop", epId) : backdropArt(seed * 31 + seasonNo * 100 + e),
-            played, progress: !played && seasonNo === finishedSeasons + 1 && e === 3 ? 0.38 + (si % 3) * 0.17 : null,
+            played,
+            // The first series has two episodes in progress, to prove Continue watching groups them.
+            progress: !played && seasonNo === finishedSeasons + 1 && (e === 3 || (si === 0 && e === 4)) ? (e === 4 ? 0.22 : 0.38 + (si % 3) * 0.17) : null,
             added_at: Math.floor((NOW - (si * 4 + 1) * DAY + e * 3600_000) / 1000),
           },
           library_id: 2,
@@ -376,9 +378,30 @@ function multiEpisode(db: Db, rec: Rec): MediaFile[] | undefined {
 
 export function home(db: Db): Home {
   const all = Array.from(db.byId.values());
-  const cw = all
-    .filter((r) => (r.summary.kind === "movie" || r.summary.kind === "episode") && r.summary.progress)
-    .map((r) => r.summary);
+  // One entry per title, like the server: every film, and the latest in-progress episode of a series.
+  const cw: ItemSummary[] = [];
+  const entryOfShow = new Map<number, number>();
+  for (const r of all) {
+    const s = r.summary;
+    if ((s.kind !== "movie" && s.kind !== "episode") || !s.progress) continue;
+    const entry: ItemSummary = { ...s, runtime_s: r.runtime_s ?? null };
+    if (s.kind === "movie") {
+      cw.push(entry);
+      continue;
+    }
+    const season = db.byId.get(s.parent_id!)!;
+    const show = db.byId.get(season.summary.parent_id!)!.summary;
+    entry.series = { id: show.id, title: show.title, poster_url: show.poster_url, backdrop_url: show.backdrop_url };
+    const at = entryOfShow.get(show.id);
+    if (at === undefined) {
+      entryOfShow.set(show.id, cw.length);
+      cw.push(entry);
+    } else {
+      const cur = cw[at]!;
+      const later = (s.season_no ?? 0) * 1000 + (s.episode_no ?? 0) > (cur.season_no ?? 0) * 1000 + (cur.episode_no ?? 0);
+      if (later) cw[at] = entry;
+    }
+  }
   const recent = (lib: number) =>
     db.byLibrary
       .get(lib)!

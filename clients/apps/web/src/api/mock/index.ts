@@ -375,7 +375,10 @@ export function createMockApi(): MockApi {
     async children(iid) {
       await latency();
       const rec = need(db.byId.get(id(iid)), "Item");
-      return rec.childIds.map((c) => ({ ...db.byId.get(c)!.summary }));
+      return rec.childIds.map((c) => {
+        const child = db.byId.get(c)!;
+        return { ...child.summary, runtime_s: child.runtime_s ?? null };
+      });
     },
     async home() {
       await latency();

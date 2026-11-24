@@ -36,6 +36,7 @@ export default function Requests(): JSX.Element {
   const [list, { refetch, mutate }] = createResource(() => api.requests({ limit: 300 }));
   const [users] = createResource(() => (isAdmin() ? api.users().catch(() => []) : Promise.resolve([])));
   const [tab, setTab] = createSignal<Tab>("all");
+  const [retrying, setRetrying] = createSignal<"all" | "one" | null>(null);
   const actions = useRequestActions();
   const sheet = useDiscoverSheet();
   const nameOf = (id: number) => users()?.find((u) => u.id === id)?.username;
@@ -74,6 +75,34 @@ export default function Requests(): JSX.Element {
     return all.filter((r) => /failed|not_found|stalled|declined/.test(stateOf(r))).length;
   };
 
+  const canRetry = (state: RequestState) => state === "failed" || state === "not_found";
+  const retryable = createMemo(() => tab() === "problems" ? filtered().filter((r) => canRetry(stateOf(r))) : []);
+  let problemsTab: HTMLButtonElement | undefined;
+  let retryAllButton: HTMLButtonElement | undefined;
+
+  const retryOne = async (request: RequestDto) => {
+    if (retrying() !== null || !canRetry(stateOf(request))) return;
+    setRetrying("one");
+    try {
+      await actions.retry(request.id, request.title ?? undefined);
+    } finally {
+      setRetrying(null);
+    }
+  };
+
+  const retryAll = async () => {
+    if (retrying() !== null || !isAdmin() || list.error) return;
+    const ids = retryable().map((r) => r.id);
+    if (!ids.length) return;
+    setRetrying("all");
+    try {
+      await actions.retryAll(ids);
+    } finally {
+      if (retryAllButton === document.activeElement && !list.error && !retryable().length) problemsTab?.focus();
+      setRetrying(null);
+    }
+  };
+
   const replace = (r: RequestDto) => mutate((l) => (l ?? []).map((x) => (x.id === r.id ? r : x)));
   const approve = async (r: RequestDto) => {
     try {
@@ -107,12 +136,31 @@ export default function Requests(): JSX.Element {
       <nav class="tabs" aria-label="Filter" data-nav-group>
         <For each={TABS}>
           {(t) => (
-            <button type="button" class="tab" aria-current={tab() === t.id ? "true" : undefined} data-nav-default={tab() === t.id ? "" : undefined} onClick={() => setTab(t.id)}>
+            <button
+              type="button"
+              class="tab"
+              aria-current={tab() === t.id ? "true" : undefined}
+              data-nav-default={tab() === t.id ? "" : undefined}
+              ref={(button) => { if (t.id === "problems") problemsTab = button; }}
+              onClick={() => setTab(t.id)}
+            >
               {t.label}
               <Show when={list() && count(t.id)}><span class="tab__count">{count(t.id)}</span></Show>
             </button>
           )}
         </For>
+        <Show when={!list.error && isAdmin() && tab() === "problems" && (retryable().length > 0 || retrying() === "all")}>
+          <button
+            ref={retryAllButton}
+            type="button"
+            class="btn btn--accent btn--sm"
+            classList={{ "is-disabled": retrying() !== null }}
+            aria-disabled={retrying() !== null ? "true" : undefined}
+            onClick={retryAll}
+          >
+            <Icon name="retry" /> <span>{retrying() === "all" ? "Retrying…" : "Retry all"}</span>
+          </button>
+        </Show>
       </nav>
 
       <Show when={!list.error} fallback={<ErrorState error={list.error} onRetry={refetch} />}>
@@ -175,14 +223,14 @@ export default function Requests(): JSX.Element {
                       </div>
                       <div class="req__actions">
                         <Show when={isAdmin() && st() === "requested"}>
-                          <button type="button" class="btn btn--primary btn--sm" onClick={() => void approve(r)}><Icon name="check" /> <span>Approve</span></button>
+                          <button type="button" class="btn btn--accent btn--sm" onClick={() => void approve(r)}><Icon name="check" /> <span>Approve</span></button>
                           <button type="button" class="btn btn--sm" onClick={() => void decline(r)}><Icon name="x" /> <span>Decline</span></button>
                         </Show>
-                        <Show when={st() === "failed" || st() === "not_found"}>
-                          <button type="button" class="btn btn--primary btn--sm" onClick={() => void actions.retry(r.id, r.title ?? undefined)}><Icon name="retry" /> <span>Retry</span></button>
+                        <Show when={canRetry(st())}>
+                          <button type="button" class="btn btn--accent btn--sm" disabled={retrying() !== null} onClick={() => void retryOne(r)}><Icon name="retry" /> <span>Retry</span></button>
                         </Show>
                         <Show when={st() === "available"}>
-                          <button type="button" class="btn btn--sm" onClick={() => void actions.play({ title: r.title ?? "", media_type: r.media_type, tmdb_id: r.tmdb_id })}>
+                          <button type="button" class="btn btn--primary btn--sm" onClick={() => void actions.play({ title: r.title ?? "", media_type: r.media_type, tmdb_id: r.tmdb_id })}>
                             <Icon name="play" /> <span>Play</span>
                           </button>
                         </Show>

@@ -58,13 +58,25 @@ export function useRequestActions() {
 
   async function retry(requestId: number | string, title?: string): Promise<void> {
     try {
-      const r = await api.retryRequest(Number(requestId));
-      noteRequest(r);
-      invalidate("requests");
+      await retrySearch(requestId);
       toast(`Searching again${title ? ` for “${title}”` : ""}`);
     } catch (e) {
       toast(e instanceof Error ? e.message : "Couldn't retry", "error");
     }
+  }
+
+  async function retryAll(requestIds: number[]): Promise<void> {
+    let failed = 0;
+    for (const id of requestIds) {
+      try {
+        await retrySearch(id);
+      } catch {
+        failed += 1;
+      }
+    }
+    const started = requestIds.length - failed;
+    const summary = `Started ${started} ${started === 1 ? "retry" : "retries"}`;
+    toast(failed ? `${summary}. Couldn't retry ${failed}.` : summary, failed ? "error" : "success");
   }
 
   async function play(c: { title: string; year?: number | null; media_type: MediaType; tmdb_id: number; library_item_id?: number | null }): Promise<void> {
@@ -88,7 +100,13 @@ export function useRequestActions() {
     }
   }
 
-  return { add, retry, play, progressFor: (tmdbId: number) => downloads.get(tmdbId) };
+  return { add, retry, retryAll, play, progressFor: (tmdbId: number) => downloads.get(tmdbId) };
+}
+
+async function retrySearch(requestId: number | string): Promise<void> {
+  const request = await api.retryRequest(Number(requestId));
+  noteRequest(request);
+  invalidate("requests");
 }
 
 export function requestError(e: unknown, title: string): string {

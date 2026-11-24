@@ -9,7 +9,7 @@ export * from "./format";
 export { Icon, type IconName } from "./components/Icon";
 export { Img, type ImgProps } from "./components/Img";
 export { ProgressRing, RING_LABEL, type RingState, type ProgressRingProps } from "./components/ProgressRing";
-export { PosterCard, type PosterCardProps } from "./components/PosterCard";
+export { PosterCard, type CardPreview, type PosterCardProps } from "./components/PosterCard";
 export { Row, type RowProps } from "./components/Row";
 export { VirtualGrid, type VirtualGridProps } from "./components/VirtualGrid";
 export { Sheet, SheetClose, type SheetProps, type SheetOption } from "./components/Sheet";

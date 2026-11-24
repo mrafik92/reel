@@ -20,6 +20,8 @@ const PATHS = {
   skip: "M20 12a8 8 0 1 1-2.4-5.7M20 4v4h-4",
   restart: "M5 5v14M19 5 9 12l10 7z",
   cc: "M3 5h18v14H3zM10 10.5a2.5 2.5 0 1 0 0 3M17 10.5a2.5 2.5 0 1 0 0 3",
+  // Audio & subtitles in the player (#293): a caption bubble.
+  tracks: "M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-7.5L8 20.5V17H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM7 9.5h4M14 9.5h3M7 13h2M12 13h5",
   audio: "M4 9v6h4l5 4V5L8 9zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12",
   check: "M4.5 12.5l5 5L19.5 7",
   alert: "M12 8v5M12 16.5v.5M10.3 3.9 2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z",
@@ -55,6 +57,8 @@ const PATHS = {
   cast: "M3 7V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-6M3 17.5A3.5 3.5 0 0 1 6.5 21M3 13.5a7.5 7.5 0 0 1 7.5 7.5M3 9.5A11.5 11.5 0 0 1 14.5 21",
   airplay: "M6 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-2M12 14.5l5 6.5H7z",
   volume: "M4 9v6h4l5 4V5L8 9zM16.5 9.5a3.5 3.5 0 0 1 0 5",
+  // The volume button's loud state (#293): `volume` is the quiet one, `mute` is off.
+  volumeHigh: "M4 9v6h4l5 4V5L8 9zM16.5 9.5a3.5 3.5 0 0 1 0 5M19.2 6.8a7.4 7.4 0 0 1 0 10.4",
   mute: "M4 9v6h4l5 4V5L8 9zM16.5 9.5l5 5M21.5 9.5l-5 5",
   stop: "M6.5 6.5h11v11h-11z",
   minus: "M5 12h14",

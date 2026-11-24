@@ -1,48 +1,49 @@
 /* ==========================================================================
    @reel/ui — tokens + shared components
-   Target: Chromium 68 (webOS 5 / Tizen 5.5). No flex `gap`, no aspect-ratio,
-   no inset, no :focus-visible, no clamp(), no backdrop-filter.
+   Target: Chromium 68 (webOS 5) and 63 (Tizen). No flex `gap`, no aspect-ratio,
+   no inset, no :focus-visible, no clamp(). backdrop-filter only in the Glass @supports block.
    ========================================================================== */
 
 :root {
-  /* Surfaces: warm near-black, like a cinema before the lights go down (#177).
-     The rgb triplets feed rgba() washes; keep them equal to their hex twins. */
-  --bg: #0b0909;
-  --bg-1: #131010;
-  --bg-2: #1b1716;
-  --bg-3: #29221f;
-  --bg-rgb: 11, 9, 9;
-  --bg-1-rgb: 19, 16, 16;
-  --bg-2-rgb: 27, 23, 22;
-  --bg-glow: #23191a;
-  --tint-neutral: #a08e86;
+  /* Surfaces: neutral near-black. The rgb triplets feed rgba() washes; keep them equal to their
+     hex twins. */
+  --bg: #141414;
+  --bg-1: #181818;
+  --bg-2: #232323;
+  --bg-3: #333333;
+  --bg-rgb: 20, 20, 20;
+  --bg-1-rgb: 24, 24, 24;
+  --bg-2-rgb: 35, 35, 35;
+  --bg-glow: #1f1f1f;
+  --tint-neutral: #808080;
 
-  /* Cream text — warm, never pure white (less glare on OLED at night) */
-  --ink: #f2e6d3;
-  --ink-rgb: 242, 230, 211;
-  --ink-2: rgba(var(--ink-rgb), 0.76);
-  --ink-3: rgba(var(--ink-rgb), 0.54);
-  --ink-4: rgba(var(--ink-rgb), 0.16);
-  --ink-5: rgba(var(--ink-rgb), 0.08);
-  --line: rgba(var(--ink-rgb), 0.1);
+  --ink: #ffffff;
+  --ink-rgb: 255, 255, 255;
+  --ink-2: rgba(var(--ink-rgb), 0.7);
+  --ink-3: rgba(var(--ink-rgb), 0.5);
+  --ink-4: rgba(var(--ink-rgb), 0.2);
+  --ink-5: rgba(var(--ink-rgb), 0.1);
+  --line: rgba(var(--ink-rgb), 0.15);
+  /* Text and icons on a white fill (Play, focused controls). */
+  --on-light: #000000;
 
-  /* One accent: cinema crimson.
-     --accent      fills (buttons, chips, progress, logo tile); cream --accent-ink on it is AA.
-     --accent-hi   the same red lifted for text, icons and halos on dark surfaces (AA as text).
-     --accent-deep oxblood for pressed states and gradients.
-     Status colours stay off the red: danger is signal orange, live is rose, ok is sage. */
-  --accent: #c2352d;
-  --accent-rgb: 194, 53, 45;
-  --accent-hover: #cc3b32;
-  --accent-deep: #77352d;
-  --accent-hi: #f26352;
-  --accent-hi-rgb: 242, 99, 82;
-  --accent-ink: #fff6ea;
+  /* One accent.
+     --accent      fills (progress, badges, brand CTA); white --accent-ink on it is AA.
+     --accent-hi   the same red lifted for text and icons on dark (6:1). Never use --accent as text.
+     --accent-deep pressed states.
+     Status colours stay off the red: danger is orange, live is rose, ok is green. */
+  --accent: #e50914;
+  --accent-rgb: 229, 9, 20;
+  --accent-hover: #f6121d;
+  --accent-deep: #b20710;
+  --accent-hi: #ff5a5f;
+  --accent-hi-rgb: 255, 90, 95;
+  --accent-ink: #ffffff;
   --accent-dim: rgba(var(--accent-rgb), 0.24);
-  --accent-wash: #2a1513;
-  --accent-wash-2: #351a17;
-  --ok: #7fd4a0;
-  --ok-rgb: 127, 212, 160;
+  --accent-wash: #2a0f11;
+  --accent-wash-2: #3a1316;
+  --ok: #46d369;
+  --ok-rgb: 70, 211, 105;
   --live: #ff4f86;
   --live-rgb: 255, 79, 134;
   --warn: #ffd23f;
@@ -50,26 +51,62 @@
   --danger: #ff9a3c;
   --danger-rgb: 255, 154, 60;
 
-  --focus: var(--ink);
-  --focus-ring: 0 0 0 0.16rem var(--bg), 0 0 0 0.36rem var(--focus);
+  --focus: #ffffff;
+  --focus-ring: 0 0 0 0.14rem var(--bg), 0 0 0 0.32rem var(--focus);
 
-  --font-display: "Bricolage Grotesque", "Atkinson Hyperlegible", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-body: "Atkinson Hyperlegible", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Glass: --glass-strong is the no-blur surface (TV, old browsers); --glass needs the blur. */
+  --glass: rgba(var(--bg-1-rgb), 0.55);
+  --glass-strong: rgba(var(--bg-1-rgb), 0.86);
+  /* Frosted, for surfaces over raw art or video: at 0.55 secondary text on them drops below AA
+     over a bright picture. --glass itself is for surfaces over art that is already dimmed. */
+  --glass-raised: rgba(var(--bg-1-rgb), 0.78);
+  --glass-line: rgba(var(--ink-rgb), 0.12);
+  --glass-blur: blur(24px) saturate(1.5);
+
+  /* Secondary button greys. */
+  --btn-2: rgba(109, 109, 110, 0.7);
+  --btn-2-hover: rgba(109, 109, 110, 0.4);
+
+  /* Quiet translucent fills: they pick up what is behind them. */
+  --fill-input: rgba(var(--ink-rgb), 0.1);
+  --fill-chip: rgba(var(--ink-rgb), 0.07);
+  --fill-row: rgba(var(--ink-rgb), 0.12);
+  --fill-dropdown: rgba(0, 0, 0, 0.3);
+
+  --font-display: "Inter", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+  --font-body: "Inter", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
 
   --radius-s: 0.375rem;
-  --radius: 0.6rem;
-  --radius-l: 1rem;
+  --radius: 0.75rem;
+  --radius-l: 1.125rem;
 
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --t-fast: 140ms;
   --t: 240ms;
 
-  --poster-w: 10.5rem;
-  --land-w: 19rem;
+  --poster-w: 11rem;
+  --land-w: 18rem;
   --cast-w: 6.5rem;
-  --card-gap: 1.25rem;
-  --focus-scale: 1.07;
+  --card-gap: 0.5rem;
+  --focus-scale: 1.06;
+}
+
+/* ---------- Glass ---------------------------------------------------------
+   Floating and overlaid surfaces. The default is what TV always gets: translucent, no blur.
+   The frosted version is an enhancement for browsers that have it, and never runs on TV. */
+.glass,
+.sheet__panel {
+  background: var(--glass-strong);
+  border: 1px solid var(--glass-line);
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  html:not(.tv) .glass,
+  html:not(.tv) .sheet__panel {
+    background: var(--glass-raised);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
 }
 
 /* ---------- Focus language ------------------------------------------------
@@ -99,11 +136,11 @@ html[data-input="key"] [data-focusable]:focus {
 .btn {
   display: inline-flex;
   align-items: center;
-  height: 3rem;
-  padding: 0 1.35rem 0 1.15rem;
+  height: 2.75rem;
+  padding: 0 1.25rem 0 1.05rem;
   border: 0;
-  border-radius: 999px;
-  background: rgba(var(--ink-rgb), 0.12);
+  border-radius: var(--radius);
+  background: var(--btn-2);
   color: var(--ink);
   font: 700 1rem/1 var(--font-body);
   text-decoration: none;
@@ -119,33 +156,53 @@ html[data-input="key"] [data-focusable]:focus {
   font-size: 1.3em;
 }
 .btn:hover {
-  background: rgba(var(--ink-rgb), 0.2);
+  background: var(--btn-2-hover);
 }
-/* Focused secondary buttons invert — the clearest cue at three metres. */
+/* Focused secondary buttons invert: the clearest cue at three metres. */
 .btn:focus {
   background: var(--ink);
-  color: var(--bg);
+  color: var(--on-light);
   transform: scale(1.04);
 }
 html[data-input="pointer"] .btn:focus:not(:hover) {
-  background: rgba(var(--ink-rgb), 0.12);
+  background: var(--btn-2);
   color: var(--ink);
   transform: none;
 }
+html[data-input="pointer"] .btn:focus:hover {
+  background: var(--btn-2-hover);
+  color: var(--ink);
+  transform: none;
+}
+/* Play: always white. */
 .btn--primary,
+.btn--primary:focus,
 html[data-input="pointer"] .btn--primary:focus:not(:hover) {
+  background: var(--ink);
+  color: var(--on-light);
+}
+.btn--primary:hover,
+html[data-input="pointer"] .btn--primary:focus:hover {
+  background: rgba(var(--ink-rgb), 0.75);
+  color: var(--on-light);
+}
+/* A commitment rather than playback: sign in, request, retry. */
+.btn--accent,
+.btn--accent:focus,
+html[data-input="pointer"] .btn--accent:focus:not(:hover) {
   background: var(--accent);
   color: var(--accent-ink);
 }
-.btn--primary:hover {
+.btn--accent:hover,
+html[data-input="pointer"] .btn--accent:focus:hover {
   background: var(--accent-hover);
-}
-.btn--primary:focus {
-  background: var(--accent);
   color: var(--accent-ink);
+}
+.btn--accent:active {
+  background: var(--accent-deep);
 }
 .btn--lg {
-  height: 3.4rem;
+  height: 3.25rem;
   padding: 0 1.7rem 0 1.4rem;
   font-size: 1.08rem;
 }
@@ -167,6 +224,9 @@ html[data-input="pointer"] .btn--primary:focus:not(:hover) {
 .btn--ghost {
   background: transparent;
 }
+html[data-input="pointer"] .btn--ghost:focus:not(:hover) {
+  background: transparent;
+}
 .btn[disabled],
 .btn.is-disabled {
   opacity: 0.45;
@@ -186,7 +246,8 @@ html[data-input="pointer"] .btn--primary:focus:not(:hover) {
   color: var(--ink);
   font-size: 1.5rem;
   cursor: pointer;
-  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t) var(--ease-out);
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease), transform var(--t) var(--ease-out);
 }
 .iconbtn small {
   position: absolute;
@@ -202,7 +263,7 @@ html[data-input="pointer"] .btn--primary:focus:not(:hover) {
 }
 .iconbtn:focus {
   background: var(--ink);
-  color: var(--bg);
+  color: var(--on-light);
   transform: scale(1.06);
 }
 html[data-input="pointer"] .iconbtn:focus:not(:hover) {
@@ -215,6 +276,35 @@ html[data-input="pointer"] .iconbtn:focus:not(:hover) {
   height: 4.4rem;
   font-size: 2rem;
   background: rgba(var(--ink-rgb), 0.14);
+}
+/* The round Play / check / chevron controls of the preview card and the title page. */
+.iconbtn--ring,
+html[data-input="pointer"] .iconbtn--ring:focus:not(:hover) {
+  width: 2.6rem;
+  height: 2.6rem;
+  border: 2px solid rgba(var(--ink-rgb), 0.5);
+  background: rgba(42, 42, 42, 0.6);
+  color: var(--ink);
+  font-size: 1.15rem;
+}
+.iconbtn--ring:hover {
+  border-color: var(--ink);
+  background: rgba(42, 42, 42, 0.6);
+}
+.iconbtn--ring:focus {
+  border-color: var(--ink);
+}
+.iconbtn--solid,
+.iconbtn--solid:focus,
+html[data-input="pointer"] .iconbtn--solid:focus:not(:hover) {
+  width: 2.6rem;
+  height: 2.6rem;
+  background: var(--ink);
+  color: var(--on-light);
+  font-size: 1.25rem;
+}
+.iconbtn--solid:hover {
+  background: rgba(var(--ink-rgb), 0.75);
 }
 
 .keycap {
@@ -247,8 +337,8 @@ html[data-input="pointer"] .iconbtn:focus:not(:hover) {
 /* ---------- Backdrop (cross-fading) ------------------------------------- */
 .backdrop {
   overflow: hidden;
-  /* What shows when a title has no backdrop (image 404s): a quiet glow, not a void. */
-  background: radial-gradient(ellipse 70% 65% at 78% 18%, var(--bg-glow) 0%, var(--bg) 72%);
+  /* What shows when a title has no backdrop (image 404s): a flat tone, not a void. */
+  background: var(--bg-glow);
 }
 .backdrop__img {
   position: absolute;
@@ -284,9 +374,8 @@ html[data-input="pointer"] .iconbtn:focus:not(:hover) {
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--bg-2);
-  box-shadow: 0 0.4rem 1.2rem rgba(0, 0, 0, 0.35);
   transform: translateZ(0);
-  transition: transform var(--t) var(--ease-out), box-shadow var(--t) var(--ease-out);
+  transition: transform var(--t) var(--ease-out);
 }
 .card--landscape .card__frame {
   padding-top: 56.25%;
@@ -302,13 +391,13 @@ html[data-input="pointer"] .iconbtn:focus:not(:hover) {
 .card__fallback {
   display: flex;
   align-items: flex-end;
-  padding: 0.9rem;
-  background: linear-gradient(160deg, var(--bg-3), var(--bg-1));
+  padding: 0.8rem;
+  background: var(--bg-2);
 }
 .card__fallback span {
-  font: 750 1.25rem/1.05 var(--font-display);
-  letter-spacing: -0.02em;
-  color: var(--ink-2);
+  font: 800 1.15rem/1.1 var(--font-display);
+  letter-spacing: -0.01em;
+  color: var(--ink);
   overflow: hidden;
 }
 .card:focus {
@@ -316,19 +405,19 @@ html[data-input="pointer"] .iconbtn:focus:not(:hover) {
 }
 html[data-input="key"] .card:focus .card__frame {
   transform: scale(var(--focus-scale));
-  box-shadow: var(--focus-ring), 0 1.4rem 2.6rem rgba(0, 0, 0, 0.7);
+  box-shadow: var(--focus-ring);
 }
+/* Pointer: no lift. The preview card takes over after its delay. */
 @media (hover: hover) {
   html[data-input="pointer"] .card:hover .card__frame {
-    transform: translateY(-0.25rem);
-    box-shadow: 0 0 0 0.12rem var(--ink-4), 0 1.2rem 2rem rgba(0, 0, 0, 0.6);
+    box-shadow: 0 0 0 1px var(--ink-4);
   }
 }
 
 .card__caption {
   display: block;
-  padding: 0.7rem 0.15rem 0;
-  min-height: 2.4rem;
+  padding: 0.5rem 0.1rem 0;
+  min-height: 2.1rem;
 }
 .card__title,
 .card__sub {
@@ -338,49 +427,95 @@ html[data-input="key"] .card:focus .card__frame {
   text-overflow: ellipsis;
 }
 .card__title {
-  font: 700 0.95rem/1.25 var(--font-body);
-  color: var(--ink-2);
-  transition: color var(--t-fast) var(--ease);
-}
-.card__sub {
-  margin-top: 0.15rem;
-  font: 400 0.82rem/1.25 var(--font-body);
-  color: var(--ink-3);
-}
-html[data-input="key"] .card:focus .card__title,
-.card:hover .card__title {
+  font: 700 0.9rem/1.25 var(--font-body);
   color: var(--ink);
 }
+.card__sub {
+  margin-top: 0.1rem;
+  font: 400 0.8rem/1.25 var(--font-body);
+  color: var(--ink-2);
+}
+/* Landscape tiles: one line, title then subtitle. */
+.card--landscape .card__caption {
+  display: flex;
+  align-items: baseline;
+  min-height: 1.75rem;
+}
+.card--landscape .card__title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.card--landscape .card__sub {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0 0 0 0.5rem;
+}
+/* Desktop and TV: the art is the tile, the preview card carries the title. Phones keep the caption.
+   Cards that have no preview card (Discover, IPTV) show the title as a strip over the art on hover
+   and focus, so a title is never out of reach. */
+@media (min-width: 761px) {
+  .card--poster > .card__caption {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    min-height: 0;
+    padding: 0.7rem;
+    border-radius: var(--radius);
+    background: linear-gradient(0deg, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0) 45%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--t-fast) var(--ease), transform var(--t) var(--ease-out);
+  }
+  .card--poster > .card__caption .card__sub {
+    display: none;
+  }
+  html[data-input="key"] .card--poster:not(.card--preview):focus > .card__caption {
+    opacity: 1;
+    transform: scale(var(--focus-scale));
+  }
+}
+@media (min-width: 761px) and (hover: hover) {
+  html[data-input="pointer"] .card--poster:not(.card--preview):hover > .card__caption {
+    opacity: 1;
+  }
+}
+html.tv .card--poster:not(.card--preview):hover > .card__caption {
+  opacity: 1;
+}
 
+/* Flush with the bottom edge of the art. */
 .card__progress {
   position: absolute;
-  left: 0.6rem;
-  right: 0.6rem;
-  bottom: 0.6rem;
-  height: 0.3rem;
-  border-radius: 1rem;
-  background: rgba(var(--bg-rgb), 0.6);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(var(--ink-rgb), 0.3);
   overflow: hidden;
 }
 .card__progress i {
   display: block;
   height: 100%;
-  border-radius: 1rem;
   background: var(--accent);
 }
 .card__played {
   position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
+  top: 0.45rem;
+  right: 0.45rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 1.6rem;
-  height: 1.6rem;
+  width: 1.45rem;
+  height: 1.45rem;
   border-radius: 50%;
-  background: rgba(var(--bg-rgb), 0.78);
-  color: var(--accent-hi);
-  font-size: 1rem;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--ink);
+  font-size: 0.9rem;
 }
 
 /* Download overlay (SPEC §7.1) */
@@ -431,9 +566,9 @@ html[data-input="key"] .card:focus .card__title,
   align-items: center;
   height: 2rem;
   padding: 0 0.85rem 0 0.65rem;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-radius: var(--radius-s);
+  background: var(--ink);
+  color: var(--on-light);
   font: 700 0.85rem/1 var(--font-body);
   opacity: 0;
   animation: chip-in 380ms 1.75s var(--ease-out) forwards;
@@ -517,7 +652,7 @@ html[data-input="key"] .card:focus .card__title,
 .ring__pct {
   display: flex;
   align-items: baseline;
-  font: 750 1.25em/1 var(--font-display);
+  font: 700 1.25em/1 var(--font-display);
   letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
 }
@@ -560,7 +695,7 @@ html[data-input="key"] .card:focus .card__title,
 .ring__retry:hover,
 .ring__retry:focus {
   background: var(--danger);
-  color: var(--bg);
+  color: var(--on-light);
 }
 html[data-input="key"] .ring__retry:focus {
   box-shadow: var(--focus-ring);
@@ -579,46 +714,72 @@ html[data-input="key"] .ring__retry:focus {
 /* ---------- Rows --------------------------------------------------------- */
 .row {
   position: relative;
-  margin-bottom: 1.6rem;
+  margin-bottom: 0.7rem;
 }
 .row__head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   padding: 0 var(--gutter);
-  margin-bottom: 0.25rem;
 }
 .row__title {
   margin: 0;
-  font: 700 1.3rem/1.2 var(--font-display);
+  font: 700 1.35rem/1.2 var(--font-display);
   letter-spacing: -0.01em;
-  color: var(--ink);
+  color: rgba(var(--ink-rgb), 0.9);
 }
-.row__index {
-  display: inline-block;
-  margin-right: 0.8rem;
-  font: 500 0.82rem/1 var(--font-display);
-  letter-spacing: 0.08em;
-  color: var(--accent-hi);
-  vertical-align: 0.18em;
+html.tv .row__title {
+  font-size: 1.5rem;
 }
 .row__action {
-  padding: 0.3rem 0.7rem;
-  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-s);
   font: 700 0.85rem/1 var(--font-body);
-  color: var(--ink-3);
+  color: var(--ink-2);
   text-decoration: none;
+  white-space: nowrap;
+  transition: opacity 200ms var(--ease), transform 200ms var(--ease-out), color var(--t-fast) var(--ease);
 }
-.row__action:hover,
-.row__action:focus {
-  color: var(--bg);
+.row__action .icon {
+  margin-left: 0.2rem;
+  font-size: 1rem;
+}
+.row__action:hover {
+  color: var(--ink);
+}
+html[data-input="key"] .row__action:focus {
   background: var(--ink);
+  color: var(--on-light);
+  box-shadow: var(--focus-ring);
+}
+/* With a mouse it appears on row hover; key input and touch always see it. */
+@media (hover: hover) {
+  html[data-input="pointer"]:not(.tv) .row__action {
+    opacity: 0;
+    transform: translateX(-0.4rem);
+  }
+  html[data-input="pointer"]:not(.tv) .row:hover .row__action,
+  html[data-input="pointer"]:not(.tv) .row__action:focus {
+    opacity: 1;
+    transform: none;
+  }
+}
+.row__body {
+  position: relative;
+}
+/* The bigger TV focus scale needs more room above and below the tile. */
+html.tv .row__scroller {
+  padding-top: 1.35rem;
+  padding-bottom: 1.35rem;
 }
 .row__scroller {
   overflow-x: auto;
   overflow-y: hidden;
   /* Room for the focus scale + ring without clipping. */
-  padding: 0.9rem var(--gutter) 0.6rem;
+  padding: 1rem var(--gutter) 1rem;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
@@ -636,6 +797,84 @@ html[data-input="key"] .ring__retry:focus {
   /* trailing padding in overflow containers */
   content: "";
   flex: 0 0 1px;
+}
+/* Paging arrows: pointer only. */
+.row__nav {
+  display: none;
+  position: absolute;
+  top: 1rem;
+  bottom: 1rem;
+  z-index: 3;
+  width: var(--gutter);
+  padding: 0;
+  border: 0;
+  background: rgba(var(--bg-rgb), 0.5);
+  color: var(--ink);
+  font-size: 1.9rem;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 200ms var(--ease), background-color var(--t-fast) var(--ease);
+}
+.row__nav--prev {
+  left: 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.row__nav--next {
+  right: 0;
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+.row__nav:hover {
+  background: rgba(var(--bg-rgb), 0.75);
+}
+.row__nav .icon {
+  transition: transform var(--t-fast) var(--ease-out);
+}
+.row__nav:hover .icon {
+  transform: scale(1.2);
+}
+@media (hover: hover) and (min-width: 761px) {
+  html[data-input="pointer"]:not(.tv) .row__nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  html[data-input="pointer"]:not(.tv) .row:hover .row__nav.is-on {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+/* Ranked: a huge outlined numeral tucked behind the tile's left edge. */
+.card--ranked {
+  --rank-tile: calc(var(--poster-w) * 0.86);
+  --rank-w: calc(var(--rank-tile) * 0.72);
+  width: calc(var(--rank-tile) + var(--rank-w));
+  padding-left: var(--rank-w);
+}
+.card--ranked-wide {
+  --rank-w: calc(var(--rank-tile) * 1.42);
+}
+.card__rank {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  width: calc(var(--rank-w) + var(--rank-tile) * 0.25);
+  height: calc(var(--rank-tile) * 1.5);
+  overflow: visible;
+  color: transparent;
+  font: 900 calc(var(--rank-tile) * 1.65) / 0.74 var(--font-display);
+  letter-spacing: -0.07em;
+  white-space: nowrap;
+  -webkit-text-stroke: 0.2rem rgba(var(--ink-rgb), 0.45);
+  pointer-events: none;
+}
+@media (min-width: 761px) {
+  .card--ranked > .card__caption {
+    left: var(--rank-w);
+  }
 }
 
 /* ---------- Virtual grid ------------------------------------------------- */
@@ -671,15 +910,16 @@ html[data-input="key"] .ring__retry:focus {
 }
 .sheet__panel {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
+  top: 0.75rem;
+  right: 0.75rem;
+  bottom: 0.75rem;
   width: 30rem;
-  max-width: 100%;
+  max-width: calc(100% - 1.5rem);
   display: flex;
   flex-direction: column;
-  background: var(--bg-1);
-  box-shadow: -2rem 0 4rem rgba(0, 0, 0, 0.55);
+  border-radius: var(--radius-l);
+  overflow: hidden;
+  box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.75);
   animation: sheet-in 300ms var(--ease-out) both;
 }
 .sheet__head {
@@ -693,7 +933,7 @@ html[data-input="key"] .ring__retry:focus {
 }
 .sheet__head h2 {
   margin: 0;
-  font: 750 1.9rem/1.1 var(--font-display);
+  font: 700 1.9rem/1.1 var(--font-display);
   letter-spacing: -0.02em;
 }
 .sheet__list {
@@ -705,8 +945,9 @@ html[data-input="key"] .ring__retry:focus {
   display: flex;
   align-items: center;
   width: 100%;
-  padding: 0.9rem 1rem;
-  margin-bottom: 0.35rem;
+  min-height: 3.25rem;
+  padding: 0.45rem 1rem;
+  margin-bottom: 0.2rem;
   border: 0;
   border-radius: var(--radius);
   background: transparent;
@@ -716,11 +957,14 @@ html[data-input="key"] .ring__retry:focus {
   transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
 .sheet__opt:hover {
-  background: var(--ink-5);
+  background: var(--fill-row);
 }
 .sheet__opt:focus {
   background: var(--ink);
-  color: var(--bg);
+  color: var(--on-light);
+}
+.sheet__opt[aria-checked="true"] .sheet__title {
+  font-weight: 700;
 }
 html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
   background: transparent;
@@ -730,10 +974,11 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
   display: flex;
   align-items: center;
   justify-content: center;
+  order: 2;
   width: 1.6rem;
-  margin-right: 0.9rem;
+  margin: 0 0 0 auto;
   font-size: 1.3rem;
-  color: var(--accent-hi);
+  color: var(--ink);
 }
 .sheet__opt:focus .sheet__mark {
   color: inherit;
@@ -742,9 +987,10 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  padding-right: 0.75rem;
 }
 .sheet__title {
-  font: 700 1.05rem/1.25 var(--font-body);
+  font: 500 1rem/1.25 var(--font-body);
 }
 .sheet__detail {
   margin-top: 0.15rem;
@@ -770,18 +1016,19 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
 }
 /* Target rows (Play on…): a tile icon instead of the check column */
 .sheet__opt--icon .sheet__mark {
+  order: 0;
   width: 2.6rem;
   height: 2.6rem;
-  margin-right: 1rem;
-  border-radius: 0.7rem;
+  margin: 0 1rem 0 0;
+  border-radius: var(--radius-s);
   background: var(--ink-5);
   color: var(--ink);
   font-size: 1.25rem;
   flex: none;
 }
 .sheet__opt--icon[aria-checked="true"] .sheet__mark {
-  background: var(--accent);
-  color: var(--bg);
+  background: var(--ink);
+  color: var(--on-light);
 }
 .sheet__opt--icon:focus .sheet__mark {
   background: rgba(0, 0, 0, 0.12);
@@ -790,7 +1037,7 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
   display: inline-block;
   margin-left: 0.55rem;
   padding: 0.12rem 0.45rem;
-  border-radius: 99px;
+  border-radius: var(--radius-s);
   background: var(--ink-5);
   font: 700 0.68rem/1.2 var(--font-body);
   letter-spacing: 0.06em;
@@ -839,8 +1086,130 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
   color: var(--ink);
   text-decoration: underline;
 }
+/* Compact corner panel (`variant="pop"`, #293): the player's menus. The picture stays visible, so
+   there is no dimming scrim, and the panel sits above the control row instead of filling the side. */
+.sheet--pop .sheet__scrim {
+  background: transparent;
+  animation: none;
+}
+.sheet--pop .sheet__panel {
+  top: auto;
+  right: var(--gutter, 0.75rem);
+  bottom: 7.9rem;
+  width: 24rem;
+  max-height: calc(100% - 9.4rem);
+  animation: sheet-pop 220ms var(--ease-out) both;
+}
+html.tv .sheet--pop .sheet__panel {
+  bottom: 8.6rem;
+  max-height: calc(100% - 10.2rem);
+}
+.sheet--pop .sheet__head {
+  padding: 1.05rem 3.6rem 0.45rem 1.25rem;
+}
+.sheet--pop .sheet__head h2 {
+  font: 600 1rem/1.3 var(--font-body);
+  letter-spacing: 0;
+}
+.sheet--pop .sheet__close {
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 2.2rem;
+  height: 2.2rem;
+  font-size: 1.05rem;
+}
+.sheet--pop .sheet__desc {
+  margin-top: 0.3rem;
+  font-size: 0.82rem;
+}
+.sheet--pop .sheet__list {
+  padding: 0.25rem 0.5rem 0.5rem;
+}
+.sheet--pop .sheet__opt {
+  min-height: 2.6rem;
+  padding: 0.35rem 0.75rem 0.35rem 0;
+  margin-bottom: 0.1rem;
+}
+.sheet--pop .sheet__mark {
+  order: 0;
+  flex: none;
+  width: 2.5rem;
+  margin: 0;
+  font-size: 1.1rem;
+}
+.sheet--pop .sheet__title {
+  font-size: 0.92rem;
+}
+.sheet--pop .sheet__detail {
+  font-size: 0.78rem;
+}
+.sheet--pop .sheet__foot {
+  padding: 0.55rem 1.1rem 0.65rem;
+  border-top: 1px solid var(--glass-line);
+}
+/* Two lists side by side (audio and subtitles) */
+.sheet--duo .sheet__panel {
+  width: 39rem;
+}
+.sheet--duo .sheet__close {
+  z-index: 1;
+}
+.sheet__cols {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.sheet__col {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  padding-top: 1rem;
+}
+.sheet__col + .sheet__col {
+  border-left: 1px solid var(--glass-line);
+}
+.sheet__colhead {
+  margin: 0 0 0.35rem;
+  padding: 0 3rem 0 3rem;
+  font: 600 0.75rem/1.5rem var(--font-body);
+  color: var(--ink-3);
+}
+.sheet--duo .sheet__desc {
+  margin: 0;
+  padding: 0.5rem 1.1rem 0.6rem;
+  border-top: 1px solid var(--glass-line);
+}
+.sheet--duo .sheet__desc + .sheet__foot {
+  border-top: 0;
+  padding-top: 0;
+}
+/* Phones: hug the corner; in a narrow window the two lists stack and scroll as one */
+@media (max-width: 760px), (max-height: 500px) {
+  html:not(.tv) .sheet--pop .sheet__panel {
+    right: 0.75rem;
+    bottom: 0.75rem;
+    max-height: calc(100% - 1.5rem);
+  }
+}
+@media (max-width: 560px) {
+  html:not(.tv) .sheet--duo .sheet__cols {
+    display: block;
+    overflow-y: auto;
+  }
+  html:not(.tv) .sheet--duo .sheet__col + .sheet__col {
+    border-left: 0;
+    border-top: 1px solid var(--glass-line);
+  }
+  html:not(.tv) .sheet--duo .sheet__list {
+    overflow: visible;
+  }
+}
+@keyframes sheet-pop {
+  from { opacity: 0; transform: translateY(0.6rem); }
+}
 @keyframes sheet-in {
-  from { transform: translateX(100%); }
+  from { transform: translateX(calc(100% + 0.75rem)); }
   to { transform: none; }
 }
 
@@ -858,7 +1227,7 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
   display: block;
   background: var(--bg-2);
   border-radius: var(--radius-s);
-  animation: skel-pulse 1.4s ease-in-out infinite alternate;
+  overflow: hidden;
 }
 .skel--text {
   height: 0.9rem;
@@ -870,8 +1239,17 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
   height: 4rem;
   margin: 1rem 0;
 }
+.skel::after {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--bg-3);
+  animation: skel-pulse 1.4s ease-in-out infinite alternate;
+}
 @keyframes skel-pulse {
-  from { opacity: 0.55; }
+  from { opacity: 0; }
   to { opacity: 1; }
 }
 
@@ -888,6 +1266,13 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
     animation-duration: 2.4s !important;
     animation-iteration-count: infinite !important;
   }
+}
+
+/* TV: only opacity and transform ever animate, whatever a component's own transition lists. */
+html.tv *,
+html.tv *::before,
+html.tv *::after {
+  transition-property: opacity, transform !important;
 }
 
 /* ---------- Discover card (SPEC §7.1) ------------------------------------ */
@@ -916,16 +1301,17 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
 }
 .avail {
   position: absolute;
-  top: 0.5rem;
-  left: 0.5rem;
+  top: 0.45rem;
+  left: 0.45rem;
   display: inline-flex;
   align-items: center;
-  height: 1.55rem;
-  padding: 0 0.55rem;
-  border-radius: 999px;
-  background: rgba(var(--bg-rgb), 0.82);
+  height: 1.45rem;
+  padding: 0 0.45rem;
+  border: 1px solid var(--ink-3);
+  border-radius: var(--radius-s);
+  background: rgba(0, 0, 0, 0.72);
   color: var(--ink);
-  font: 700 0.72rem/1 var(--font-body);
+  font: 700 0.7rem/1 var(--font-body);
   letter-spacing: 0.02em;
 }
 .avail .icon {
@@ -933,14 +1319,15 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
   font-size: 0.95em;
 }
 .avail--available {
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-color: var(--ok);
+  color: var(--ok);
 }
 .avail--partially {
-  box-shadow: inset 0 0 0 1.5px var(--accent);
-  color: var(--accent-hi);
+  border-color: rgba(var(--ok-rgb), 0.6);
+  color: var(--ok);
 }
-.avail--requested .icon {
+.avail--requested {
+  border-color: var(--warn);
   color: var(--warn);
 }
 .avail--late {
@@ -957,7 +1344,7 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
   height: 2.3rem;
   padding: 0 1rem 0 0.8rem;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius);
   font: 700 0.9rem/1 var(--font-body);
   white-space: nowrap;
   cursor: pointer;
@@ -968,15 +1355,15 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
   font-size: 1.1em;
 }
 .pill--add {
-  background: rgba(var(--ink-rgb), 0.12);
-  color: var(--ink);
-}
-.pill--add:hover {
-  background: rgba(var(--ink-rgb), 0.2);
-}
-.pill--play {
   background: var(--accent);
   color: var(--accent-ink);
+}
+.pill--add:hover {
+  background: var(--accent-hover);
+}
+.pill--play {
+  background: var(--ink);
+  color: var(--on-light);
 }
 .pill--retry {
   background: rgba(var(--danger-rgb), 0.16);
@@ -985,6 +1372,7 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
 .pill--status {
   height: 1.6rem;
   padding: 0 0.6rem;
+  border-radius: var(--radius-s);
   background: var(--ink-5);
   color: var(--ink-3);
   font-size: 0.75rem;
@@ -996,20 +1384,20 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
 }
 .pill:focus {
   background: var(--ink);
-  color: var(--bg);
+  color: var(--on-light);
   transform: scale(1.05);
 }
 html[data-input="key"] .pill:focus {
   box-shadow: var(--focus-ring);
 }
 html[data-input="pointer"] .pill--add:focus:not(:hover) {
-  background: rgba(var(--ink-rgb), 0.12);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--accent-ink);
   transform: none;
 }
 html[data-input="pointer"] .pill--play:focus:not(:hover) {
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--ink);
+  color: var(--on-light);
   transform: none;
 }
 

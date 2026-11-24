@@ -1,6 +1,6 @@
-import { createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createResource, createSignal, For, Show, type JSX } from "solid-js";
 import { useParams } from "@solidjs/router";
-import { Backdrop, Icon, Row, formatRemaining, formatRuntime } from "@reel/ui";
+import { Icon, Row, formatRemaining, formatRuntime } from "@reel/ui";
 import { vod, type VodMovie as Movie } from "../api/vod";
 import { usePageFocus } from "../lib/focus";
 import { itemHref, playHref } from "../lib/links";
@@ -9,6 +9,7 @@ import { RatingsStrip, ReviewsSection, useReviews } from "../components/Reviews"
 import { CastTile } from "../components/Cast";
 import { vodPlayHref } from "../components/vod/links";
 import { TrailerModal, VodEyebrow, VodFineprint, VodSkeleton } from "../components/vod/Detail";
+import { TitleSheet } from "../components/TitleSheet";
 
 /** An IPTV film: modeled on the library detail page, played through the provider. */
 export default function VodMovie(): JSX.Element {
@@ -17,17 +18,8 @@ export default function VodMovie(): JSX.Element {
   let el!: HTMLDivElement;
   usePageFocus(() => !!m() || !!m.error, () => el);
 
-  const [scrolled, setScrolled] = createSignal(false);
-  onMount(() => {
-    const onScroll = () => setScrolled(window.pageYOffset > window.innerHeight * 0.3);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    onCleanup(() => window.removeEventListener("scroll", onScroll));
-  });
-
   return (
-    <div class="page detail vdetail" ref={el} classList={{ "is-scrolled": scrolled() }}>
-      <Backdrop src={m()?.backdrop_url} class="page-backdrop" />
-      <div class="page-scrim page-scrim--detail" aria-hidden="true" />
+    <div class="page detail vdetail" ref={el}>
       <Show when={!m.error} fallback={<ErrorState error={m.error} title="Couldn't open this IPTV title" onRetry={refetch} />}>
         <Show when={m()} fallback={<VodSkeleton />}>
           {(x) => <MovieBody m={x()} />}
@@ -45,33 +37,11 @@ function MovieBody(props: { m: Movie }): JSX.Element {
   const reviews = useReviews(() => (m().tmdb_id ? { media: "movie", tmdbId: m().tmdb_id! } : undefined));
   const [trailer, setTrailer] = createSignal(false);
 
-  return (
+  const head = (
     <>
-      <section class="detail__hero" data-nav-anchor style={{ "--nav-anchor-top": "0px" }}>
         <VodEyebrow kind="movie" categoryId={m().category_id} />
         <h1 class="detail__title" dir="auto">{m().title}</h1>
-        <p class="meta">
-          <Show when={m().year}><span>{m().year}</span></Show>
-          <Show when={m().runtime_s}><span>{formatRuntime(m().runtime_s)}</span></Show>
-          <Show when={(m().genres ?? []).length}><span>{m().genres!.slice(0, 3).join(" / ")}</span></Show>
-          <Show when={m().rating}>
-            <span class="meta__rating"><Icon name="star" filled /> {m().rating!.toFixed(1)}</span>
-          </Show>
-          <Show when={m().container}><span class="badge">{m().container!.toUpperCase()}</span></Show>
-          <Show when={m().played}><span class="meta__watched"><Icon name="check" /> Watched</span></Show>
-        </p>
-        <RatingsStrip data={reviews()} />
-        <Show when={local()}>
-          <p class="vlib"><Icon name="check" /> <span><strong>Also in your library.</strong> Plays from your own server in full quality.</span></p>
-        </Show>
-        <Show when={m().overview}>
-          <p class="detail__overview" dir="auto">{m().overview}</p>
-        </Show>
-        <Show when={m().director}>
-          <p class="vcredit">Directed by <strong dir="auto">{m().director}</strong></p>
-        </Show>
-
-        <div class="actions" data-nav-group>
+        <div class="actions tsheet__actions" data-nav-group>
           <Show
             when={local()}
             fallback={
@@ -107,7 +77,36 @@ function MovieBody(props: { m: Movie }): JSX.Element {
             </button>
           </Show>
         </div>
+    </>
+  );
+
+  return (
+    <TitleSheet backdrop={m().backdrop_url} head={head}>
+      <section class="tinfo" data-nav-anchor>
+        <div class="tinfo__main">
+        <p class="meta">
+          <Show when={m().year}><span>{m().year}</span></Show>
+          <Show when={m().runtime_s}><span>{formatRuntime(m().runtime_s)}</span></Show>
+          <Show when={(m().genres ?? []).length}><span>{m().genres!.slice(0, 3).join(" / ")}</span></Show>
+          <Show when={m().rating}>
+            <span class="meta__rating"><Icon name="star" filled /> {m().rating!.toFixed(1)}</span>
+          </Show>
+          <Show when={m().container}><span class="badge">{m().container!.toUpperCase()}</span></Show>
+          <Show when={m().played}><span class="meta__watched"><Icon name="check" /> Watched</span></Show>
+        </p>
+        <RatingsStrip data={reviews()} />
+        <Show when={local()}>
+          <p class="vlib"><Icon name="check" /> <span><strong>Also in your library.</strong> Plays from your own server in full quality.</span></p>
+        </Show>
+        <Show when={m().overview}>
+          <p class="detail__overview" dir="auto">{m().overview}</p>
+        </Show>
+        <Show when={m().director}>
+          <p class="vcredit">Directed by <strong dir="auto">{m().director}</strong></p>
+        </Show>
+
         <VodFineprint local={!!local()} />
+        </div>
       </section>
 
       <Show when={m().cast.length}>
@@ -121,6 +120,6 @@ function MovieBody(props: { m: Movie }): JSX.Element {
       <Show when={trailer() && m().trailer_youtube_id}>
         <TrailerModal youtubeId={m().trailer_youtube_id!} title={m().title} onClose={() => setTrailer(false)} />
       </Show>
-    </>
+    </TitleSheet>
   );
 }

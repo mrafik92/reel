@@ -2128,6 +2128,7 @@ export interface components {
             runtime_s?: number | null;
             /** Format: int64 */
             season_no?: number | null;
+            series?: null | components["schemas"]["SeriesRef"];
             title: string;
             /** Format: int64 */
             year?: number | null;
@@ -2540,6 +2541,15 @@ export interface components {
             query: string;
         };
         /** @description Server-to-client event. */
+        /** @description The series identity of an episode in Continue watching, so a client can show the title and art
+         *     of the series while Play still resumes the episode. */
+        SeriesRef: {
+            backdrop_url?: string | null;
+            /** Format: int64 */
+            id: number;
+            poster_url?: string | null;
+            title: string;
+        };
         ServerEvent: {
             /** Format: int64 */
             eta_seconds?: number | null;

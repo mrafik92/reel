@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, type JSX } from "solid-js";
 import { useNavigate, useSearchParams } from "@solidjs/router";
-import { focusElement, Icon, onBack, onRemoteKey, SheetClose } from "@reel/ui";
+import { focusElement, Icon, mediaUrl, onBack, onRemoteKey, SheetClose } from "@reel/ui";
+import { useAmbientArt } from "../lib/ambient";
 import "../styles/live.css";
 import { iptv, type IptvChannel } from "../api/iptv";
 import { href } from "../lib/mode";
@@ -20,6 +21,8 @@ import {
 } from "../components/live/store";
 import { currentUser } from "../lib/auth";
 import { createTapToggle } from "../lib/tap";
+import { createSwipe } from "../lib/swipe";
+import { TV } from "../lib/mode";
 
 const STATS_KEY = "reel.live.stats";
 const ZAP_DEBOUNCE = 320;
@@ -78,6 +81,8 @@ function Watch(): JSX.Element {
   const idle = () => tuner.phase() === "idle" && !pending();
   /** What the overlays describe: the zap target while it's pending, else the tuned channel. */
   const shown = () => pending() ?? tuned();
+  // Colour behind the hero: the channel's logo, stretched (no blur filter). Purely decorative.
+  const ambient = useAmbientArt(() => heroCh()?.logo_url);
   // Tizen's AVPlay draws on a full-screen plane behind the page: no windowed preview there.
   const isFull = () => full() || (tuner.nativePlane() && tuner.phase() !== "idle");
   /** What's in the side list: search results or the current group / favourites. */
@@ -410,6 +415,58 @@ function Watch(): JSX.Element {
     hide: () => (isFull() ? setOsd(false) : activate()),
   });
 
+  // Phones: a vertical swipe on the full-screen picture zaps like Channel Up/Down (#291). Touch
+  // Events only, so mouse, keyboard and D-pad are unchanged. Off on TV, with the mini guide or any
+  // sheet/dialog up (they scroll as usual), and while the video is in Picture-in-Picture.
+  const swipe = createSwipe();
+  const swipeOn = () =>
+    !TV && isFull() && !mini() && !document.pictureInPictureElement && !document.querySelector("[data-nav-trap]");
+  onMount(() => {
+    // A finger back on the glass while a zap is pending is probably the next swipe: hold the
+    // tune until it lifts, so a run of swipes tunes only the last channel even when the viewer
+    // is slower than ZAP_DEBOUNCE between them.
+    let held = false;
+    const release = () => {
+      if (!held) return;
+      held = false;
+      const c = pending();
+      if (c) zapTimer = setTimeout(() => tuneNow(c), ZAP_DEBOUNCE);
+    };
+    const onStart = (e: TouchEvent) => {
+      if (!swipeOn()) return swipe.cancel();
+      swipe.start(e.touches, Date.now());
+      if (pending() && zapTimer && !held) {
+        clearTimeout(zapTimer);
+        held = true;
+      }
+    };
+    const onMove = (e: TouchEvent) => swipe.move(e.touches);
+    const onEnd = (e: TouchEvent) => {
+      const dir = swipe.end(e.changedTouches, e.touches.length, Date.now());
+      if (e.touches.length) return;
+      if (!dir || !swipeOn()) return release();
+      held = false;
+      // A swipe isn't a tap: no click (and no controls toggle) should follow it.
+      if (e.cancelable) e.preventDefault();
+      tap.cancel();
+      zap(dir);
+    };
+    const onCancel = () => {
+      swipe.cancel();
+      release();
+    };
+    screen.addEventListener("touchstart", onStart, { passive: true });
+    screen.addEventListener("touchmove", onMove, { passive: true });
+    screen.addEventListener("touchend", onEnd, { passive: false });
+    screen.addEventListener("touchcancel", onCancel, { passive: true });
+    onCleanup(() => {
+      screen.removeEventListener("touchstart", onStart);
+      screen.removeEventListener("touchmove", onMove);
+      screen.removeEventListener("touchend", onEnd);
+      screen.removeEventListener("touchcancel", onCancel);
+    });
+  });
+
   let lastMove = 0;
   const onPointer = () => {
     if (!isFull()) return;
@@ -421,6 +478,13 @@ function Watch(): JSX.Element {
 
   return (
     <div class="live live--rows" classList={{ "is-full": isFull(), "is-native": tuner.nativePlane(), "has-mini": mini() }}>
+      <Show when={ambient()} keyed>
+        {(url) => (
+          <div class="live__ambient" aria-hidden="true">
+            <img src={mediaUrl(url)} alt="" decoding="async" onError={(e) => (e.currentTarget.style.display = "none")} />
+          </div>
+        )}
+      </Show>
       <section class="live__hero">
         <div
           ref={screen}
@@ -787,7 +851,6 @@ function IdleHero(props: { channel: IptvChannel; onWatch: () => void }): JSX.Ele
   const nn = () => nowNext(props.channel.id);
   return (
     <div class="live__idle" onClick={(e) => e.stopPropagation()}>
-      <div class="live__idle-glow" aria-hidden="true" />
       <ChannelLogo channel={props.channel} class="chlogo--hero" />
       <p class="eyebrow">{lastChannel()?.id === props.channel.id ? "Last watched" : "Ready to watch"}</p>
       <h2 class="live__idle-name" dir="auto">

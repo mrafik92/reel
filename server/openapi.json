@@ -10141,6 +10141,17 @@
             ],
             "format": "int64"
           },
+          "series": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SeriesRef",
+                "description": "The series an episode belongs to (only on Home's `continue_watching`)."
+              }
+            ]
+          },
           "title": {
             "type": "string"
           },
@@ -12053,6 +12064,35 @@
             ],
             "format": "int64",
             "description": "ffprobe index of the chosen subtitle stream; `null` = none."
+          }
+        }
+      },
+      "SeriesRef": {
+        "type": "object",
+        "description": "The series identity of an episode in Continue watching, so a client can show the title and art\nof the series while Play still resumes the episode.",
+        "required": [
+          "id",
+          "title"
+        ],
+        "properties": {
+          "backdrop_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
           }
         }
       },
