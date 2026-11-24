@@ -3660,7 +3660,7 @@ html[data-input="pointer"] .guide-pick:focus:not(:hover) {
   html:not(.tv) .gdetail,
   html:not(.tv) .gbrowse,
   html:not(.tv) .gmenu {
-    background: var(--glass);
+    background: var(--glass-raised);
     -webkit-backdrop-filter: var(--glass-blur);
     backdrop-filter: var(--glass-blur);
   }

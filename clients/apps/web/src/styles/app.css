@@ -120,7 +120,7 @@ code {
 }
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   html:not(.tv) .topbar::after {
-    background: var(--glass);
+    background: var(--glass-raised);
     -webkit-backdrop-filter: var(--glass-blur);
     backdrop-filter: var(--glass-blur);
   }
@@ -785,6 +785,12 @@ html[data-input="pointer"] .segmented__btn[aria-pressed="true"]:focus:not(:hover
   border-radius: var(--radius-l);
   box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
 }
+/* The sheet sits on art that is already stretched and dimmed, so it can be the most see-through. */
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  html:not(.tv) .tsheet {
+    background: var(--glass);
+  }
+}
 .tsheet__close {
   position: absolute;
   top: 0.9rem;
@@ -1272,7 +1278,9 @@ html.tv .results-grid {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.9rem;
+}
+.player__buffer > * + * {
+  margin-top: 0.9rem;
 }
 /* "Reconnecting to the server…" while the player recovers by itself (#91, #93). */
 .player__recovering {
@@ -1643,8 +1651,6 @@ html.tv .player__fs {
     border-radius: 0;
     box-shadow: none;
     background: transparent;
-    -webkit-backdrop-filter: none !important;
-    backdrop-filter: none !important;
   }
   .tsheet__top {
     height: auto;
@@ -1709,9 +1715,15 @@ html.tv .player__fs {
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   @media (max-width: 760px) {
     html:not(.tv) .rail {
-      background: var(--glass);
+      background: var(--glass-raised);
       -webkit-backdrop-filter: var(--glass-blur);
       backdrop-filter: var(--glass-blur);
+    }
+    /* The phone title page has no sheet chrome, so no glass either. */
+    html:not(.tv) .tsheet {
+      background: transparent;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
     }
   }
 }

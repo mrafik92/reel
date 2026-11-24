@@ -57,6 +57,9 @@
   /* Glass: --glass-strong is the no-blur surface (TV, old browsers); --glass needs the blur. */
   --glass: rgba(var(--bg-1-rgb), 0.55);
   --glass-strong: rgba(var(--bg-1-rgb), 0.86);
+  /* Frosted, for surfaces over raw art or video: at 0.55 secondary text on them drops below AA
+     over a bright picture. --glass itself is for surfaces over art that is already dimmed. */
+  --glass-raised: rgba(var(--bg-1-rgb), 0.78);
   --glass-line: rgba(var(--ink-rgb), 0.12);
   --glass-blur: blur(24px) saturate(1.5);
 
@@ -100,7 +103,7 @@
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   html:not(.tv) .glass,
   html:not(.tv) .sheet__panel {
-    background: var(--glass);
+    background: var(--glass-raised);
     -webkit-backdrop-filter: var(--glass-blur);
     backdrop-filter: var(--glass-blur);
   }
@@ -1141,6 +1144,13 @@ html[data-input="pointer"] .sheet__opt:focus:not(:hover) {
     animation-duration: 2.4s !important;
     animation-iteration-count: infinite !important;
   }
+}
+
+/* TV: only opacity and transform ever animate, whatever a component's own transition lists. */
+html.tv *,
+html.tv *::before,
+html.tv *::after {
+  transition-property: opacity, transform !important;
 }
 
 /* ---------- Discover card (SPEC §7.1) ------------------------------------ */

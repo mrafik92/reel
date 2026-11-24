@@ -651,7 +651,7 @@ html[data-input="key"] .switch:focus {
 }
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   html:not(.tv) .spot__copy {
-    background: var(--glass);
+    background: var(--glass-raised);
     -webkit-backdrop-filter: var(--glass-blur);
     backdrop-filter: var(--glass-blur);
   }

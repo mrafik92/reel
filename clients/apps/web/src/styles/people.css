@@ -372,11 +372,10 @@ html[data-input="key"] .review:focus {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.6rem 0.8rem;
-  margin-bottom: 0.6rem;
 }
+.person-credits__filters > *,
 .person-credits__filters .chip {
-  margin: 0;
+  margin: 0 0.8rem 0.6rem 0;
 }
 .segmented__count {
   margin-left: 0.35rem;

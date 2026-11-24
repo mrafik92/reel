@@ -669,7 +669,6 @@ html[data-input="key"] .pvol__bar:focus .pvol__knob {
   z-index: 4;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
   height: 3.2rem;
   margin-top: -1.6rem;
   padding: 0 1.1rem;
@@ -679,6 +678,9 @@ html[data-input="key"] .pvol__bar:focus .pvol__knob {
   font-size: 1.3rem;
   pointer-events: none;
   animation: pripple 750ms var(--ease-out) both;
+}
+.pripple > * + * {
+  margin-left: 0.5rem;
 }
 .pripple--back {
   right: auto;
@@ -850,7 +852,7 @@ html[data-input="key"] .pvol__bar:focus {
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   html:not(.tv) .pc__top,
   html:not(.tv) .pc__bottom {
-    background: var(--glass);
+    background: var(--glass-raised);
     -webkit-backdrop-filter: var(--glass-blur);
     backdrop-filter: var(--glass-blur);
   }
