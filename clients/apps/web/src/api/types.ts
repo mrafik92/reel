@@ -241,3 +241,12 @@ export interface LinkedIdentity {
   created_at: number;
   last_used_at?: number | null;
 }
+
+// ---- passwordless sign-in (#287) ----------------------------------------------------------------
+export interface LoginOptions {
+  providers: OidcProviderPublic[];
+  /** Some account still signs in with a password, or no provider is configured. */
+  password_login: boolean;
+  /** Emergency passkey sign-in is available from this address (LAN or Tailscale). */
+  passkey_login: boolean;
+}

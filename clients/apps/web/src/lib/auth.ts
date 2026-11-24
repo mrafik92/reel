@@ -46,7 +46,14 @@ function signOutLocal(): void {
   emit();
 }
 
+// The screen that signed in navigates to its own destination, and that move can be in flight
+// (a lazy route) while the shell's auth guard runs. The guard waits until the login page is left.
+let signingIn = false;
+export const isSigningIn = () => signingIn;
+export const finishedSigningIn = () => void (signingIn = false);
+
 function accept(r: LoginResponse): Me {
+  signingIn = true;
   setToken(r.token);
   setUser(r.user);
   invalidate();
@@ -163,9 +170,9 @@ export async function createAdmin(username: string, password: string): Promise<M
   return accept(await api.setup(withDevice({ username, password })));
 }
 
-export async function acceptInvite(code: string, username: string, password: string, link?: { ticket: string; binding: string }): Promise<Me> {
+export async function acceptInvite(code: string, username: string, password: string | undefined, link?: { ticket: string; binding: string }): Promise<Me> {
   const extra = link ? { oidc_ticket: link.ticket, oidc_binding: link.binding } : {};
-  return accept(await api.acceptInvite(code, withDevice({ username, password, ...extra })));
+  return accept(await api.acceptInvite(code, { username, ...(password ? { password } : {}), ...extra, ...deviceFields() }));
 }
 
 export async function logout(): Promise<void> {

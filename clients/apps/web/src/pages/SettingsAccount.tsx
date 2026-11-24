@@ -53,6 +53,10 @@ export default function SettingsAccount(): JSX.Element {
   const [codes, setCodes] = createSignal<string[]>();
   const [busy, setBusy] = createSignal(false);
   const [newPassword, setNewPassword] = createSignal("");
+  // #287: no stored password means account changes are confirmed with the authenticator app
+  const passwordless = () => currentUser()?.has_password === false;
+  const manageFactors = () => !passwordless() || !!sec()?.totp;
+  const passwordWaitsForPasskey = () => !passwordless() && currentUser()?.role === "admin" && !!identities()?.length && !sec()?.passkeys.length;
 
   /** Run one change; refresh the account afterwards so admin powers update straight away. */
   const run = async (fn: () => Promise<void>, fallback: string) => {
@@ -71,7 +75,7 @@ export default function SettingsAccount(): JSX.Element {
 
   const needPassword = () => {
     if (password()) return true;
-    toast("Enter your current password first.", "error");
+    toast(passwordless() ? "Enter a code from your authenticator app first." : "Enter your current password first.", "error");
     return false;
   };
 
@@ -128,10 +132,23 @@ export default function SettingsAccount(): JSX.Element {
         <p class="account__notice"><Icon name="alert" /> <span>You're on a public address, so admin actions are off. Everything else works as usual.</span></p>
       </Show>
 
+      <Show when={passwordWaitsForPasskey()}>
+        <p class="account__notice"><Icon name="key" /> <span>Add a passkey below as your emergency sign-in. Reel then deletes your stored password, so only your provider and this passkey can sign you in.</span></p>
+      </Show>
+      <Show when={passwordless() && !sec()?.totp}>
+        <p class="account__notice"><Icon name="check" /> <span>This account has no password. Your email code and 2FA are managed by your sign-in provider.</span></p>
+      </Show>
+
       <Show when={codes()}>{(c) => <RecoveryCodes codes={c()} onDone={() => setCodes(undefined)} />}</Show>
 
+      <Show when={manageFactors()}>
       <Panel title="Confirm it's you" icon="key">
-        <PasswordField label="Current password" hint="Needed to change your password or sign-in methods" value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="current-password" />
+        <Show
+          when={passwordless()}
+          fallback={<PasswordField label="Current password" hint="Needed to change your password or sign-in methods" value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="current-password" />}
+        >
+          <Field label="Authenticator code" hint="Needed to change your sign-in methods" value={password()} onInput={(e) => setPassword(e.currentTarget.value)} inputmode="numeric" autocomplete="one-time-code" maxLength={7} />
+        </Show>
       </Panel>
 
       <Panel title="Authenticator app" icon="key">
@@ -197,7 +214,9 @@ export default function SettingsAccount(): JSX.Element {
         </Show>
       </Panel>
 
-      <Show when={sec()?.totp || sec()?.passkeys.length}>
+      </Show>
+
+      <Show when={manageFactors() && (sec()?.totp || sec()?.passkeys.length)}>
         <Panel title="Recovery codes" icon="key">
           <div class="account__row">
             <p class="state__body">{sec()?.recovery_codes_left ?? 0} left</p>
@@ -223,7 +242,7 @@ export default function SettingsAccount(): JSX.Element {
               )}
             </For>
           </ul>
-          <Show when={oidcSupported()} fallback={<p class="state__body">Link a provider from a phone or computer.</p>}>
+          <Show when={manageFactors() && oidcSupported()} fallback={<p class="state__body">Link a provider from a phone or computer.</p>}>
             <div class="auth__methods">
               <For each={providers() ?? []}>
                 {(p) => (
@@ -237,12 +256,14 @@ export default function SettingsAccount(): JSX.Element {
         </Panel>
       </Show>
 
+      <Show when={!passwordless()}>
       <Panel title="Password" icon="key">
         <form onSubmit={changePassword} novalidate>
           <PasswordField label="New password" hint={`At least ${MIN_PASSWORD} characters. A few unrelated words work well.`} value={newPassword()} onInput={(e) => setNewPassword(e.currentTarget.value)} autocomplete="new-password" />
           <button type="submit" class="btn btn--sm"><span>Change password</span></button>
         </form>
       </Panel>
+      </Show>
 
       <Panel title="Signed-in devices" icon="tv">
         <ul class="list">

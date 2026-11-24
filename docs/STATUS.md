@@ -24,6 +24,8 @@ Reel Web for Android (epic #225), the WebView client, has its shell built (#226)
 
 The sign-in epic (#150) is deployed in `c03f32b`, with its real-world checks still open: admin powers only from the LAN or Tailscale (#127), the 12-character password rule (#148), passkeys, TOTP and recovery codes with a second factor required for admins (#146), TV sign-in approved on a phone (#147), and optional Google, Microsoft and OpenID Connect sign-in (#149). Checked with server tests and in Chromium against a local server (virtual authenticator, mock OpenID issuer, desktop, 1920×1080 TV mode and phone width). The image built in CI with OpenSSL, the migrations applied on CT 113, and the new routes answer there. Nobody has signed in through these flows on the real server yet, or used a real TV, a real phone passkey, or a real provider account. **Admin actions stay off until the admin account adds a second factor.**
 
+Passwordless sign-in (#287) is built: QR login on computers and TVs, email code + 2FA through WorkOS, password-free invites, per-account removal of stored passwords, and an emergency Reel passkey. Checked with server tests and in Chromium against a mock provider. WorkOS Production is configured and the admin account is linked on the real server, but a real phone, a real TV and a full WorkOS login through the new screen are still to be checked.
+
 ## What's verified on real hardware and data
 
 - **Library:** 178 movies, 4 shows, 4 anime from NFS, with TMDB metadata. Rename detection, multi-episode files and targeted webhook rescans all work.

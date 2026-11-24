@@ -468,3 +468,270 @@ async fn presets_pin_the_right_issuers() {
         "https://reel.example/api/v1/auth/oidc/callback"
     );
 }
+
+// ───────────── passwordless accounts (#287) ─────────────
+
+const USER_PW: &str = "a quiet copper lantern";
+
+/// A regular account with a password, signed in.
+async fn regular_user(e: &Env) -> String {
+    e.state
+        .auth
+        .create_user(reel_auth::NewUser {
+            username: "maya".into(),
+            password: USER_PW.into(),
+            role: reel_auth::Role::User,
+            limits: Default::default(),
+            library_ids: vec![],
+        })
+        .await
+        .unwrap();
+    e.state
+        .auth
+        .login("maya", USER_PW, Default::default())
+        .await
+        .unwrap()
+        .token
+}
+
+async fn link_as(e: &Env, token: &str, password: &str, sub: &str) -> StatusCode {
+    let (s, b, _) = call(
+        e,
+        "POST",
+        "/api/v1/me/identities/mock/start",
+        Some(token),
+        Some(json!({"password": password, "binding_hash": binding_hash(BINDING)})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let f = parse_start(b["authorization_url"].as_str().unwrap());
+    provider_returns(e, &f, sign(&e.key, &claims(e, sub, &f.nonce))).await;
+    let frag = come_back(e, &f).await;
+    call(
+        e,
+        "POST",
+        "/api/v1/me/identities/complete",
+        Some(token),
+        Some(json!({"ticket": frag.strip_prefix("ticket=").unwrap(), "binding": BINDING})),
+    )
+    .await
+    .0
+}
+
+async fn password_login(e: &Env, user: &str, pw: &str) -> StatusCode {
+    call(
+        e,
+        "POST",
+        "/api/v1/auth/login",
+        None,
+        Some(json!({"username": user, "password": pw})),
+    )
+    .await
+    .0
+}
+
+async fn stored_hash(e: &Env, user: &str) -> String {
+    sqlx::query_scalar("SELECT password_hash FROM users WHERE username = ?")
+        .bind(user)
+        .fetch_one(&e.state.db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn linking_deletes_a_regular_users_password() {
+    let e = env().await;
+    let token = regular_user(&e).await;
+    assert_eq!(password_login(&e, "maya", USER_PW).await, StatusCode::OK);
+    assert_eq!(
+        link_as(&e, &token, USER_PW, "maya-sub").await,
+        StatusCode::NO_CONTENT
+    );
+
+    assert_eq!(
+        stored_hash(&e, "maya").await,
+        reel_auth::password::NO_PASSWORD
+    );
+    assert_eq!(
+        password_login(&e, "maya", USER_PW).await,
+        StatusCode::UNAUTHORIZED
+    );
+    // the stand-in hash used for timing must not become a way in
+    assert_eq!(
+        password_login(&e, "maya", "reel-dummy-password").await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        password_login(&e, "maya", "external").await,
+        StatusCode::UNAUTHORIZED
+    );
+
+    let (_, me, _) = call(&e, "GET", "/api/v1/me", Some(&token), None).await;
+    assert_eq!(me["has_password"], false);
+    let t = ticket_for(&e, "maya-sub", "login").await;
+    assert_eq!(
+        exchange(&e, &t, BINDING).await.0,
+        StatusCode::OK,
+        "the provider still signs in"
+    );
+}
+
+#[tokio::test]
+async fn an_admin_keeps_the_password_until_there_is_an_emergency_passkey() {
+    let e = env().await;
+    let before = stored_hash(&e, "admin").await;
+    link(&e, "subject-admin").await;
+    assert_eq!(stored_hash(&e, "admin").await, before);
+    assert_eq!(
+        password_login(&e, "admin", common::ADMIN_PASSWORD).await,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn an_account_with_no_password_cannot_be_locked_out() {
+    let e = env().await;
+    let token = regular_user(&e).await;
+    assert_eq!(
+        link_as(&e, &token, USER_PW, "maya-sub").await,
+        StatusCode::NO_CONTENT
+    );
+
+    let (_, list, _) = call(
+        &e,
+        "GET",
+        "/api/v1/admin/oidc/providers",
+        Some(&e.admin),
+        None,
+    )
+    .await;
+    let id = list[0]["id"].as_i64().unwrap();
+    let uri = format!("/api/v1/admin/oidc/providers/{id}");
+    let (s, b, _) = call(
+        &e,
+        "PATCH",
+        &uri,
+        Some(&e.admin),
+        Some(json!({"enabled": false})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT, "disable: {b}");
+    let (s, b, _) = call(&e, "DELETE", &uri, Some(&e.admin), None).await;
+    assert_eq!(s, StatusCode::CONFLICT, "delete: {b}");
+
+    // an admin can't give it a stored password back either
+    let (_, users, _) = call(&e, "GET", "/api/v1/admin/users", Some(&e.admin), None).await;
+    let maya = users
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["username"] == "maya")
+        .unwrap();
+    let (s, b, _) = call(
+        &e,
+        "PATCH",
+        &format!("/api/v1/admin/users/{}", maya["id"]),
+        Some(&e.admin),
+        Some(json!({"password": "a brand new long password"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
+    let (s, b, _) = call(
+        &e,
+        "POST",
+        "/api/v1/me/password",
+        Some(&token),
+        Some(json!({"current_password": USER_PW, "new_password": "a brand new long password"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
+}
+
+#[tokio::test]
+async fn an_invite_with_a_provider_stores_no_password() {
+    let e = env().await;
+    let (_, inv, _) = call(
+        &e,
+        "POST",
+        "/api/v1/admin/invites",
+        Some(&e.admin),
+        Some(json!({})),
+    )
+    .await;
+    let accept = format!(
+        "/api/v1/auth/invite/{}/accept",
+        inv["code"].as_str().unwrap()
+    );
+    let (s, b, _) = call(
+        &e,
+        "POST",
+        &accept,
+        None,
+        Some(json!({"username": "newperson", "password": USER_PW})),
+    )
+    .await;
+    assert_eq!(
+        s,
+        StatusCode::BAD_REQUEST,
+        "a password alone is refused: {b}"
+    );
+
+    let t = ticket_for(&e, "new-person", "invite").await;
+    let (s, b, _) = call(
+        &e,
+        "POST",
+        &accept,
+        None,
+        Some(json!({"username": "newperson", "oidc_ticket": t, "oidc_binding": BINDING})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    assert_eq!(b["user"]["has_password"], false);
+    assert_eq!(
+        stored_hash(&e, "newperson").await,
+        reel_auth::password::NO_PASSWORD
+    );
+}
+
+#[tokio::test]
+async fn login_options_follow_the_accounts() {
+    let e = env().await;
+    let (_, o, _) = call(&e, "GET", "/api/v1/auth/options", None, None).await;
+    assert_eq!(o["providers"][0]["slug"], "mock");
+    assert_eq!(o["password_login"], true, "the admin still has one");
+    let (s, b, _) = call(
+        &e,
+        "POST",
+        "/api/v1/auth/login/passkey",
+        None,
+        Some(json!({"username": "admin"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "no passkey enrolled: {b}");
+}
+
+#[tokio::test]
+async fn emergency_passkey_sign_in_is_refused_from_a_public_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = reel_core::db::connect_url("sqlite::memory:").await.unwrap();
+    let c = reel_core::Config {
+        data_dir: dir.path().join("data"),
+        public_url: Some("https://reel.example".into()),
+        trusted_proxies: vec!["10.10.10.73".into()],
+        ..Default::default()
+    };
+    let state = AppState::new(pool, c);
+    let raw = app(state);
+    let mut req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/login/passkey")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-forwarded-for", "203.0.113.7")
+        .body(Body::from(json!({"username": "admin"}).to_string()))
+        .unwrap();
+    let addr = std::net::SocketAddr::new("10.10.10.73".parse().unwrap(), 50000);
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(addr));
+    let res = raw.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+}

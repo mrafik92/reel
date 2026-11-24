@@ -92,6 +92,97 @@ impl AuthService {
         Ok(rows.iter().map(provider_from_row).collect())
     }
 
+    /// The account can sign in with a password.
+    pub async fn has_password(&self, user_id: i64) -> AuthResult<bool> {
+        let h: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or(AuthError::NotFound)?;
+        Ok(h != password::NO_PASSWORD && h != "!")
+    }
+
+    /// A provider is ready to sign people in.
+    pub async fn has_enabled_provider(&self) -> AuthResult<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM oidc_providers WHERE enabled = 1 AND client_secret IS NOT NULL)",
+        )
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
+    /// Some enabled account still signs in with a password, so the login page keeps offering it.
+    pub async fn any_password_left(&self) -> AuthResult<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE disabled = 0 AND password_hash NOT IN ('!', ?))",
+        )
+        .bind(password::NO_PASSWORD)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
+    /// Delete the stored password once the account can't be locked out without it: it has a linked
+    /// provider, and an admin also has a Reel passkey for when the provider is down (#287).
+    pub async fn retire_password(&self, user_id: i64) -> AuthResult<bool> {
+        let user = self.get_user(user_id).await?.ok_or(AuthError::NotFound)?;
+        let (linked, passkey): (bool, bool) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM user_identities i JOIN oidc_providers p ON p.id = i.provider_id \
+             WHERE i.user_id = ? AND p.enabled = 1), \
+             EXISTS(SELECT 1 FROM user_passkeys WHERE user_id = ?)",
+        )
+        .bind(user_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if !linked || (user.has_admin_role() && !passkey) {
+            return Ok(false);
+        }
+        let n = sqlx::query(
+            "UPDATE users SET password_hash = ? WHERE id = ? AND password_hash NOT IN ('!', ?)",
+        )
+        .bind(password::NO_PASSWORD)
+        .bind(user_id)
+        .bind(password::NO_PASSWORD)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        if n == 0 {
+            return Ok(false);
+        }
+        self.audit(
+            Some(user.id),
+            Some(&user.username),
+            "password_retired",
+            None,
+            Value::Null,
+            None,
+        )
+        .await;
+        Ok(true)
+    }
+
+    /// Refuse to turn off a provider that some account has no other way to sign in with.
+    async fn guard_provider_off(&self, provider_id: i64) -> AuthResult<()> {
+        let stranded: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM users u WHERE u.password_hash = ? AND u.disabled = 0 \
+             AND EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id AND i.provider_id = ?) \
+             AND NOT EXISTS (SELECT 1 FROM user_identities i JOIN oidc_providers p ON p.id = i.provider_id \
+                 WHERE i.user_id = u.id AND p.enabled = 1 AND p.id != ?) \
+             AND NOT EXISTS (SELECT 1 FROM user_passkeys k WHERE k.user_id = u.id)",
+        )
+        .bind(password::NO_PASSWORD)
+        .bind(provider_id)
+        .bind(provider_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if stranded > 0 {
+            return Err(AuthError::Conflict(format!(
+                "{stranded} account(s) can only sign in through this provider"
+            )));
+        }
+        Ok(())
+    }
+
     /// An enabled provider, by slug.
     pub async fn oidc_provider(&self, slug: &str) -> AuthResult<OidcProvider> {
         sqlx::query(&format!("{PROVIDER_SELECT} WHERE slug = ? AND enabled = 1"))
@@ -164,6 +255,9 @@ impl AuthService {
         p: OidcProviderPatch,
     ) -> AuthResult<OidcProvider> {
         let cur = self.oidc_provider_by_id(id).await?;
+        if cur.enabled && p.enabled == Some(false) {
+            self.guard_provider_off(id).await?;
+        }
         let name = match &p.name {
             Some(n) => bounded("name", n, 64)?,
             None => cur.name,
@@ -192,6 +286,7 @@ impl AuthService {
 
     /// Remove a provider and every identity linked through it.
     pub async fn delete_oidc_provider(&self, id: i64) -> AuthResult<()> {
+        self.guard_provider_off(id).await?;
         let n = sqlx::query("DELETE FROM oidc_providers WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
@@ -262,6 +357,7 @@ impl AuthService {
             None,
         )
         .await;
+        self.retire_password(user.id).await?;
         Ok(())
     }
 
@@ -288,6 +384,18 @@ impl AuthService {
 
     pub async fn unlink_identity(&self, user: &User, password: &str, id: i64) -> AuthResult<()> {
         self.confirm_password(user, password).await?;
+        if !self.has_password(user.id).await? {
+            let linked: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM user_identities WHERE user_id = ?")
+                    .bind(user.id)
+                    .fetch_one(&self.pool)
+                    .await?;
+            if linked <= 1 {
+                return Err(AuthError::Conflict(
+                    "this is how the account signs in; it can't be unlinked".into(),
+                ));
+            }
+        }
         let n = sqlx::query("DELETE FROM user_identities WHERE id = ? AND user_id = ?")
             .bind(id)
             .bind(user.id)
@@ -320,6 +428,7 @@ impl AuthService {
             let c = self.issue_challenge(&user, dev, false).await?;
             return Err(AuthError::SecondFactorRequired(c));
         }
+        self.retire_password(user.id).await?;
         let (token, expires_at) = self.create_session(user.id, dev).await?;
         self.audit(
             Some(user.id),

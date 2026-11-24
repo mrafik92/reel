@@ -523,6 +523,13 @@ impl AuthService {
             ),
             None => (None, self.dummy_hash().await),
         };
+        // an account without a password costs the same as a wrong guess, and can never match
+        let has_password = phc != password::NO_PASSWORD;
+        let phc = if has_password {
+            phc
+        } else {
+            self.dummy_hash().await
+        };
         // Always verify (against a dummy hash for unknown users) to equalize timing.
         let ok = match self.verify_pw(password, &phc).await {
             Ok(v) => v,
@@ -533,7 +540,7 @@ impl AuthService {
             }
         };
         match user {
-            Some(u) if ok && !u.disabled => {
+            Some(u) if ok && has_password && !u.disabled => {
                 give_back();
                 let password_weak = password::check_policy(password, Some(&u.username)).is_err();
                 if self.has_second_factor(u.id).await? {
@@ -674,6 +681,9 @@ impl AuthService {
                 .fetch_optional(&self.pool)
                 .await?
                 .ok_or(AuthError::NotFound)?;
+        if phc == password::NO_PASSWORD {
+            return Err(AuthError::Conflict("this account has no password".into()));
+        }
         password::check_policy(new, Some(&username))?;
         if !self.verify_pw(current, &phc).await? {
             return Err(AuthError::InvalidCredentials);
@@ -858,6 +868,11 @@ impl AuthService {
         };
         let hash = match &p.password {
             Some(pw) => {
+                if !self.has_password(id).await? {
+                    return Err(AuthError::Conflict(
+                        "this account signs in through its provider and has no password".into(),
+                    ));
+                }
                 password::check_policy(pw, Some(&username))?;
                 Some(self.hash_pw(pw).await?)
             }
@@ -1076,7 +1091,7 @@ impl AuthService {
         password: &str,
         dev: Device,
     ) -> AuthResult<LoginOutcome> {
-        self.accept_invite_with(code, username, password, dev, None)
+        self.accept_invite_with(code, username, Some(password), dev, None)
             .await
     }
 
@@ -1085,7 +1100,7 @@ impl AuthService {
         &self,
         code: &str,
         username: &str,
-        password: &str,
+        password: Option<&str>,
         dev: Device,
         identity: Option<&VerifiedIdentity>,
     ) -> AuthResult<LoginOutcome> {
@@ -1098,7 +1113,15 @@ impl AuthService {
             return Err(AuthError::NotFound);
         }
         let username = validate_username(username)?;
-        password::check_policy(password, Some(&username))?;
+        // a provider sign-in means no password is stored at all (#287)
+        let new_password = match (identity, password) {
+            (Some(_), _) => None,
+            (None, Some(p)) => {
+                password::check_policy(p, Some(&username))?;
+                Some(p)
+            }
+            (None, None) => return Err(AuthError::BadRequest("a password is required".into())),
+        };
         let row = sqlx::query("SELECT * FROM invites WHERE code = ?")
             .bind(code)
             .fetch_optional(&self.pool)
@@ -1110,7 +1133,10 @@ impl AuthService {
                 return Err(AuthError::NotFound);
             }
         };
-        let hash = self.hash_pw(password).await?;
+        let hash = match new_password {
+            Some(p) => self.hash_pw(p).await?,
+            None => password::NO_PASSWORD.to_string(),
+        };
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let uid = self
             .insert_user(

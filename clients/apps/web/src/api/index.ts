@@ -8,7 +8,7 @@ import type {
   DiscoverList, DiscoverPage, DownloadClient, HwAccelStatus, InviteDto, InviteInfo, LoginResponse, Me, MediaType,
   NotificationTarget, PatchUser, ProgressDto, RequestDto, RequestState, SetupStatus, UpdateArrServer, UserDto,
   DiscoverDetailWithCast, PersonDetail, Reviews, DownloadItem, GenreCount, LibraryFilters, BrowseLane, SearchAll,
-  CreateOidcProvider, LinkedIdentity, OidcProviderAdmin, OidcProviderPublic, PatchOidcProvider,
+  CreateOidcProvider, LinkedIdentity, LoginOptions, OidcProviderAdmin, OidcProviderPublic, PatchOidcProvider,
   AccountSecurity, DeviceLinkInfo, DevicePairing, DeviceSession, MfaChallenge, MfaLogin, RecoveryCodes, TotpEnrollment,
 } from "./types";
 
@@ -26,6 +26,9 @@ export interface Credentials {
   oidc_ticket?: string;
   oidc_binding?: string;
 }
+
+/** An invite accepted through a provider stores no password (#287). */
+export type InviteCredentials = Omit<Credentials, "password"> & { password?: string };
 
 /** Typed access to every endpoint the web client uses. HTTP by default, fixtures with `?mock=1`. */
 export interface Api {
@@ -56,6 +59,8 @@ export interface Api {
   linkLookup(userCode: string): Promise<DeviceLinkInfo>;
   linkApprove(userCode: string): Promise<void>;
   linkDeny(userCode: string): Promise<void>;
+  loginOptions(): Promise<LoginOptions>;
+  passkeyLogin(b: { username: string; device_id?: string; device_name?: string; client?: string }): Promise<{ mfa_token: string; options: unknown }>;
   oidcProviders(): Promise<OidcProviderPublic[]>;
   oidcStart(slug: string, b: { binding_hash: string; purpose: string; device_id?: string; device_name?: string; client?: string }): Promise<{ authorization_url: string }>;
   oidcExchange(ticket: string, binding: string): Promise<LoginResponse | MfaChallenge>;
@@ -70,7 +75,7 @@ export interface Api {
   logout(): Promise<void>;
   me(): Promise<Me>;
   inviteInfo(code: string): Promise<InviteInfo>;
-  acceptInvite(code: string, c: Credentials): Promise<LoginResponse>;
+  acceptInvite(code: string, c: InviteCredentials): Promise<LoginResponse>;
 
   // Library
   libraries(): Promise<Library[]>;
@@ -185,6 +190,8 @@ const httpApi: Api = {
   linkLookup: (user_code) => http.post("/me/device-link/lookup", { user_code }),
   linkApprove: (user_code) => http.post("/me/device-link/approve", { user_code }),
   linkDeny: (user_code) => http.post("/me/device-link/deny", { user_code }),
+  loginOptions: () => http.get("/auth/options", undefined, noAuth),
+  passkeyLogin: (b) => http.post("/auth/login/passkey", b, noAuth),
   oidcProviders: () => http.get("/auth/oidc/providers", undefined, noAuth),
   oidcStart: (slug, b) => http.post(`/auth/oidc/${encodeURIComponent(slug)}/start`, b, noAuth),
   oidcExchange: (ticket, binding) => http.post("/auth/oidc/exchange", { ticket, binding }, noAuth),

@@ -2,7 +2,8 @@ import { For, Match, Show, Switch, createEffect, createSignal, onCleanup, onMoun
 import { useLocation, useNavigate } from "@solidjs/router";
 import { Icon, Sheet, initTvNavigation, isFileOrigin, onBack, type IconName, type SheetOption } from "@reel/ui";
 import { MOCK, TV, href } from "../lib/mode";
-import { authStatus, bootError, bootstrap, currentUser, isAdmin, logout, onAuthChange } from "../lib/auth";
+import { afterLogin, authStatus, bootError, bootstrap, currentUser, finishedSigningIn, isAdmin, isSigningIn, logout, onAuthChange } from "../lib/auth";
+import { safeNext } from "../pages/Auth";
 import { connectEvents, disconnectEvents, downloads, queueSummary } from "../lib/downloads";
 import { Toaster } from "../components/Toaster";
 import { api, invalidate } from "../api";
@@ -97,11 +98,17 @@ export function Shell(props: ParentProps): JSX.Element {
   createEffect(() => {
     const s = authStatus();
     const path = loc.pathname;
+    if (!/^\/(login|setup)/.test(path)) finishedSigningIn();
     if (s === "needs_server" && path !== "/connect") navigate("/connect", { replace: true });
     else if (s === "needs_setup" && path !== "/setup" && path.indexOf("/invite/") !== 0) navigate("/setup", { replace: true });
     else if (s === "anon" && !isPublic()) navigate(`/login${path !== "/" ? `?next=${encodeURIComponent(path + loc.search)}` : ""}`, { replace: true });
     // /login/oidc stays: a signed-in user lands there when linking a provider (#149)
-    else if (s === "authed" && /^\/(login|setup)/.test(path) && path !== "/login/oidc") navigate("/", { replace: true });
+    else if (s === "authed" && /^\/(login|setup)/.test(path) && path !== "/login/oidc" && !isSigningIn()) {
+      // keep ?next=: a phone that scanned a QR code still has a device to approve (#287)
+      const next = path === "/login" ? safeNext(new URLSearchParams(loc.search).get("next") ?? undefined) : "/";
+      const me = currentUser();
+      navigate(me ? afterLogin(me, next) : next, { replace: true });
+    }
   });
 
   // Global search shortcuts: "/" (when not typing) and Ctrl/Cmd+K (always).

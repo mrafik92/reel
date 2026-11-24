@@ -146,6 +146,14 @@ them out. If the **only admin** is locked out, stop Reel, back up the database, 
 `DELETE FROM user_totp WHERE user_id = 1; DELETE FROM user_passkeys WHERE user_id = 1; DELETE FROM user_recovery_codes WHERE user_id = 1;`
 (check the id in `users` first), start Reel, sign in with the password and enroll again.
 
+**Passwordless sign-in (#287)**
+The live provider is WorkOS Production (issuer `https://therapeutic-terrain-48.authkit.app`, Connect app *Reel*); its client
+secret is only in Reel's database, encrypted. Each person links it in Settings → Account, which deletes their stored
+password. **An admin's password is deleted only after they also add a Reel passkey**: that passkey is the way in if WorkOS is
+down (login page → *Emergency passkey*, LAN or Tailscale only). Keep it. If an admin loses both, follow *Someone lost their
+second factor*, and restore a password from the pre-deploy database backup or by resetting `password_hash` with the server
+stopped.
+
 **Add Google or Microsoft sign-in (#149)**
 In the provider's console, create a web OAuth client with the redirect URI `https://reel.rafikii.co/api/v1/auth/oidc/callback`.
 Google: keep the app in **testing** with the household listed as test users. Microsoft: choose **personal Microsoft accounts

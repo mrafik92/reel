@@ -2259,6 +2259,8 @@ export interface components {
             second_factor?: boolean;
             /** @description An admin who must add a second factor before getting admin powers. */
             must_enroll_second_factor?: boolean;
+            /** @description The account still has a stored password. False once it signs in through its provider. */
+            has_password?: boolean;
             /** @description The server lets this user play Live TV directly from the provider
              *     (`REEL_ALLOW_DIRECT_LIVE` and IPTV access). */
             direct_live?: boolean;
