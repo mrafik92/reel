@@ -895,20 +895,34 @@ impl ChannelHub {
         self.inner.resolver.resolve(channel_id).await
     }
 
-    /// `(source id, connection limit)` of a channel's primary source, if limited.
+    /// `(source id, connection limit)` of the source a new connection of the channel would use
+    /// (see [`Self::prefer_free`]), if limited.
     pub async fn channel_budget(&self, channel_id: i64) -> Result<Option<(i64, u32)>> {
-        Ok(self
-            .inner
-            .resolver
-            .resolve(channel_id)
-            .await?
-            .and_then(|s| {
-                s.candidates.first().and_then(|c| {
-                    c.max_connections
-                        .filter(|m| *m > 0)
-                        .map(|m| (c.source_id, m))
-                })
-            }))
+        let Some(mut spec) = self.inner.resolver.resolve(channel_id).await? else {
+            return Ok(None);
+        };
+        self.prefer_free(&mut spec);
+        Ok(spec.candidates.first().and_then(|c| {
+            c.max_connections
+                .filter(|m| *m > 0)
+                .map(|m| (c.source_id, m))
+        }))
+    }
+
+    /// Move the first candidate whose source has a free (or evictable) slot to the front, so a
+    /// new connection uses a spare login or alias before the budget policy stops another stream
+    /// (#297: several logins on one provider). Leaves the order alone when none is free.
+    pub fn prefer_free(&self, spec: &mut ChannelSpec) {
+        let free =
+            spec.candidates
+                .iter()
+                .position(|c| match c.max_connections.filter(|m| *m > 0) {
+                    None => true,
+                    Some(m) => self.slot_available(c.source_id, m, spec.channel_id),
+                });
+        if let Some(i) = free.filter(|i| *i > 0) {
+            spec.candidates[..=i].rotate_right(1);
+        }
     }
 
     /// Would opening one more connection on `source_id` succeed (free slot, or an unwatched
@@ -978,12 +992,13 @@ impl ChannelHub {
                 return Ok(Subscription::new(p));
             }
         }
-        let spec = self
+        let mut spec = self
             .inner
             .resolver
             .resolve(channel_id)
             .await?
             .ok_or_else(|| Error::NotFound(format!("channel {channel_id}")))?;
+        self.prefer_free(&mut spec);
         let mut st = self.inner.state.lock().unwrap();
         if let Some(p) = st.pipes.get(&channel_id).cloned() {
             self.note_user(&mut st, user_id, channel_id);

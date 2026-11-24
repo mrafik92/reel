@@ -228,7 +228,7 @@ const CHANNEL_SELECT: &str = "SELECT c.id, c.source_id, c.name, c.number, c.grou
 pub async fn list_channels(pool: &SqlitePool, f: &ChannelFilter) -> Result<Vec<ChannelRow>> {
     let mut sql = format!("{CHANNEL_SELECT} WHERE 1=1");
     if !f.include_hidden {
-        sql.push_str(" AND c.enabled = 1 AND c.missing = 0 AND s.enabled = 1");
+        sql.push_str(" AND c.enabled = 1 AND c.missing = 0 AND c.duplicate = 0 AND s.enabled = 1");
     }
     if f.group.is_some() {
         sql.push_str(" AND c.group_name = ?");
@@ -280,7 +280,8 @@ pub async fn list_groups(pool: &SqlitePool) -> Result<Vec<(String, i64)>> {
     Ok(sqlx::query_as(
         "SELECT COALESCE(c.group_name, 'Uncategorized') AS g, count(*) FROM channels c \
          JOIN iptv_sources s ON s.id = c.source_id \
-         WHERE c.enabled = 1 AND c.missing = 0 AND s.enabled = 1 GROUP BY g ORDER BY lower(g)",
+         WHERE c.enabled = 1 AND c.missing = 0 AND c.duplicate = 0 AND s.enabled = 1 \
+         GROUP BY g ORDER BY lower(g)",
     )
     .fetch_all(pool)
     .await?)
@@ -319,7 +320,7 @@ pub async fn top_favorites(pool: &SqlitePool, n: usize) -> Result<Vec<i64>> {
     Ok(sqlx::query_scalar(
         "SELECT f.channel_id FROM user_channel_favorites f \
          JOIN channels c ON c.id = f.channel_id JOIN iptv_sources s ON s.id = c.source_id \
-         WHERE c.enabled = 1 AND c.missing = 0 AND s.enabled = 1 \
+         WHERE c.enabled = 1 AND c.missing = 0 AND c.duplicate = 0 AND s.enabled = 1 \
          GROUP BY f.channel_id ORDER BY count(*) DESC, f.channel_id LIMIT ?",
     )
     .bind(n as i64)
@@ -546,6 +547,20 @@ impl ChannelResolver for DbResolver {
             return Ok(None);
         };
         let mut candidates = vec![candidate_from_row(&row)];
+        // the same channel through the provider's other logins: each one is another
+        // connection (#297)
+        let source_id: i64 = row.get("source_id");
+        for m in crate::dedup::mirrors(&self.pool, source_id).await? {
+            let alt = sqlx::query(&format!(
+                "{CAND_SELECT} AND c.source_id = ? \
+                 AND c.ext_id = (SELECT ext_id FROM channels WHERE id = ?)"
+            ))
+            .bind(m.id)
+            .bind(channel_id)
+            .fetch_optional(&self.pool)
+            .await?;
+            candidates.extend(alt.as_ref().map(candidate_from_row));
+        }
         let alts = sqlx::query(&format!(
             "{CAND_SELECT} AND c.id IN (SELECT alt_source_channel_id FROM channel_aliases \
              WHERE channel_id = ?) ORDER BY (SELECT priority FROM channel_aliases \
@@ -555,7 +570,12 @@ impl ChannelResolver for DbResolver {
         .bind(channel_id)
         .fetch_all(&self.pool)
         .await?;
-        candidates.extend(alts.iter().map(candidate_from_row));
+        for r in &alts {
+            let c = candidate_from_row(r);
+            if !candidates.iter().any(|k| k.channel_id == c.channel_id) {
+                candidates.push(c);
+            }
+        }
         Ok(Some(ChannelSpec {
             channel_id,
             name: row.get("name"),

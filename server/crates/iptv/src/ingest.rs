@@ -871,6 +871,13 @@ impl Ingest {
                 return Err(e);
             }
         };
+        // the guide and VOD imports take a while: hide channel copies right away (#297)
+        if let Err(e) = crate::dedup::refresh(&self.pool).await {
+            warn!(
+                source = src.id,
+                "merging logins of the same provider failed: {e}"
+            );
+        }
         let fresh = crate::store::get_source(&self.pool, src.id).await?;
         let (epg, epg_error) = if !fresh.epg_urls.is_empty()
             || fresh.detected_epg_url.is_some()
@@ -895,6 +902,13 @@ impl Ingest {
                     crate::net::redact_text(&e.to_string())
                 );
             }
+        }
+        // another login on the same provider imports the same catalog: hide the copies (#297)
+        if let Err(e) = crate::dedup::refresh(&self.pool).await {
+            warn!(
+                source = src.id,
+                "merging logins of the same provider failed: {e}"
+            );
         }
         Ok(RefreshReport {
             channels,

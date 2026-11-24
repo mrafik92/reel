@@ -650,25 +650,72 @@ pub async fn resolve_target(pool: &SqlitePool, kind: &str, id: i64) -> Result<Pl
         _ => return Err(Error::Invalid("kind must be movie or episode".into())),
     };
     let src = store::get_source(pool, source_id).await?;
+    let container = container
+        .filter(|c| !c.is_empty())
+        .unwrap_or_else(|| "mp4".into());
+    target_on(&src, kind, ext, container, title, series_id)
+}
+
+/// [`resolve_target`] followed by the same title through the provider's other enabled logins
+/// whose catalog has it too (#297): each one is another provider connection.
+pub async fn resolve_targets(pool: &SqlitePool, kind: &str, id: i64) -> Result<Vec<PlayTarget>> {
+    let first = resolve_target(pool, kind, id).await?;
+    let mirrors = crate::dedup::mirrors(pool, first.source_id).await?;
+    let mut out = vec![];
+    for m in mirrors {
+        // movie: same stream id; episode: same episode id in a series the login also has
+        let ext: Option<i64> = sqlx::query_scalar(if kind == "movie" {
+            "SELECT o.stream_id FROM vod_movies i JOIN vod_movies o ON o.stream_id = i.stream_id \
+             WHERE i.id = ?1 AND o.source_id = ?2 AND o.missing = 0"
+        } else {
+            "SELECT e.ext_id FROM vod_episodes e JOIN vod_series s ON s.id = e.series_pk \
+             JOIN vod_series o ON o.series_id = s.series_id \
+             WHERE e.id = ?1 AND o.source_id = ?2 AND o.missing = 0"
+        })
+        .bind(id)
+        .bind(m.id)
+        .fetch_optional(pool)
+        .await?;
+        let Some(ext) = ext else { continue };
+        if let Ok(t) = target_on(
+            &m,
+            kind,
+            ext,
+            first.container.clone(),
+            first.title.clone(),
+            first.series_id,
+        ) {
+            out.push(t);
+        }
+    }
+    out.insert(0, first);
+    Ok(out)
+}
+
+fn target_on(
+    src: &Source,
+    kind: &str,
+    ext: i64,
+    container: String,
+    title: String,
+    series_id: Option<i64>,
+) -> Result<PlayTarget> {
     let (Some(u), Some(p)) = (&src.username, &src.password) else {
         return Err(Error::Invalid("source has no credentials".into()));
     };
     let x = XtreamClient::new(reqwest::Client::new(), &src.url, u, p);
-    let container = container
-        .filter(|c| !c.is_empty())
-        .unwrap_or_else(|| "mp4".into());
     let url = if kind == "movie" {
         x.vod_url(ext, &container)
     } else {
         x.series_url(ext, &container)
     };
     Ok(PlayTarget {
-        source_id,
+        source_id: src.id,
         url,
         container,
         title,
         max_connections: src.max_connections.filter(|m| *m > 0),
-        user_agent: src.user_agent,
+        user_agent: src.user_agent.clone(),
         series_id,
     })
 }
