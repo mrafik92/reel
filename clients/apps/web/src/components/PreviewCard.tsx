@@ -98,6 +98,8 @@ export function PreviewLayer(): JSX.Element {
     window.addEventListener("scroll", onScroll, { capture: true, passive: true });
     document.addEventListener("pointerdown", onDown, true);
     document.addEventListener("keydown", onKey, true);
+    // The card and its parted row were placed for the old layout.
+    window.addEventListener("resize", closePreview);
     const offBack = onBack(() => {
       const t = previewTarget();
       if (!t) return false;
@@ -110,6 +112,7 @@ export function PreviewLayer(): JSX.Element {
       window.removeEventListener("scroll", onScroll, { capture: true } as EventListenerOptions);
       document.removeEventListener("pointerdown", onDown, true);
       document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("resize", closePreview);
       offBack();
       closePreview();
       closeRow();

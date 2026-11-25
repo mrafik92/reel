@@ -67,8 +67,9 @@ export function Img(props: ImgProps): JSX.Element {
     setFailed(false);
     setInstant(false);
   }, { defer: true }));
+  // A promise, not `queueMicrotask`: Chromium 68 (the TV browsers) doesn't have it.
   const cached = (img: HTMLImageElement) => {
-    queueMicrotask(() => {
+    void Promise.resolve().then(() => {
       if (img.complete && img.naturalWidth > 0) {
         setInstant(true);
         setLoaded(true);

@@ -324,8 +324,11 @@ html[data-input="pointer"] .iconbtn--solid:focus:not(:hover) {
   background: rgba(var(--ink-rgb), 0.75);
 }
 /* Press-in (#301): every button, link-button and icon button answers a click. `html[data-input]`
-   outranks the focus scales above, which would otherwise hold a clicked button at its focus size. */
+   outranks the focus scales above, which would otherwise hold a clicked button at its focus size.
+   A clicked `.btn` is focused and hovered at once, and its `:focus:hover` rules reset the transform:
+   `.btn:focus:active` matches their weight and, coming later, wins. */
 html[data-input] .btn:active,
+html[data-input] .btn:focus:active,
 html[data-input] .iconbtn:active,
 html[data-input] .chip:active,
 html[data-input] .tab:active,

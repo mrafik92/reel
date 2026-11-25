@@ -1,5 +1,5 @@
 /**
- * The numbered row's numerals (#301): SVG text exactly as tall as the poster, in Archivo at width 62
+ * The numbered row's numerals (#301): SVG text whose outline is exactly as tall as the poster, in Archivo at width 62
  * and weight 900 (`fonts/archivo-rank-digits.woff2`), at the font's own proportions.
  *
  * Coordinates are in a viewBox 1000 units tall (the poster's height); the SVG's width follows from
@@ -8,8 +8,11 @@
 
 /** Advance widths of 0–9 per 1000 em. */
 const ADVANCE = [444, 371, 427, 440, 435, 437, 445, 396, 432, 445];
-/** Height of the digits' flat tops per em: the font size that makes a digit as tall as the poster. */
+/** Height of the digits' flat tops (1, 4, 7) per em. */
 export const RANK_CAP = 0.688;
+/** Round digits (0, 2, 3…) overshoot the flat ones: how far their ink runs above and below the baseline, per em. */
+export const RANK_INK_TOP = 0.7;
+export const RANK_INK_BOTTOM = 0.012;
 /** The viewBox height. */
 export const RANK_H = 1000;
 /** Outline width, about 6 px on a 144 px poster. Half of it lies outside the glyph. */
@@ -23,13 +26,15 @@ export interface RankNumeral {
   fontSize: number;
   letterSpacing: number;
   x: number;
-  /** Baseline: the digits sit on the poster's bottom edge. */
+  /** Baseline: the outline's bottom edge sits on the poster's bottom edge. */
   y: number;
 }
 
 export function rankNumeral(n: number): RankNumeral {
   const digits = String(Math.max(0, Math.floor(n)));
-  const fontSize = RANK_H / RANK_CAP;
+  // The tallest digits plus their outline fill the poster's height exactly, so nothing stands above its
+  // top edge or below its bottom one.
+  const fontSize = (RANK_H - RANK_STROKE) / (RANK_INK_TOP + RANK_INK_BOTTOM);
   const letterSpacing = digits.length > 1 ? TIGHTEN * fontSize : 0;
   let w = RANK_STROKE;
   for (let i = 0; i < digits.length; i++) {
@@ -40,6 +45,6 @@ export function rankNumeral(n: number): RankNumeral {
     fontSize: Math.round(fontSize * 10) / 10,
     letterSpacing: Math.round(letterSpacing * 10) / 10,
     x: RANK_STROKE / 2,
-    y: RANK_H - 7,
+    y: Math.round((RANK_H - RANK_STROKE / 2 - RANK_INK_BOTTOM * fontSize) * 10) / 10,
   };
 }
