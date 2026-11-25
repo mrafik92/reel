@@ -360,7 +360,14 @@ export function detail(db: Db, id: number): ItemDetail | undefined {
     cast,
     children_count: rec.childIds.length,
     files: multiEpisode(db, rec) ?? filesFor(rec),
+    trailer_youtube_id: mockTrailer(rec),
   };
+}
+
+/** Films and shows get a trailer, except every third one (to see the no-trailer state). */
+function mockTrailer(rec: Rec): string | null {
+  const { kind, id } = rec.summary;
+  return (kind === "movie" || kind === "show") && id % 3 !== 0 ? "aqz-KE-bpKQ" : null;
 }
 
 /** Mock a multi-episode file: Kitchen Brigade S1E1+E2 live in one `S01E01E02` file. */

@@ -9965,6 +9965,13 @@
                   "null"
                 ],
                 "format": "int64"
+              },
+              "trailer_youtube_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "YouTube id of the title's main trailer (movies and shows, from TMDB); embed it from\n`youtube-nocookie.com`. Absent when TMDB has none or it hasn't been looked up yet."
               }
             }
           }

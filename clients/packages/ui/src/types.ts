@@ -112,6 +112,8 @@ export interface ItemDetail extends ItemSummary {
   cast: CastMember[];
   children_count: number;
   files: MediaFile[];
+  /** YouTube id of the title's trailer (films and shows, from TMDB). */
+  trailer_youtube_id?: string | null;
 }
 
 export interface Page<T> {

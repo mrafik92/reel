@@ -8,7 +8,8 @@ import { ErrorState } from "../components/States";
 import { RatingsStrip, ReviewsSection, useReviews } from "../components/Reviews";
 import { CastTile } from "../components/Cast";
 import { vodPlayHref } from "../components/vod/links";
-import { TrailerModal, VodEyebrow, VodFineprint, VodSkeleton } from "../components/vod/Detail";
+import { VodEyebrow, VodFineprint, VodSkeleton } from "../components/vod/Detail";
+import { TrailerModal } from "../components/Trailer";
 import { TitleSheet } from "../components/TitleSheet";
 
 /** An IPTV film: modeled on the library detail page, played through the provider. */

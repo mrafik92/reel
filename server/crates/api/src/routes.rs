@@ -414,7 +414,7 @@ pub async fn get_item(
     );
     let row = sqlx::query(&format!(
         "{sel}, i.overview, i.runtime_s, i.rating, i.content_rating, i.tmdb_id, \
-         (SELECT count(*) FROM media_items c WHERE c.parent_id = i.id) AS children_count \
+         i.trailer_youtube_id, (SELECT count(*) FROM media_items c WHERE c.parent_id = i.id) AS children_count \
          {frm} WHERE i.id = ?"
     ))
     .bind(id)
@@ -462,6 +462,7 @@ pub async fn get_item(
         cast,
         children_count: row.get("children_count"),
         files,
+        trailer_youtube_id: row.get("trailer_youtube_id"),
     }))
 }
 

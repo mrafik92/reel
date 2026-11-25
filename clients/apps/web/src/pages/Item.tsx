@@ -24,6 +24,7 @@ import { itemActivity } from "../lib/downloads";
 import { episodeTag } from "../lib/continue";
 import { CastText, InfoLine, RoundAction, SeasonPicker, TitleSheet } from "../components/TitleSheet";
 import { EpisodeList } from "../components/EpisodeList";
+import { TrailerModal } from "../components/Trailer";
 
 type Picker = "audio" | "sub" | "version" | "cast" | null;
 /** Sheet value for "Automatic" (use my playback settings). */
@@ -137,6 +138,8 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
     return eps.find((e) => e.progress) ?? eps.find((e) => !e.played) ?? eps[0];
   });
 
+  const [trailer, setTrailer] = createSignal(false);
+  const trailerId = () => (it().kind === "movie" || it().kind === "show" ? it().trailer_youtube_id : null);
   const [played, setPlayedLocal] = createSignal(props.item.played);
   const [savingPlayed, setSavingPlayed] = createSignal(false);
   const togglePlayed = async () => {
@@ -209,6 +212,9 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
               </>
             )}
           </Show>
+        </Show>
+        <Show when={trailerId()}>
+          <RoundAction icon={<Icon name="film" />} label="Trailer" onClick={() => setTrailer(true)} />
         </Show>
         <RoundAction
           icon={<Icon name={played() ? "eyeoff" : "check"} />}
@@ -436,6 +442,9 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
           onSelect={(v) => setFileIdx(v)}
           onClose={() => setPicker(null)}
         />
+      </Show>
+      <Show when={trailer() && trailerId()}>
+        {(id) => <TrailerModal youtubeId={id()} title={it().title} onClose={() => setTrailer(false)} />}
       </Show>
     </TitleSheet>
   );
