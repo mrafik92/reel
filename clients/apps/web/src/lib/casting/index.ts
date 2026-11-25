@@ -234,7 +234,7 @@ async function reload(a: ActiveCast, o: Partial<CastOpen>): Promise<void> {
       start: a.source.meta.live ? 0 : a.remote.position(),
     });
   } catch (e) {
-    t.setError(e instanceof Error ? e.message : "The TV didn't accept the change");
+    t.setError(e instanceof Error ? e.message : "The TV didn’t accept the change");
   } finally {
     t.setBusy(false);
   }
@@ -400,7 +400,7 @@ function absoluteOn(path: string, mediaUrl: string): string {
 // DLNA (server-driven)
 
 async function dlnaRemote(target: CastTarget, source: CastSource, o: CastOpen): Promise<Remote> {
-  if (!source.dlna) throw new Error("This can't be sent to that TV");
+  if (!source.dlna) throw new Error("This can’t be sent to that TV");
   const [state, setState] = createSignal<RemoteState>("connecting");
   const [pos, setPos] = createSignal(o.start);
   const [dur, setDur] = createSignal(source.meta.duration ?? 0);

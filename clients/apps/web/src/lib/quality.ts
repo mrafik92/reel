@@ -84,10 +84,10 @@ export function whyTranscode(d: DecideResponse): string {
   if (d.decision.subtitle.type === "burn_in") return "The subtitles you picked are pictures, so they have to be drawn into the video.";
   const v = d.decision.video;
   const r = d.decision.reasons;
-  if (v.type === "encode" && v.tonemap) return "This is an HDR video and this screen can't show HDR, so it has to be converted to SDR.";
+  if (v.type === "encode" && v.tonemap) return "This is an HDR video and this screen can’t show HDR, so it has to be converted to SDR.";
   if (r.some((x) => /^resolution .* exceeds client max/.test(x))) return "The video is bigger than this device can show.";
-  if (r.some((x) => /^video codec|profile '|level .* exceeds|bit depth/.test(x))) return "This device can't decode the original video format.";
-  return "This device can't play the original video as it is.";
+  if (r.some((x) => /^video codec|profile '|level .* exceeds|bit depth/.test(x))) return "This device can’t decode the original video format.";
+  return "This device can’t play the original video as it is.";
 }
 
 /** Multi-variant session (#111): hls.js switches between the listed variants. */
@@ -111,7 +111,7 @@ function explainTop(d: DecideResponse, asked: Quality): string {
     case "remux":
       return "Original picture and sound, repackaged for this player. Nothing is re-encoded.";
     case "audio_transcode":
-      return "Original picture. Only the sound is converted, because this device can't play the original audio.";
+      return "Original picture. Only the sound is converted, because this device can’t play the original audio.";
   }
   const q = d.quality && d.quality !== "original" ? d.quality : undefined;
   const to = q ? `Converted to ${q}` : "Converted";
@@ -146,7 +146,7 @@ export function optionDetail(o: QualityOption | undefined, q: Quality, d: Decide
   if (q === "original") {
     // The current stream re-encodes the picture without a quality reason: so would Original.
     const forced = d && videoTranscoded(d) && !adaptiveReason(d);
-    return forced ? `${rate} · this device can't play it without converting` : `${rate} · no re-encoding`;
+    return forced ? `${rate} · this device can’t play it without converting` : `${rate} · no re-encoding`;
   }
   return rate;
 }

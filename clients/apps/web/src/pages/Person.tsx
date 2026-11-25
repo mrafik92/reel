@@ -240,13 +240,13 @@ function PersonError(props: { error: unknown; onRetry: () => void }): JSX.Elemen
   return (
     <Show when={status() === 404 || status() === 424} fallback={<ErrorState error={props.error} onRetry={props.onRetry} />}>
       <EmptyState
-        title={status() === 404 ? "We couldn't find this person" : "Filmographies need TMDB"}
+        title={status() === 404 ? "We couldn’t find this person" : "Filmographies need TMDB"}
         body={
           status() === 404
             ? "TMDB has no record of them — the cast list may come from a local .nfo file."
             : isAdmin()
               ? "Add a TMDB API key to the server config (tmdb_api_key, or REEL_TMDB_API_KEY) and restart it."
-              : "Your server's admin needs to connect it to TMDB first."
+              : "Your server’s admin needs to connect it to TMDB first."
         }
       >
         <button type="button" class="btn" data-autofocus onClick={() => window.history.back()}>

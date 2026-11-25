@@ -15,7 +15,7 @@ export function OidcButtons(props: { purpose: "login" | "invite"; invite?: strin
     try {
       await startOidc(p, props.purpose, { invite: props.invite, next: props.next });
     } catch (e) {
-      props.onError(e instanceof Error ? e.message : `Couldn't reach ${p.name}.`);
+      props.onError(e instanceof Error ? e.message : `Couldn’t reach ${p.name}.`);
       setBusy(false);
     }
   };

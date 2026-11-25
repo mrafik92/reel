@@ -99,7 +99,7 @@ export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: 
                             {state() === "downloading"
                               ? [dl()!.eta_seconds ? formatEta(dl()!.eta_seconds!) : "", dl()!.speed_bps ? formatSpeed(dl()!.speed_bps!) : ""].filter(Boolean).join(" · ")
                               : state() === "searching" ? "Looking for a good release…"
-                              : state() === "stalled" ? "No progress for a while — it'll keep trying"
+                              : state() === "stalled" ? "No progress for a while — it’ll keep trying"
                               : state() === "importing" ? "Moving it into your library…"
                               : state() === "requested" ? "Waiting for an admin to approve"
                               : failed() ? "Nothing suitable found yet" : ""}
@@ -165,7 +165,7 @@ export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: 
                       </button>
                     </div>
                     <Show when={!canAutoAdd() && !available() && !active()}>
-                      <p class="dsheet__fine">Requests are reviewed by your server's admin before downloading.</p>
+                      <p class="dsheet__fine">Requests are reviewed by your server’s admin before downloading.</p>
                     </Show>
                     <Show when={d()?.cast?.length}>
                       <div class="dsheet__cast">

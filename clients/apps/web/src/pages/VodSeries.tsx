@@ -20,7 +20,7 @@ export default function VodSeries(): JSX.Element {
 
   return (
     <div class="page detail vdetail" ref={el}>
-      <Show when={!s.error} fallback={<ErrorState error={s.error} title="Couldn't open this IPTV series" onRetry={refetch} />}>
+      <Show when={!s.error} fallback={<ErrorState error={s.error} title="Couldn’t open this IPTV series" onRetry={refetch} />}>
         <Show when={s()} fallback={<VodSkeleton />}>
           {(x) => <SeriesBody s={x()} />}
         </Show>

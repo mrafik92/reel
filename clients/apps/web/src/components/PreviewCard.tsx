@@ -5,10 +5,58 @@ import { formatRuntime, Icon, Img, onBack, type ItemDetail } from "@reel/ui";
 import { api, invalidateLibrary } from "../api";
 import { continueSubtitle } from "../lib/continue";
 import { itemHref, playHref } from "../lib/links";
-import { closePreview, keepPreview, previewScrolled, previewTarget, type PreviewTarget } from "../lib/preview";
+import { closePreview, keepPreview, leavePreview, previewScrolled, previewTarget, type PreviewTarget } from "../lib/preview";
+import { previewPlacement, previewWidth, qualityBadge, translateXOf, type PreviewKind } from "../lib/previewGeometry";
 import { toast } from "../lib/toast";
 
-const LEAVE_MS = 120;
+/** The card's exit (CSS `.preview` transition). */
+const LEAVE_MS = 130;
+
+// ---------------------------------------------------------------------------
+// The row makes room (#301). The open tile fades out under the card and the tiles before and after
+// it slide aside with transforms, never layout: the row's scroll position, scroll width as the
+// paging arrows measure it, and the TV navigation's idea of where a tile is all stay put.
+
+let openTile: HTMLElement | null = null;
+let parted: HTMLElement[] = [];
+
+/** Let the row close up again and give the tile back. */
+function closeRow(): void {
+  for (const el of parted) el.style.transform = "";
+  parted = [];
+  openTile?.classList.remove("is-previewed");
+  openTile = null;
+}
+
+function partRow(tile: HTMLElement, before: number, after: number): void {
+  closeRow();
+  openTile = tile;
+  tile.classList.add("is-previewed");
+  const track = tile.parentElement;
+  if (!track || !track.classList.contains("row__track")) return;
+  const shift = (el: HTMLElement, dx: number) => {
+    if (Math.abs(dx) < 0.5) return;
+    el.style.transform = `translateX(${dx.toFixed(1)}px)`;
+    parted.push(el);
+  };
+  let seen = false;
+  for (let i = 0; i < track.children.length; i++) {
+    const el = track.children[i] as HTMLElement;
+    if (el === tile) {
+      seen = true;
+      // The numbered row: the open tile's numeral goes with the tiles before it.
+      const rank = tile.querySelector<HTMLElement>(".card__rank");
+      if (rank) shift(rank, before);
+      continue;
+    }
+    shift(el, seen ? after : before);
+  }
+}
+
+function kindOf(tile: HTMLElement): PreviewKind {
+  if (tile.classList.contains("card--ranked")) return "ranked";
+  return tile.classList.contains("card--landscape") ? "landscape" : "poster";
+}
 
 /** The single floating preview. It lives above the page because rows clip their content. */
 export function PreviewLayer(): JSX.Element {
@@ -20,6 +68,8 @@ export function PreviewLayer(): JSX.Element {
 
   createEffect(() => {
     const t = previewTarget();
+    // The row starts closing with the card, not after its exit.
+    closeRow();
     if (leaveTimer) clearTimeout(leaveTimer);
     if (t) {
       setLeaving(false);
@@ -48,6 +98,8 @@ export function PreviewLayer(): JSX.Element {
     window.addEventListener("scroll", onScroll, { capture: true, passive: true });
     document.addEventListener("pointerdown", onDown, true);
     document.addEventListener("keydown", onKey, true);
+    // The card and its parted row were placed for the old layout.
+    window.addEventListener("resize", closePreview);
     const offBack = onBack(() => {
       const t = previewTarget();
       if (!t) return false;
@@ -60,8 +112,10 @@ export function PreviewLayer(): JSX.Element {
       window.removeEventListener("scroll", onScroll, { capture: true } as EventListenerOptions);
       document.removeEventListener("pointerdown", onDown, true);
       document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("resize", closePreview);
       offBack();
       closePreview();
+      closeRow();
     });
   });
 
@@ -100,7 +154,7 @@ function Card(props: { target: PreviewTarget; leaving: boolean }): JSX.Element {
       invalidateLibrary();
     } catch (e) {
       setPlayed(!next);
-      toast(e instanceof Error ? e.message : "Couldn't update", "error");
+      toast(e instanceof Error ? e.message : "Couldn’t update", "error");
     } finally {
       setSaving(false);
     }
@@ -121,50 +175,69 @@ function Card(props: { target: PreviewTarget; leaving: boolean }): JSX.Element {
     return it.series ? "" : formatRuntime(d?.runtime_s ?? it.runtime_s);
   };
   const genres = () => (detail()?.genres ?? it.genres ?? []).slice(0, 3);
+  const quality = () => qualityBadge(detail()?.files);
+  // A title in progress shows where the viewer is instead of the synopsis. Fixed when the card opens
+  // (from the tile, not the detail or Mark watched), so the card's height never changes while open.
+  const p0 = it.progress ?? 0;
+  const resumeLine = it.series || (p0 > 0.005 && p0 < 0.995 && !it.played) ? continueSubtitle(it) : "";
+  const resume = () => resumeLine;
   const playLink = () => (it.kind === "show" ? itemHref(it) : playHref(it));
   const infoLink = () => itemHref(it.series ? { id: it.series.id, kind: "show" } : it);
 
   onMount(() => {
-    const frame = t.el.querySelector(".card__frame") ?? t.el;
-    const r = frame.getBoundingClientRect();
+    const tile = t.el;
     const root = document.documentElement;
-    const rem = parseFloat(getComputedStyle(root).fontSize) || 16;
-    const gutter = parseFloat(getComputedStyle(root).getPropertyValue("--gutter")) * rem || 48;
-    const bar = (parseFloat(getComputedStyle(root).getPropertyValue("--topbar-h")) || 0) * rem;
+    const css = getComputedStyle(root);
+    const rem = parseFloat(css.fontSize) || 16;
+    const gutter = parseFloat(css.getPropertyValue("--gutter")) * rem || 48;
+    const bar = (parseFloat(css.getPropertyValue("--topbar-h")) || 0) * rem;
     const vw = root.clientWidth;
     const vh = window.innerHeight;
-    const width = Math.min(Math.max(r.width * 1.9, 20 * rem), vw - 2 * gutter);
+    // Where the art sits in the layout: without the slide of a row that is still closing up, and
+    // without the TV focus scale (offset sizes ignore transforms).
+    const r = tile.getBoundingClientRect();
+    const x = r.left - translateXOf(getComputedStyle(tile).transform);
+    const frame = tile.querySelector<HTMLElement>(".card__frame");
+    const art = frame
+      ? { left: x + frame.offsetLeft, top: r.top + frame.offsetTop, width: frame.offsetWidth, height: frame.offsetHeight }
+      : { left: x, top: r.top, width: r.width, height: r.height };
+    const kind = kindOf(tile);
+    const width = previewWidth(kind, art.width, rem, vw, gutter);
     el.style.width = `${width}px`;
-    const height = el.offsetHeight;
-    const cx = r.left + r.width / 2;
-    const cy = r.top + r.height / 2;
-    const left = Math.max(gutter, Math.min(cx - width / 2, vw - gutter - width));
-    const top = Math.max(bar + 8, Math.min(cy - height / 2, vh - height - 8));
+    const head = tile.closest(".row")?.querySelector(".row__head");
+    const p = previewPlacement({
+      kind,
+      tile: art,
+      width,
+      height: el.offsetHeight,
+      headBottom: head ? head.getBoundingClientRect().bottom : null,
+      viewportWidth: vw,
+      viewportHeight: vh,
+      gutter,
+      minTop: bar + 0.5 * rem,
+      gap: 0.25 * rem,
+    });
     setStyle({
       width: `${width}px`,
-      left: `${left}px`,
-      top: `${top}px`,
-      "transform-origin": `${cx - left}px ${cy - top}px`,
+      left: `${p.left}px`,
+      top: `${p.top}px`,
+      "transform-origin": `${p.originX}px ${p.originY}px`,
     });
+    partRow(tile, p.before, p.after);
     const raf = requestAnimationFrame(() => requestAnimationFrame(() => setEntered(true)));
-    // The card carries the focus ring now: the tile's own would show around its edge.
-    if (!hover) t.el.classList.add("is-previewed");
-    onCleanup(() => {
-      cancelAnimationFrame(raf);
-      t.el.classList.remove("is-previewed");
-    });
+    onCleanup(() => cancelAnimationFrame(raf));
   });
 
   return (
     <div
       ref={el}
-      class="preview glass"
+      class="preview"
       classList={{ "preview--focus": !hover, "is-in": entered() && !props.leaving }}
       style={style()}
       aria-hidden="true"
       data-nav-skip
       onMouseEnter={keepPreview}
-      onMouseLeave={() => hover && closePreview()}
+      onMouseLeave={() => hover && leavePreview()}
     >
       <a class="preview__art" href={t.href} tabindex="-1">
         <Img
@@ -176,6 +249,9 @@ function Card(props: { target: PreviewTarget; leaving: boolean }): JSX.Element {
         />
         <span class="preview__shade" />
         <span class="preview__title">{it.title}</span>
+        <Show when={quality()}>
+          <span class="preview__quality">{quality()}</span>
+        </Show>
         <Show when={progress()}>
           <span class="preview__progress"><i style={{ width: `${progress() * 100}%` }} /></span>
         </Show>
@@ -202,29 +278,30 @@ function Card(props: { target: PreviewTarget; leaving: boolean }): JSX.Element {
             </a>
           </div>
         </Show>
-        <Show when={it.series}>
-          <p class="preview__episode">{continueSubtitle(it)}</p>
+        <Show when={resume()}>
+          <p class="preview__episode">{resume()}</p>
         </Show>
         <p class="preview__meta">
           <Show when={rating()}>
             <span class="preview__rating"><Icon name="star" filled /> {rating()}</span>
           </Show>
-          <Show when={it.year}><span>{detail()?.year ?? it.year}</span></Show>
+          <Show when={detail()?.year ?? it.year}>{(y) => <span>{y()}</span>}</Show>
           <Show when={detail()?.content_rating}><span class="badge">{detail()!.content_rating}</span></Show>
           <Show when={length()}><span>{length()}</span></Show>
         </p>
-        <Show when={genres().length}>
-          <p class="preview__genres">
-            <For each={genres()}>
-              {(g, i) => (
-                <>
-                  <Show when={i() > 0}><i aria-hidden="true">•</i></Show>
-                  <span>{g}</span>
-                </>
-              )}
-            </For>
-          </p>
+        <Show when={!resume()}>
+          <p class="preview__synopsis">{detail()?.overview ?? ""}</p>
         </Show>
+        <p class="preview__genres">
+          <For each={genres()}>
+            {(g, i) => (
+              <>
+                <Show when={i() > 0}><i aria-hidden="true">•</i></Show>
+                <span>{g}</span>
+              </>
+            )}
+          </For>
+        </p>
       </div>
     </div>
   );

@@ -106,7 +106,7 @@ export function CastRemote(props: {
             fallback={
               <div class="castview__live">
                 <span class="castview__livepill">Live</span>
-                <span>Seeking isn't available on live TV</span>
+                <span>Seeking isn’t available on live TV</span>
               </div>
             }
           >

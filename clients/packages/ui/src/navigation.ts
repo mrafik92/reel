@@ -431,7 +431,11 @@ function scrollIntoViewSmart(el: HTMLElement, smooth: boolean): void {
   const sx = el.closest<HTMLElement>('[data-nav-scroll="x"]');
   if (sx) {
     const pad = parseFloat(getComputedStyle(sx).paddingLeft) || 0;
-    const er = el.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    // Where the tile rests, not where a slide has it right now: a row parting for the preview card
+    // (#301) moves tiles with translateX and is closing up as focus moves on.
+    const tx = currentTranslateX(el);
+    const er = { left: r.left - tx, right: r.right - tx };
     const sr = sx.getBoundingClientRect();
     let delta = 0;
     if (er.left < sr.left + pad) delta = er.left - sr.left - pad;
@@ -469,6 +473,15 @@ function scrollIntoViewSmart(el: HTMLElement, smooth: boolean): void {
   if (r.top < margin) window.scrollTo({ top: Math.max(0, window.pageYOffset + r.top - margin), behavior });
   else if (r.bottom > vh - margin)
     window.scrollTo({ top: window.pageYOffset + r.bottom - vh + margin, behavior });
+}
+
+/** The x offset of an element's own computed transform, mid-transition included (0 for none). */
+export function currentTranslateX(el: Element): number {
+  const m = /^matrix(3d)?\(([^)]*)\)$/.exec(getComputedStyle(el).transform || "");
+  if (!m) return 0;
+  const v = m[2]!.split(",");
+  const x = parseFloat((m[1] ? v[12] : v[4]) ?? "");
+  return isFinite(x) ? x : 0;
 }
 
 function scrollBy(el: HTMLElement, dx: number, dy: number, behavior: ScrollBehavior): void {

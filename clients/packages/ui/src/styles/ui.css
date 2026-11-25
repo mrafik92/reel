@@ -14,6 +14,7 @@
   --bg-rgb: 20, 20, 20;
   --bg-1-rgb: 24, 24, 24;
   --bg-2-rgb: 35, 35, 35;
+  --bg-3-rgb: 51, 51, 51;
   --bg-glow: #1f1f1f;
   --tint-neutral: #808080;
 
@@ -84,6 +85,22 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --t-fast: 140ms;
   --t: 240ms;
+  /* Rows parting around the preview card (#301), and other on-screen movement. */
+  --ease-part: cubic-bezier(0.2, 0, 0, 1);
+  --t-part: 280ms;
+  /* Press-in: buttons answer a click with a small scale. */
+  --t-press: 120ms;
+  --press-scale: 0.96;
+
+  /* Depth. A white hairline keeps dark artwork's edge on the dark page; raised surfaces get a soft
+     layered shadow (ring, contact, ambient) instead of one heavy blur. */
+  --hairline: rgba(var(--ink-rgb), 0.09);
+  --shadow-lift: 0 0.125rem 0.375rem rgba(0, 0, 0, 0.35), 0 0.875rem 2.125rem rgba(0, 0, 0, 0.6);
+  --shadow-raised: 0 0 0 1px rgba(var(--ink-rgb), 0.1), var(--shadow-lift);
+
+  /* The numbered row's numerals: near-black with a grey outline that turns white on the open tile. */
+  --rank-fill: #0c0c0c;
+  --rank-line: #707070;
 
   --poster-w: 11rem;
   --land-w: 18rem;
@@ -306,6 +323,21 @@ html[data-input="pointer"] .iconbtn--solid:focus:not(:hover) {
 .iconbtn--solid:hover {
   background: rgba(var(--ink-rgb), 0.75);
 }
+/* Press-in (#301): every button, link-button and icon button answers a click. `html[data-input]`
+   outranks the focus scales above, which would otherwise hold a clicked button at its focus size.
+   A clicked `.btn` is focused and hovered at once, and its `:focus:hover` rules reset the transform:
+   `.btn:focus:active` matches their weight and, coming later, wins. */
+html[data-input] .btn:active,
+html[data-input] .btn:focus:active,
+html[data-input] .iconbtn:active,
+html[data-input] .chip:active,
+html[data-input] .tab:active,
+html[data-input] .segmented__btn:active,
+html[data-input] .linkbtn:active,
+html[data-input] .row__action:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--t-press);
+}
 
 .keycap {
   display: inline-block;
@@ -332,6 +364,9 @@ html[data-input="pointer"] .iconbtn--solid:focus:not(:hover) {
 }
 .img.is-loaded img {
   opacity: 1;
+}
+.img.is-instant img {
+  transition: none;
 }
 
 /* ---------- Backdrop (cross-fading) ------------------------------------- */
@@ -363,6 +398,8 @@ html[data-input="pointer"] .iconbtn--solid:focus:not(:hover) {
   color: var(--ink);
   text-decoration: none;
   -webkit-tap-highlight-color: transparent;
+  /* Neighbours slide aside for the preview card (inline translateX from PreviewCard). */
+  transition: transform var(--t-part) var(--ease-part);
 }
 .card--landscape {
   width: var(--land-w);
@@ -375,7 +412,25 @@ html[data-input="pointer"] .iconbtn--solid:focus:not(:hover) {
   overflow: hidden;
   background: var(--bg-2);
   transform: translateZ(0);
-  transition: transform var(--t) var(--ease-out);
+  transition: transform var(--t) var(--ease-out), opacity var(--t-fast) var(--ease);
+}
+/* A hairline over the art keeps a dark poster's edge on the dark page. */
+.card__frame::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  pointer-events: none;
+}
+/* The open preview card replaces its tile: the tile fades out rather than show around the card. */
+.card.is-previewed .card__frame,
+.card.is-previewed > .card__caption {
+  opacity: 0;
+  box-shadow: none;
 }
 .card--landscape .card__frame {
   padding-top: 56.25%;
@@ -580,6 +635,11 @@ html.tv .card--poster:not(.card--preview):hover > .card__caption {
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+/* Entrances (#301): a short rise for surfaces that arrive once, not for anything high-frequency. */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(0.75rem); }
+  to { opacity: 1; transform: none; }
 }
 @keyframes fade-out {
   to { opacity: 0; visibility: hidden; }
@@ -798,40 +858,39 @@ html.tv .row__scroller {
   content: "";
   flex: 0 0 1px;
 }
-/* Paging arrows: pointer only. */
+/* Paging arrows: pointer only. A round glass button in the gutter, centred on the tiles. */
 .row__nav {
   display: none;
   position: absolute;
-  top: 1rem;
-  bottom: 1rem;
+  top: 50%;
   z-index: 3;
-  width: var(--gutter);
+  width: 2.6rem;
+  height: 2.6rem;
+  margin-top: -1.3rem;
   padding: 0;
   border: 0;
-  background: rgba(var(--bg-rgb), 0.5);
+  border-radius: 50%;
+  background: rgba(var(--bg-2-rgb), 0.86);
+  box-shadow: 0 0 0 1px rgba(var(--ink-rgb), 0.18), 0 0.25rem 0.75rem rgba(0, 0, 0, 0.5);
   color: var(--ink);
-  font-size: 1.9rem;
+  font-size: 1.3rem;
   opacity: 0;
   pointer-events: none;
   cursor: pointer;
-  transition: opacity 200ms var(--ease), background-color var(--t-fast) var(--ease);
+  transition: opacity 200ms var(--ease), background-color var(--t-fast) var(--ease),
+    transform var(--t-press) var(--ease-out);
 }
 .row__nav--prev {
-  left: 0;
-  border-radius: 0 var(--radius) var(--radius) 0;
+  left: calc((var(--gutter) - 2.6rem) / 2);
 }
 .row__nav--next {
-  right: 0;
-  border-radius: var(--radius) 0 0 var(--radius);
+  right: calc((var(--gutter) - 2.6rem) / 2);
 }
 .row__nav:hover {
-  background: rgba(var(--bg-rgb), 0.75);
+  background: rgba(var(--bg-3-rgb), 0.92);
 }
-.row__nav .icon {
-  transition: transform var(--t-fast) var(--ease-out);
-}
-.row__nav:hover .icon {
-  transform: scale(1.2);
+.row__nav:active {
+  transform: scale(var(--press-scale));
 }
 @media (hover: hover) and (min-width: 761px) {
   html[data-input="pointer"]:not(.tv) .row__nav {
@@ -843,37 +902,81 @@ html.tv .row__scroller {
     opacity: 1;
     pointer-events: auto;
   }
+  @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    html[data-input="pointer"]:not(.tv) .row__nav {
+      background: rgba(var(--bg-2-rgb), 0.7);
+      -webkit-backdrop-filter: var(--glass-blur);
+      backdrop-filter: var(--glass-blur);
+    }
+  }
 }
-/* Ranked: a huge outlined numeral tucked behind the tile's left edge. */
+/* Desktop: a row with more to see fades out at that edge instead of being cut. Never on TV. */
+@media (min-width: 761px) {
+  html:not(.tv) .row.has-next .row__scroller {
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - var(--gutter)), rgba(0, 0, 0, 0) 100%);
+    mask-image: linear-gradient(90deg, #000 calc(100% - var(--gutter)), rgba(0, 0, 0, 0) 100%);
+  }
+  html:not(.tv) .row.has-prev .row__scroller {
+    -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 var(--gutter));
+    mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 var(--gutter));
+  }
+  html:not(.tv) .row.has-prev.has-next .row__scroller {
+    -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 var(--gutter), #000 calc(100% - var(--gutter)), rgba(0, 0, 0, 0) 100%);
+    mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 var(--gutter), #000 calc(100% - var(--gutter)), rgba(0, 0, 0, 0) 100%);
+  }
+}
+/* Ranked (#301): the numeral is SVG text exactly as tall as the poster, in Archivo at width 62 and
+   weight 900 at its natural proportions. A self-hosted digits-only static instance (fonts/, OFL), so
+   TV browsers need no variable-font support; Inter 900 if it fails. SVG because its paint-order puts
+   the outline behind the fill, which HTML text stroke can't do on Chromium 68. */
+@font-face {
+  font-family: "Reel Rank";
+  font-style: normal;
+  font-weight: 900;
+  font-display: block;
+  src: url("../fonts/archivo-rank-digits.woff2") format("woff2");
+}
 .card--ranked {
-  --rank-tile: calc(var(--poster-w) * 0.86);
-  --rank-w: calc(var(--rank-tile) * 0.72);
-  width: calc(var(--rank-tile) + var(--rank-w));
-  padding-left: var(--rank-w);
+  --rank-h: calc(var(--poster-w) * 1.5);
+  /* The poster overlaps the numeral's right edge, so the two read as one. */
+  --rank-pad: calc(var(--rank-h) * var(--rank-ratio, 0.5) - var(--poster-w) * 0.21);
+  width: calc(var(--poster-w) + var(--rank-pad));
+  padding-left: var(--rank-pad);
 }
-.card--ranked-wide {
-  --rank-w: calc(var(--rank-tile) * 1.42);
+.row__track > .card--ranked + .card--ranked {
+  margin-left: calc(var(--poster-w) * 0.125);
 }
 .card__rank {
   position: absolute;
   top: 0;
   left: 0;
-  display: flex;
-  align-items: flex-end;
-  justify-content: flex-end;
-  width: calc(var(--rank-w) + var(--rank-tile) * 0.25);
-  height: calc(var(--rank-tile) * 1.5);
+  width: calc(var(--rank-h) * var(--rank-ratio, 0.5));
+  height: var(--rank-h);
   overflow: visible;
-  color: transparent;
-  font: 900 calc(var(--rank-tile) * 1.65) / 0.74 var(--font-display);
-  letter-spacing: -0.07em;
-  white-space: nowrap;
-  -webkit-text-stroke: 0.2rem rgba(var(--ink-rgb), 0.45);
   pointer-events: none;
+  transition: transform var(--t-part) var(--ease-part);
+}
+.card__rank text {
+  font-family: "Reel Rank", var(--font-display);
+  font-weight: 900;
+  fill: var(--rank-fill);
+  stroke: var(--rank-line);
+  stroke-linejoin: miter;
+  paint-order: stroke;
+  transition: stroke var(--t-fast) var(--ease);
+}
+.card--ranked.is-previewed .card__rank text,
+html[data-input="key"] .card--ranked:focus .card__rank text {
+  stroke: var(--ink);
+}
+@media (hover: hover) {
+  html[data-input="pointer"] .card--ranked:hover .card__rank text {
+    stroke: var(--ink);
+  }
 }
 @media (min-width: 761px) {
   .card--ranked > .card__caption {
-    left: var(--rank-w);
+    left: var(--rank-pad);
   }
 }
 
@@ -919,7 +1022,7 @@ html.tv .row__scroller {
   flex-direction: column;
   border-radius: var(--radius-l);
   overflow: hidden;
-  box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.75);
+  box-shadow: var(--shadow-lift);
   animation: sheet-in 300ms var(--ease-out) both;
 }
 .sheet__head {

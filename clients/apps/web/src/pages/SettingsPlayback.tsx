@@ -25,8 +25,8 @@ const MODES: { id: SubtitleMode; title: string; body: string }[] = [
   },
   {
     id: "auto",
-    title: "Automatic — when the audio isn't in a language I know",
-    body: "On for a film in a language that isn't in your lists below; off otherwise.",
+    title: "Automatic — when the audio isn’t in a language I know",
+    body: "On for a film in a language that isn’t in your lists below; off otherwise.",
   },
   { id: "always", title: "Always", body: "Always on, in the first of your subtitle languages a title has." },
 ];
@@ -40,7 +40,7 @@ const DELIVERY: { id: LiveDelivery; title: string; body: string }[] = [
   {
     id: "direct",
     title: "Straight from the provider",
-    body: "This device connects to the provider itself, so Reel carries no video. It still uses one of the provider's connections, and zapping is slower. The provider login is sent to this device.",
+    body: "This device connects to the provider itself, so Reel carries no video. It still uses one of the provider’s connections, and zapping is slower. The provider login is sent to this device.",
   },
 ];
 
@@ -53,7 +53,7 @@ const QUALITY_CHOICES: { id: Quality; title: string; body: string }[] = [
   {
     id: "original",
     title: "Original — never re-encode the picture",
-    body: "Direct play or repackaging only (the sound may still be converted). If a title can't play that way here, Reel says why and offers to convert it.",
+    body: "Direct play or repackaging only (the sound may still be converted). If a title can’t play that way here, Reel says why and offers to convert it.",
   },
   { id: "1080p", title: "1080p", body: "At most 1080p, about 8 Mbps. Smaller originals play as they are; nothing is upscaled." },
   { id: "720p", title: "720p", body: "At most 720p, about 4 Mbps. Good for a slower connection away from home." },
@@ -98,7 +98,7 @@ export default function SettingsPlayback(): JSX.Element {
       fade = setTimeout(() => setStatus("idle"), 2400);
     } catch (e) {
       setDraft(undefined);
-      setErrText(e instanceof Error ? e.message : "Couldn't save");
+      setErrText(e instanceof Error ? e.message : "Couldn’t save");
       setStatus("error");
     }
   };
@@ -143,7 +143,7 @@ export default function SettingsPlayback(): JSX.Element {
 
       <Show when={off()}>
         <p class="note prefs__note">
-          <Icon name="alert" /> Your Reel server doesn't support playback preferences yet. Update the server to save
+          <Icon name="alert" /> Your Reel server doesn’t support playback preferences yet. Update the server to save
           these.
         </p>
       </Show>
@@ -206,8 +206,8 @@ export default function SettingsPlayback(): JSX.Element {
           <Show when={directAllowed()}>
             <Panel title="Live TV on this device" icon="tv">
               <p class="panel__lede">
-                Where Live TV streams come from. Saved on this device only. If a channel can't play directly (browsers
-                often can't), Reel switches that channel to the server.
+                Where Live TV streams come from. Saved on this device only. If a channel can’t play directly (browsers
+                often can’t), Reel switches that channel to the server.
               </p>
               <div class="prefs__modes" role="radiogroup" aria-label="Where Live TV streams come from" data-nav-group>
                 <For each={DELIVERY}>
@@ -272,7 +272,7 @@ export default function SettingsPlayback(): JSX.Element {
             <div class="prefs__toggles">
               <Toggle
                 label="Prefer subtitles for the deaf and hard of hearing (SDH)"
-                hint="Include sound cues like [door slams] and who's speaking, when a title has them."
+                hint="Include sound cues like [door slams] and who’s speaking, when a title has them."
                 checked={cur().prefer_sdh}
                 disabled={off()}
                 onChange={(v) => change({ prefer_sdh: v })}
@@ -434,7 +434,7 @@ function Examples(props: { prefs: PlaybackPrefs }): JSX.Element {
         )}
       </For>
       <p class="prefs__fine">
-        "Original language" uses the title's own language. Change tracks while watching and Reel offers to remember it.
+        "Original language" uses the title’s own language. Change tracks while watching and Reel offers to remember it.
       </p>
     </div>
   );

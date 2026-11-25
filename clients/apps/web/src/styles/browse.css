@@ -48,34 +48,43 @@ html[data-input="key"] .card:focus .card__meta {
   }
 }
 
-/* ---------- Preview card (hover and key focus) --------------------------- */
+/* ---------- Preview card (hover and key focus) ---------------------------
+   One card above the page (rows clip their content). Its own surface, not .glass: opaque on TV and
+   in browsers without blur, so the tile's lettering never reads through it; frosted on desktop.
+   Motion (#301): grows from its tile (origin set inline), exits faster than it enters, transitions
+   only (a quick pass over a row interrupts them cleanly), transform and opacity only. */
 .preview {
   position: fixed;
   z-index: 49;
   border-radius: var(--radius-l);
   overflow: hidden;
-  box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.75);
+  background: var(--bg-1);
+  box-shadow: var(--shadow-raised);
   opacity: 0;
-  transform: scale(0.85);
-  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
+  transform: scale(0.88);
+  transition: opacity 130ms var(--ease-out), transform 130ms var(--ease-out);
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  html:not(.tv) .preview {
+    background: rgba(var(--bg-1-rgb), 0.86);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
+}
+/* Entering or leaving, the card lets the pointer through to the tiles under it. */
+.preview:not(.is-in) {
+  pointer-events: none;
 }
 .preview.is-in {
   opacity: 1;
   transform: none;
-  transition: opacity 200ms var(--ease), transform 200ms var(--ease-out);
+  transition: opacity 180ms var(--ease-out), transform 260ms var(--ease-part);
 }
 /* Key focus: the tile underneath is covered, so the card carries the white ring. */
 .preview--focus {
-  box-shadow: var(--focus-ring), 0 0.6rem 2rem rgba(0, 0, 0, 0.75);
+  box-shadow: var(--focus-ring), var(--shadow-raised);
   overflow: visible;
   pointer-events: none;
-}
-/* No blur on TV: the tile under the card must not read through its text. */
-html.tv .preview {
-  background: rgba(var(--bg-1-rgb), 0.97);
-}
-html[data-input="key"] .card.is-previewed .card__frame {
-  box-shadow: none;
 }
 .preview--focus .preview__art {
   border-radius: var(--radius-l) var(--radius-l) 0 0;
@@ -119,10 +128,25 @@ html[data-input="key"] .card.is-previewed .card__frame {
   right: 0.9rem;
   bottom: 0.7rem;
   font: 800 1.15rem/1.15 var(--font-display);
+  letter-spacing: -0.01em;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+/* 4K / HDR, from the title's file. */
+.preview__quality {
+  position: absolute;
+  top: 0.7rem;
+  right: 0.7rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: var(--radius-s);
+  background: rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(var(--ink-rgb), 0.18);
+  color: var(--ink);
+  font: 700 0.68rem/1 var(--font-body);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 .preview__progress {
   position: absolute;
@@ -138,7 +162,7 @@ html[data-input="key"] .card.is-previewed .card__frame {
   background: var(--accent);
 }
 .preview__body {
-  padding: 0.75rem 0.9rem 0.95rem;
+  padding: 0.75rem 0.9rem 0.9rem;
 }
 .preview__actions {
   display: flex;
@@ -152,18 +176,26 @@ html[data-input="key"] .card.is-previewed .card__frame {
   margin-left: auto !important;
 }
 .preview__episode {
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.25rem;
   color: var(--ink);
-  font: 700 0.88rem/1.3 var(--font-body);
+  font: 700 0.88rem/1.35 var(--font-body);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+/* One line, whatever arrives with the detail: the card's height never changes. */
 .preview__meta {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
   color: var(--ink-2);
   font: 400 0.88rem/1.5 var(--font-body);
+  font-variant-numeric: tabular-nums;
 }
 .preview__meta > * {
+  flex-shrink: 0;
   margin-right: 0.65rem;
 }
 .preview__rating {
@@ -174,14 +206,33 @@ html[data-input="key"] .card.is-previewed .card__frame {
   margin: -0.12em 0.2rem 0 0;
   color: var(--accent-hi);
 }
+/* Two lines (three on TV), reserved while the detail loads so nothing below it moves. */
+.preview__synopsis {
+  --lines: 2;
+  height: calc(var(--lines) * 1.4em);
+  margin-top: 0.35rem;
+  overflow: hidden;
+  color: rgba(var(--ink-rgb), 0.86);
+  font: 400 0.86rem/1.4 var(--font-body);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+html.tv .preview__synopsis {
+  --lines: 3;
+  -webkit-line-clamp: 3;
+}
 .preview__genres {
-  margin-top: 0.3rem;
-  color: var(--ink);
-  font: 400 0.88rem/1.4 var(--font-body);
+  height: 1.4em;
+  margin-top: 0.35rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink-3);
+  font: 400 0.8rem/1.4 var(--font-body);
 }
 .preview__genres i {
-  margin: 0 0.45rem;
-  color: var(--ink-3);
+  margin: 0 0.4rem;
   font-style: normal;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -814,6 +865,7 @@ html[data-input="key"] .switch:focus {
   font: 700 0.85rem/1.2 var(--font-body);
   text-decoration: underline;
   cursor: pointer;
+  transition: color var(--t-fast) var(--ease), transform var(--t-press) var(--ease-out);
 }
 .linkbtn:hover,
 .linkbtn:focus {

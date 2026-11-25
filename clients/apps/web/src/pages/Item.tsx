@@ -94,7 +94,7 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
       try {
         await requestCastSession();
       } catch (e) {
-        if (!(e instanceof CastCancelled)) toast(e instanceof Error ? e.message : "Couldn't connect", "error");
+        if (!(e instanceof CastCancelled)) toast(e instanceof Error ? e.message : "Couldn’t connect", "error");
         return;
       }
     }
@@ -149,7 +149,7 @@ function DetailBody(props: { item: ItemDetail; onReady: () => void }): JSX.Eleme
       invalidateLibrary();
     } catch (e) {
       setPlayedLocal(!next);
-      toast(e instanceof Error ? e.message : "Couldn't update", "error");
+      toast(e instanceof Error ? e.message : "Couldn’t update", "error");
     } finally {
       setSavingPlayed(false);
     }

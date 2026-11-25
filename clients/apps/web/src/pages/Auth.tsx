@@ -72,7 +72,7 @@ export function Login(): JSX.Element {
       setChallenge(undefined);
       setPassword("");
       setError("That sign-in expired. Enter your password again.");
-    } else setError(err instanceof Error ? err.message : "Couldn't sign in.");
+    } else setError(err instanceof Error ? err.message : "Couldn’t sign in.");
   };
 
   const submitCode = async (e: Event) => {
@@ -143,8 +143,8 @@ export function Login(): JSX.Element {
       if (err instanceof ApiError && err.status === 429) {
         startCountdown(err.retryAfter ?? 60);
         setError(undefined);
-      } else if (err instanceof ApiError && err.status === 401) setError("That username and password don't match.");
-      else setError(err instanceof Error ? err.message : "Couldn't sign in.");
+      } else if (err instanceof ApiError && err.status === 401) setError("That username and password don’t match.");
+      else setError(err instanceof Error ? err.message : "Couldn’t sign in.");
     } finally {
       setBusy(false);
     }
@@ -154,7 +154,7 @@ export function Login(): JSX.Element {
     <Show
       when={!challenge()}
       fallback={
-        <AuthLayout eyebrow="One more step" title="Confirm it's you" lede="Your account has a second sign-in step.">
+        <AuthLayout eyebrow="One more step" title="Confirm it’s you" lede="Your account has a second sign-in step.">
           <form class="auth__form" onSubmit={submitCode} novalidate>
             <Show when={has("passkey") && passkeysSupported() && !useRecovery()}>
               <button type="button" class="btn btn--accent btn--lg btn--block" data-autofocus aria-disabled={busy() || left() > 0 ? "true" : undefined} onClick={signInWithPasskey}>
@@ -201,14 +201,14 @@ export function Login(): JSX.Element {
       <AuthLayout
         eyebrow="Welcome back"
         title={showQr ? "Scan to sign in" : "Sign in"}
-        lede={!showQr ? "Your films, your shows, your server." : TV ? "Use the camera on your phone. Nothing to type with the remote." : "Point your phone's camera at the code. No password to remember."}
+        lede={!showQr ? "Your films, your shows, your server." : TV ? "Use the camera on your phone. Nothing to type with the remote." : "Point your phone’s camera at the code. No password to remember."}
       >
         <div class="auth__form auth__form--center">
           <Show when={showQr}><PairingPanel onSignedIn={done} /></Show>
           <Show when={oidcSupported()}>
             <Show when={showQr}><div class="auth__or">or</div></Show>
             <OidcButtons purpose="login" primary next={safeNext(params.next)} onError={setError} />
-            <p class="auth__foot">We'll email you a 6-digit code, then ask for your authenticator app.</p>
+            <p class="auth__foot">We’ll email you a 6-digit code, then ask for your authenticator app.</p>
             <Show when={!showQr}>
               <div class="auth__or">or</div>
               <p class="state__body">On a TV or computer? Scan the code it shows with this phone.</p>
@@ -298,7 +298,7 @@ export function Setup(): JSX.Element {
     if (busy()) return;
     if (!username().trim()) return setError("Pick a username.");
     if (password().length < MIN_PASSWORD) return setError(`The password needs at least ${MIN_PASSWORD} characters.`);
-    if (password() !== confirm()) return setError("The passwords don't match.");
+    if (password() !== confirm()) return setError("The passwords don’t match.");
     setBusy(true);
     setError(undefined);
     try {
@@ -308,7 +308,7 @@ export function Setup(): JSX.Element {
       if (err instanceof ApiError && err.status === 409) {
         setError("This server is already set up. Sign in instead.");
         void bootstrap();
-      } else setError(err instanceof Error ? err.message : "Couldn't create the account.");
+      } else setError(err instanceof Error ? err.message : "Couldn’t create the account.");
     } finally {
       setBusy(false);
     }
@@ -318,7 +318,7 @@ export function Setup(): JSX.Element {
     <AuthLayout
       eyebrow="First run"
       title="Set up your server"
-      lede="Create the admin account. You'll add libraries and invite people next — nobody else can sign in until you do."
+      lede="Create the admin account. You’ll add libraries and invite people next — nobody else can sign in until you do."
       aside={
         <ol class="auth__steps">
           <li class="is-current">Admin account</li>
@@ -330,7 +330,7 @@ export function Setup(): JSX.Element {
       <form class="auth__form" onSubmit={submit} novalidate>
         <Field label="Admin username" value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocomplete="username" autocapitalize="off" spellcheck={false} data-autofocus />
         <PasswordField label="Password" hint={`At least ${MIN_PASSWORD} characters`} error={tooShort() && `At least ${MIN_PASSWORD} characters`} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="new-password" />
-        <PasswordField label="Confirm password" error={mismatch() && "Doesn't match"} value={confirm()} onInput={(e) => setConfirm(e.currentTarget.value)} autocomplete="new-password" />
+        <PasswordField label="Confirm password" error={mismatch() && "Doesn’t match"} value={confirm()} onInput={(e) => setConfirm(e.currentTarget.value)} autocomplete="new-password" />
         <Show when={error()}>
           <p class="auth__error" role="alert"><Icon name="alert" /> {error()}</p>
         </Show>
@@ -369,7 +369,7 @@ export function Invite(): JSX.Element {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) setError("That username is taken — try another.");
       else if (err instanceof ApiError && (err.status === 404 || err.status === 410)) setError("This invite has expired or was already used.");
-      else setError(err instanceof Error ? err.message : "Couldn't accept the invite.");
+      else setError(err instanceof Error ? err.message : "Couldn’t accept the invite.");
     } finally {
       setBusy(false);
     }
@@ -381,7 +381,7 @@ export function Invite(): JSX.Element {
         <div class="splash" aria-busy="true" />
       </Match>
       <Match when={info.error || (info() && !info()!.valid)}>
-        <AuthLayout eyebrow="Invite" title="This invite isn't valid" lede="It may have expired or already been used. Ask whoever sent it for a new link.">
+        <AuthLayout eyebrow="Invite" title="This invite isn’t valid" lede="It may have expired or already been used. Ask whoever sent it for a new link.">
           <a class="btn btn--lg" href={href(authStatus() === "authed" ? "/" : "/login")} data-autofocus>
             <Icon name="back" /> <span>{authStatus() === "authed" ? "Go home" : "Sign in instead"}</span>
           </a>
@@ -390,13 +390,13 @@ export function Invite(): JSX.Element {
       <Match when={info()}>
         {(i) => (
           <AuthLayout
-            eyebrow="You're invited"
+            eyebrow="You’re invited"
             title="Join this Reel server"
             lede="Create an account to start watching."
             aside={
               <Show when={i().library_names.length}>
                 <div class="auth__libs">
-                  <p class="eyebrow">You'll have access to</p>
+                  <p class="eyebrow">You’ll have access to</p>
                   <ul>
                     <For each={i().library_names}>{(n) => <li><Icon name="film" /> {n}</li>}</For>
                   </ul>
@@ -446,7 +446,7 @@ export function Connect(): JSX.Element {
     e.preventDefault();
     if (busy()) return;
     const url = setServerUrl(addr());
-    if (!url) return setError("That doesn't look like an address. Try 192.168.1.20:8420");
+    if (!url) return setError("That doesn’t look like an address. Try 192.168.1.20:8420");
     setBusy(true);
     setError(undefined);
     try {
@@ -462,7 +462,7 @@ export function Connect(): JSX.Element {
     }
   };
   return (
-    <AuthLayout eyebrow="First run" title="Server address" lede="Enter the address of the computer running Reel on your network — it's shown in the server's log when it starts.">
+    <AuthLayout eyebrow="First run" title="Server address" lede="Enter the address of the computer running Reel on your network — it’s shown in the server’s log when it starts.">
       <form class="auth__form" onSubmit={submit} novalidate>
         <Field label="Server address" placeholder="192.168.1.20:8420" value={addr()} onInput={(e) => setAddr(e.currentTarget.value)} autocapitalize="off" spellcheck={false} inputmode="url" data-autofocus />
         <Show when={error()}>

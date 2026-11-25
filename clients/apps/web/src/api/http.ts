@@ -89,14 +89,14 @@ function qs(q?: Query): string {
 }
 
 const FRIENDLY: Record<number, string> = {
-  0: "Can't reach Reel",
+  0: "Can’t reach Reel",
   401: "Your session has ended — please sign in again",
-  403: "You don't have access to that",
+  403: "You don’t have access to that",
   404: "Not found",
   409: "That already exists",
-  424: "The server isn't fully set up for this yet",
+  424: "The server isn’t fully set up for this yet",
   429: "Too many requests — try again shortly",
-  502: "The server couldn't reach an external service",
+  502: "The server couldn’t reach an external service",
 };
 
 // ---- connection health (#81) -------------------------------------------------------------------
@@ -135,7 +135,7 @@ const WRITE_TIMEOUT_MS = 60_000;
 
 const NETWORK_MESSAGE: Record<NetworkFailure, string> = {
   aborted: "Request cancelled",
-  offline: "You're offline",
+  offline: "You’re offline",
   timeout: "Reel took too long to answer",
   network: FRIENDLY[0]!,
 };

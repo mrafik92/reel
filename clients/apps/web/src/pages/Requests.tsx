@@ -111,7 +111,7 @@ export default function Requests(): JSX.Element {
       noteRequest(n);
       toast(`Approved “${r.title ?? "request"}”`, "success");
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Couldn't approve", "error");
+      toast(e instanceof Error ? e.message : "Couldn’t approve", "error");
     }
   };
   const decline = async (r: RequestDto) => {
@@ -119,7 +119,7 @@ export default function Requests(): JSX.Element {
       replace(await api.declineRequest(r.id));
       toast(`Declined “${r.title ?? "request"}”`);
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Couldn't decline", "error");
+      toast(e instanceof Error ? e.message : "Couldn’t decline", "error");
     }
   };
 
@@ -129,7 +129,7 @@ export default function Requests(): JSX.Element {
   return (
     <div class="page requests" ref={el}>
       <header class="page-head">
-        <p class="eyebrow eyebrow--accent">{isAdmin() ? "Everyone's requests" : "Your requests"}</p>
+        <p class="eyebrow eyebrow--accent">{isAdmin() ? "Everyone’s requests" : "Your requests"}</p>
         <h1 class="page-title">Requests</h1>
       </header>
 
@@ -170,7 +170,7 @@ export default function Requests(): JSX.Element {
             fallback={
               <EmptyState
                 title={tab() === "all" ? "No requests yet" : "Nothing here"}
-                body={tab() === "all" ? "Find something in Discover and press Add — it'll show up here while it downloads." : undefined}
+                body={tab() === "all" ? "Find something in Discover and press Add — it’ll show up here while it downloads." : undefined}
               >
                 <Show when={tab() === "all"}>
                   <a class="btn btn--primary" href={href("/discover")}><Icon name="compass" /> <span>Go to Discover</span></a>

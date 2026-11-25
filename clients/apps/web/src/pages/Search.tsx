@@ -320,7 +320,7 @@ export default function Search(): JSX.Element {
             </div>
           </Show>
           <Show when={settled() && tmdbOff() && !disc().length && anything()}>
-            <p class="search__fine">Titles you could add aren't shown — the server isn't connected to TMDB.</p>
+            <p class="search__fine">Titles you could add aren’t shown — the server isn’t connected to TMDB.</p>
           </Show>
         </div>
       </Show>

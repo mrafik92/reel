@@ -48,6 +48,48 @@ body {
 h1, h2, h3, p {
   margin: 0;
 }
+/* Type (#301): numbers in lines of facts, counts and badges keep their width as they change, and
+   large headings wrap into even lines (browsers without text-wrap ignore it). */
+.meta,
+.badge,
+.topbar__count,
+.page-title__count,
+.rail__count,
+.tab__count,
+.segmented__count,
+.gchip__count,
+.csheet__count,
+.picker__badge,
+.card__sub,
+.eprow__index,
+.eprow__runtime {
+  font-variant-numeric: tabular-nums;
+}
+.hero__title,
+.detail__title,
+.page-title,
+.state__title,
+.spot__title,
+.person-head__name {
+  text-wrap: balance;
+}
+/* Artwork edges (#301): the same hairline as the poster tiles (.card__frame::after in ui.css), so
+   dark art keeps its shape on the dark page. */
+.eprow__still::after,
+.dsheet__poster::after,
+.req__poster::after,
+.person__photo::after,
+.person-head__photo.img::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  pointer-events: none;
+}
 a {
   color: inherit;
 }
@@ -336,7 +378,7 @@ html[data-input="key"] .topbar__tool:focus .topbar__ring-arc {
   min-width: 14rem;
   padding: 0.4rem;
   border-radius: var(--radius);
-  box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-lift);
   animation: fade-in 150ms var(--ease) both;
 }
 .topmenu__panel--right {
@@ -511,6 +553,14 @@ html[data-input="key"] .topmenu__item:focus {
   width: 36rem;
   max-width: calc(100% - 2 * var(--gutter));
 }
+/* The billboard's text arrives in a short stagger, on the first visit to Home only. */
+.hero--enter .hero__body > * {
+  animation: rise-in 420ms var(--ease-out) both;
+}
+.hero--enter .hero__body > :nth-child(2) { animation-delay: 50ms; }
+.hero--enter .hero__body > :nth-child(3) { animation-delay: 100ms; }
+.hero--enter .hero__body > :nth-child(4) { animation-delay: 140ms; }
+.hero--enter .hero__body > :nth-child(5) { animation-delay: 170ms; }
 .eyebrow--bar {
   display: flex;
   align-items: center;
@@ -662,7 +712,7 @@ html.tv .home__rows .row {
   font: 700 1rem/1 var(--font-body);
   text-decoration: none;
   cursor: pointer;
-  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t-press) var(--ease-out);
 }
 .tab[aria-current] {
   color: var(--ink);
@@ -714,7 +764,7 @@ html[data-input="pointer"] .tab[aria-current]:focus:not(:hover) {
   color: var(--ink-2);
   font: 700 0.95rem/1 var(--font-body);
   cursor: pointer;
-  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t-press) var(--ease-out);
 }
 .segmented__btn[aria-pressed="true"] {
   background: var(--ink);
@@ -783,7 +833,8 @@ html[data-input="pointer"] .segmented__btn[aria-pressed="true"]:focus:not(:hover
   max-width: 58rem;
   margin: calc(var(--topbar-h) + 2rem) auto 4rem;
   border-radius: var(--radius-l);
-  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lift);
+  animation: rise-in 320ms var(--ease-out) both;
 }
 /* The sheet sits on art that is already stretched and dimmed, so it can be the most see-through. */
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
@@ -1177,7 +1228,7 @@ html[data-input="key"] .search__input:focus {
   color: var(--ink-2);
   font: 600 0.92rem/1 var(--font-body);
   cursor: pointer;
-  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), transform var(--t-press) var(--ease-out);
 }
 .chip:hover {
   border-color: var(--ink-3);

@@ -80,7 +80,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   border-radius: var(--radius);
   background: var(--ink);
   color: var(--on-light);
-  box-shadow: 0 0.8rem 2rem rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-lift);
   font: 500 0.95rem/1.4 var(--font-body);
   pointer-events: auto;
   cursor: pointer;
@@ -318,7 +318,7 @@ html[data-input="pointer"] .btn--danger:focus:not(:hover) {
   max-width: 100%;
   padding: 3rem;
   border-radius: var(--radius-l);
-  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lift);
 }
 .auth__panel .eyebrow {
   color: var(--ink-3);

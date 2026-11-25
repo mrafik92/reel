@@ -271,12 +271,12 @@ export function VodBrowser(props: { kind: VodKind; switcher: JSX.Element; onRead
 
       <Show when={cats.error}>
         <div class="library__body">
-          <ErrorState error={cats.error} title="Couldn't load your IPTV catalogue" onRetry={refetchCats} />
+          <ErrorState error={cats.error} title="Couldn’t load your IPTV catalogue" onRetry={refetchCats} />
         </div>
       </Show>
       <Show when={cats() && total() === 0}>
         <div class="library__body">
-          <EmptyState title={`No ${noun} on your IPTV provider yet`} body="The catalogue fills in after the provider's next refresh. Live TV is unaffected." />
+          <EmptyState title={`No ${noun} on your IPTV provider yet`} body="The catalogue fills in after the provider’s next refresh. Live TV is unaffected." />
         </div>
       </Show>
 
@@ -300,7 +300,7 @@ export function VodBrowser(props: { kind: VodKind; switcher: JSX.Element; onRead
             </For>
             <div class="lane-cta">
               <p>
-                <strong>Looking for something?</strong> Search all {total().toLocaleString()} {noun}, or dig through the provider's categories.
+                <strong>Looking for something?</strong> Search all {total().toLocaleString()} {noun}, or dig through the provider’s categories.
               </p>
               <button type="button" class="btn" onClick={() => setCatSheet(true)}>
                 <Icon name="search" /> <span>Find a category</span>
