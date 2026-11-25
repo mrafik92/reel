@@ -518,13 +518,15 @@ export function createMockApi(): MockApi {
     async discoverDetail(media, tid) {
       await latency();
       const c = tmdb.find((x) => x.tmdb_id === tid && x.media_type === media);
-      if (c) return { card: cardOf(c), genres: c.genres, runtime_minutes: c.runtime_minutes, seasons: c.seasons, cast: castOfTmdb(c) };
+      // Every TMDB title has a trailer except every third one (to see the no-trailer state).
+      if (c) return { card: cardOf(c), genres: c.genres, runtime_minutes: c.runtime_minutes, seasons: c.seasons, cast: castOfTmdb(c), trailer_youtube_id: tid % 3 ? "aqz-KE-bpKQ" : null };
       const lib = Array.from(db.byId.values()).find((r) => r.tmdb_id === tid);
       if (!lib) throw new ApiError(404, "Not found on TMDB");
       return {
         card: { tmdb_id: tid, media_type: media, title: lib.summary.title, year: lib.summary.year, poster_url: lib.summary.poster_url, backdrop_url: lib.summary.backdrop_url, overview: lib.overview, status: "available", vote_average: lib.rating ?? null, progress: null, library_item_id: lib.summary.id },
         genres: lib.genres, runtime_minutes: lib.runtime_s ? Math.round(lib.runtime_s / 60) : null, seasons: lib.childIds.map((_c, i) => i + 1),
         cast: lib.cast,
+        trailer_youtube_id: lib.summary.id % 3 ? "aqz-KE-bpKQ" : null,
       };
     },
     async person(pid) {

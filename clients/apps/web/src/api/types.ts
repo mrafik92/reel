@@ -16,7 +16,8 @@ export type InviteInfo = S["InviteInfoDto"];
 export type MediaType = S["MediaTypeDto"];
 export type DiscoverCard = S["DiscoverCardDto"];
 export type DiscoverPage = S["DiscoverPageDto"];
-export type DiscoverDetail = S["DiscoverDetailDto"];
+/** `trailer_youtube_id` is added by hand until the generated types catch up with the server (#105). */
+export type DiscoverDetail = S["DiscoverDetailDto"] & { trailer_youtube_id?: string | null };
 export type DiscoverList = "trending" | "popular" | "upcoming";
 export type RequestDto = S["RequestDto"];
 export type RequestState = S["RequestState"];
