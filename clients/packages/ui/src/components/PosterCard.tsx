@@ -5,6 +5,7 @@ import { episodeCode, formatEta, formatRuntime, formatSpeed } from "../format";
 import { Img } from "./Img";
 import { ProgressRing, RING_LABEL, type RingState } from "./ProgressRing";
 import { Icon } from "./Icon";
+import { RANK_H, RANK_STROKE, rankNumeral } from "./rank";
 
 /** Opt-in preview: the app decides when a card opens from these pointer and focus signals. */
 export interface CardPreview {
@@ -71,6 +72,7 @@ export function PosterCard(props: PosterCardProps): JSX.Element {
     return r && r > 0 ? r.toFixed(1) : "";
   };
   const runtime = () => (it().kind === "movie" ? formatRuntime(it().runtime_s) : "");
+  const rank = () => (props.rank != null ? rankNumeral(props.rank) : null);
   const showMeta = () => props.meta !== false && it().kind !== "episode" && !dlActive() && !!(rating() || runtime());
 
   return (
@@ -81,8 +83,8 @@ export function PosterCard(props: PosterCardProps): JSX.Element {
         "is-ready": dl()?.state === "available",
         "card--preview": !!props.preview,
         "card--ranked": props.rank != null,
-        "card--ranked-wide": (props.rank ?? 0) >= 10,
       }}
+      style={rank() ? { "--rank-ratio": String(rank()!.width / RANK_H) } : undefined}
       href={props.href}
       data-fid={it().id}
       data-autofocus={props.autofocus ? "" : undefined}
@@ -107,8 +109,20 @@ export function PosterCard(props: PosterCardProps): JSX.Element {
       }}
       aria-label={`${props.rank != null ? props.rank + ". " : ""}${it().title}${sub() ? ", " + sub() : ""}${showMeta() ? `${rating() ? ", rated " + rating() : ""}${runtime() ? ", " + runtime() : ""}` : ""}${dl() ? ", " + RING_LABEL[dl()!.state] : props.activity ? `, ${RING_LABEL[props.activity.state]} ${Math.round(props.activity.progress * 100)}%` : ""}`}
     >
-      <Show when={props.rank != null}>
-        <span class="card__rank" aria-hidden="true">{props.rank}</span>
+      <Show when={rank()}>
+        {(m) => (
+          <svg class="card__rank" viewBox={`0 0 ${m().width} ${RANK_H}`} aria-hidden="true">
+            <text
+              x={m().x}
+              y={m().y}
+              font-size={String(m().fontSize)}
+              stroke-width={RANK_STROKE}
+              letter-spacing={m().letterSpacing ? String(m().letterSpacing) : undefined}
+            >
+              {props.rank}
+            </text>
+          </svg>
+        )}
       </Show>
       <div class="card__frame">
         <Img

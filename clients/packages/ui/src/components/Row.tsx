@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
-import { isTvMode } from "../navigation";
+import { currentTranslateX, isTvMode } from "../navigation";
 import { Icon } from "./Icon";
 
 export interface RowProps {
@@ -24,7 +24,11 @@ export function Row(props: RowProps): JSX.Element {
   const arrows = !isTvMode();
 
   const measure = () => {
-    const max = scroller.scrollWidth - scroller.clientWidth;
+    // Tiles sliding aside for the preview card (#301) widen the scrollable overflow while they move:
+    // take the last tile's slide back off, so the "next" arrow doesn't light up for it.
+    const last = track.lastElementChild as HTMLElement | null;
+    const slide = last ? Math.max(0, currentTranslateX(last)) : 0;
+    const max = scroller.scrollWidth - slide - scroller.clientWidth;
     setCanPrev(scroller.scrollLeft > 1);
     setCanNext(scroller.scrollLeft < max - 1);
   };
@@ -67,6 +71,7 @@ export function Row(props: RowProps): JSX.Element {
   return (
     <section
       class={`row row--${props.variant ?? "poster"}${props.class ? " " + props.class : ""}`}
+      classList={{ "has-prev": canPrev(), "has-next": canNext() }}
       data-nav-anchor
       data-nav-group
     >

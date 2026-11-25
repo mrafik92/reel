@@ -147,11 +147,16 @@ function pickHomeLanes(all: BrowseLane[]): BrowseLane[] {
   return out;
 }
 
+/** The billboard's entrance plays once per app load, not on every return to Home. */
+let heroEntered = false;
+
 function Hero(props: { item?: ItemDetail; summary?: ItemSummary }): JSX.Element {
   const it = () => props.item ?? props.summary;
   const d = () => props.item;
+  const enter = !heroEntered;
+  heroEntered = true;
   return (
-    <section class="hero" data-nav-anchor style={{ "--nav-anchor-top": "0px" }}>
+    <section class="hero" classList={{ "hero--enter": enter }} data-nav-anchor style={{ "--nav-anchor-top": "0px" }}>
       <Backdrop src={props.summary?.backdrop_url} class="hero__art" />
       <div class="hero__scrim" aria-hidden="true" />
       <Show when={it()}>

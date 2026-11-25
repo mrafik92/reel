@@ -44,6 +44,8 @@ export function Img(props: ImgProps): JSX.Element {
   const [visible, setVisible] = createSignal(!!props.eager);
   const [loaded, setLoaded] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
+  // Already in the cache: show it at once. The fade is for art that arrives, not art that is there.
+  const [instant, setInstant] = createSignal(false);
   let wrap!: HTMLDivElement;
 
   onMount(() => {
@@ -63,13 +65,23 @@ export function Img(props: ImgProps): JSX.Element {
   createEffect(on(url, () => {
     setLoaded(false);
     setFailed(false);
+    setInstant(false);
   }, { defer: true }));
+  const cached = (img: HTMLImageElement) => {
+    queueMicrotask(() => {
+      if (img.complete && img.naturalWidth > 0) {
+        setInstant(true);
+        setLoaded(true);
+      }
+    });
+  };
 
   return (
-    <div ref={wrap} class={"img" + (props.class ? " " + props.class : "")} classList={{ "is-loaded": loaded() }}>
+    <div ref={wrap} class={"img" + (props.class ? " " + props.class : "")} classList={{ "is-loaded": loaded(), "is-instant": instant() }}>
       <Show when={url() && !failed()} fallback={props.fallback}>
         <Show when={visible()}>
           <img
+            ref={cached}
             src={url()}
             alt={props.alt ?? ""}
             decoding="async"

@@ -4,7 +4,14 @@ import { TV } from "./mode";
 
 /** How long a pointer or key focus rests on a tile before its preview opens. */
 export const PREVIEW_DELAY_MS = 450;
-/** Time to move the pointer from the tile onto the open card. */
+/**
+ * Pointer only: while a card is open, or just after one closed, the next tile opens sooner. Key focus
+ * always waits the full delay, so holding an arrow never opens a card.
+ */
+export const PREVIEW_WARM_MS = 140;
+/** How long after a card closes the pointer still counts as browsing. */
+const WARM_WINDOW_MS = 500;
+/** Time to move the pointer from the tile onto the open card, or on to the next tile. */
 const LEAVE_GRACE_MS = 120;
 
 export interface PreviewTarget {
@@ -15,13 +22,19 @@ export interface PreviewTarget {
   mode: "hover" | "focus";
 }
 
-const [target, setTarget] = createSignal<PreviewTarget | null>(null);
+const [target, setTargetSignal] = createSignal<PreviewTarget | null>(null);
 /** The open preview, read by the single `PreviewCard` layer. */
 export const previewTarget = target;
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 let leaveTimer: ReturnType<typeof setTimeout> | undefined;
 let pending: PreviewTarget | null = null;
+let closedAt = -Infinity;
+
+function setTarget(next: PreviewTarget | null): void {
+  if (!next && target()) closedAt = Date.now();
+  setTargetSignal(next);
+}
 
 const clearTimers = () => {
   if (timer) clearTimeout(timer);
@@ -34,15 +47,25 @@ const inputIs = (v: string) => document.documentElement.getAttribute("data-input
 const canHover = () => !TV && wideEnough() && inputIs("pointer") && window.matchMedia("(hover: hover)").matches;
 // A webOS Magic Remote reports pointer input, but on TV its pointer moves focus: that's the focus path.
 const canFocus = () => wideEnough() && (TV || inputIs("key"));
+const warm = () => !!target() || Date.now() - closedAt < WARM_WINDOW_MS;
 
-function arm(next: PreviewTarget): void {
+function arm(next: PreviewTarget, delay = PREVIEW_DELAY_MS): void {
   clearTimers();
   pending = next;
   timer = setTimeout(() => {
     timer = undefined;
     pending = null;
     if (next.el.isConnected) setTarget(next);
-  }, PREVIEW_DELAY_MS);
+  }, delay);
+}
+
+/** Close the open hover card soon, unless the pointer reaches it or another tile first. */
+function closeSoon(): void {
+  if (leaveTimer) clearTimeout(leaveTimer);
+  leaveTimer = setTimeout(() => {
+    leaveTimer = undefined;
+    if (!pending) closePreview();
+  }, LEAVE_GRACE_MS);
 }
 
 /** Close at once and forget anything waiting to open. */
@@ -68,21 +91,33 @@ export function keepPreview(): void {
   leaveTimer = undefined;
 }
 
+/** The pointer left the open card: it closes unless the pointer went on to another tile. */
+export function leavePreview(): void {
+  if (target()?.mode === "hover") closeSoon();
+}
+
 /** Handlers for `PosterCard`'s `preview` prop, one per tile link. */
 export function cardPreview(href: string): CardPreview {
   return {
     enter(item, el) {
       if (!canHover()) return;
-      if (target()?.el === el) return keepPreview();
-      setTarget(null);
-      arm({ item, el, href, mode: "hover" });
+      if (target()?.el === el) {
+        if (timer) clearTimeout(timer);
+        timer = undefined;
+        pending = null;
+        return keepPreview();
+      }
+      if (pending?.el === el) return;
+      // An open card stays until the next one replaces it, so the row doesn't close and reopen.
+      arm({ item, el, href, mode: "hover" }, warm() ? PREVIEW_WARM_MS : PREVIEW_DELAY_MS);
     },
     leave(el) {
-      if (pending?.el === el) closePreview();
-      else if (target()?.el === el && target()!.mode === "hover") {
-        if (leaveTimer) clearTimeout(leaveTimer);
-        leaveTimer = setTimeout(closePreview, LEAVE_GRACE_MS);
+      if (pending?.el === el) {
+        if (timer) clearTimeout(timer);
+        timer = undefined;
+        pending = null;
       }
+      leavePreview();
     },
     focus(item, el) {
       if (!canFocus()) return;
