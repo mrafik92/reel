@@ -166,6 +166,58 @@ pub struct ContentRatingEntry {
     pub rating: String,
 }
 
+/// `append_to_response=videos`: trailers, teasers and clips, mostly on YouTube.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Videos {
+    #[serde(default)]
+    pub results: Vec<Video>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Video {
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub site: String,
+    /// `Trailer`, `Teaser`, `Clip`, `Featurette`, …
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub official: bool,
+    #[serde(default)]
+    pub published_at: String,
+}
+
+/// A plausible YouTube video id (11 characters of `[A-Za-z0-9_-]`). Anything else is never
+/// handed to the client, which builds an embed URL from it.
+pub fn is_youtube_id(s: &str) -> bool {
+    s.len() == 11
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+impl Videos {
+    /// The YouTube id of the title's main trailer: official trailers first, then any trailer,
+    /// then teasers; the earliest published among equals (the first trailer, or season 1's).
+    pub fn youtube_trailer(&self) -> Option<String> {
+        self.results
+            .iter()
+            .filter(|v| v.site.eq_ignore_ascii_case("YouTube") && is_youtube_id(&v.key))
+            .filter_map(|v| {
+                let rank = match (v.kind.as_str(), v.official) {
+                    ("Trailer", true) => 0,
+                    ("Trailer", false) => 1,
+                    ("Teaser", true) => 2,
+                    ("Teaser", false) => 3,
+                    _ => return None,
+                };
+                Some((rank, v.published_at.as_str(), v))
+            })
+            .min_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)))
+            .map(|(_, _, v)| v.key.clone())
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct MovieDetails {
     pub id: i64,
@@ -186,6 +238,8 @@ pub struct MovieDetails {
     pub credits: Option<Credits>,
     pub release_dates: Option<ReleaseDates>,
     pub external_ids: Option<ExternalIds>,
+    /// Only on [`TmdbClient::movie`] (the enrichment fetch).
+    pub videos: Option<Videos>,
 }
 
 impl MovieDetails {
@@ -229,6 +283,8 @@ pub struct TvDetails {
     pub credits: Option<Credits>,
     pub external_ids: Option<ExternalIds>,
     pub content_ratings: Option<ContentRatings>,
+    /// Only on [`TmdbClient::tv`] (the enrichment fetch).
+    pub videos: Option<Videos>,
 }
 
 impl TvDetails {
@@ -483,6 +539,12 @@ impl TmdbClient {
         self.get_cached(&format!("/{kind}/{id}/reviews"), &[]).await
     }
 
+    /// `/{movie|tv}/{id}/videos` (uncached; the trailer backfill asks once per title).
+    pub async fn videos(&self, tv: bool, id: i64) -> Result<Videos> {
+        let kind = if tv { "tv" } else { "movie" };
+        self.get(&format!("/{kind}/{id}/videos"), &[]).await
+    }
+
     /// [`Self::movie`], cached 1 h (for read-only display paths).
     pub async fn movie_cached(&self, id: i64) -> Result<MovieDetails> {
         self.get_cached(
@@ -559,23 +621,25 @@ impl TmdbClient {
         self.get("/search/tv", &p).await
     }
 
+    /// Full details for enrichment, with credits, certifications, external ids and videos.
     pub async fn movie(&self, id: i64) -> Result<MovieDetails> {
         self.get(
             &format!("/movie/{id}"),
             &[(
                 "append_to_response",
-                "credits,release_dates,external_ids".into(),
+                "credits,release_dates,external_ids,videos".into(),
             )],
         )
         .await
     }
 
+    /// Full details for enrichment, with external ids, credits, ratings and videos.
     pub async fn tv(&self, id: i64) -> Result<TvDetails> {
         self.get(
             &format!("/tv/{id}"),
             &[(
                 "append_to_response",
-                "external_ids,credits,content_ratings".into(),
+                "external_ids,credits,content_ratings,videos".into(),
             )],
         )
         .await
@@ -700,18 +764,42 @@ mod tests {
         let s = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/movie/1"))
-            .and(query_param("append_to_response", "credits,release_dates,external_ids"))
+            .and(query_param("append_to_response", "credits,release_dates,external_ids,videos"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "id":1,"title":"T","genres":[{"id":1,"name":"Drama"}],
                 "release_dates":{"results":[
                     {"iso_3166_1":"GB","release_dates":[{"certification":"15"}]},
-                    {"iso_3166_1":"US","release_dates":[{"certification":""},{"certification":"PG-13"}]}]}
+                    {"iso_3166_1":"US","release_dates":[{"certification":""},{"certification":"PG-13"}]}]},
+                "videos":{"results":[
+                    {"key":"teaserAAAAA","site":"YouTube","type":"Teaser","official":true,"published_at":"2020-01-01"},
+                    {"key":"trailer2BBB","site":"YouTube","type":"Trailer","official":true,"published_at":"2020-06-01"},
+                    {"key":"trailer1CCC","site":"YouTube","type":"Trailer","official":true,"published_at":"2020-03-01"},
+                    {"key":"fanmadeDDDD","site":"YouTube","type":"Trailer","official":false,"published_at":"2019-01-01"},
+                    {"key":"vimeo","site":"Vimeo","type":"Trailer","official":true,"published_at":"2019-01-01"}]}
             })))
             .mount(&s)
             .await;
         let c = TmdbClient::with_base_url("k", s.uri());
         let m = c.movie(1).await.unwrap();
         assert_eq!(m.us_certification().as_deref(), Some("PG-13"));
+        assert_eq!(
+            m.videos.unwrap().youtube_trailer().as_deref(),
+            Some("trailer1CCC")
+        );
+    }
+
+    #[test]
+    fn trailer_falls_back_to_teaser_and_skips_bad_ids() {
+        let v: Videos = serde_json::from_value(serde_json::json!({"results":[
+            {"key":"clipAAAAAAA","site":"YouTube","type":"Clip","official":true},
+            {"key":"bad id/../x","site":"YouTube","type":"Trailer","official":true},
+            {"key":"teaserBBBBB","site":"YouTube","type":"Teaser","official":false}
+        ]}))
+        .unwrap();
+        assert_eq!(v.youtube_trailer().as_deref(), Some("teaserBBBBB"));
+        assert_eq!(Videos::default().youtube_trailer(), None);
+        assert!(is_youtube_id("aqz-KE-bpKQ"));
+        assert!(!is_youtube_id("aqz-KE-bpK"));
     }
 
     #[tokio::test]

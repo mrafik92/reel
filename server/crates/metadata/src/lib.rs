@@ -1,4 +1,4 @@
-//! Metadata: TMDB client, matching, enrichment (TMDB + `.nfo`/local art), image cache.
+//! Metadata: TMDB client, matching, enrichment (TMDB + `.nfo`/local art), image cache, trailers.
 
 pub mod enricher;
 pub mod fetch;
@@ -6,6 +6,7 @@ pub mod images;
 pub mod matcher;
 pub mod nfo;
 pub mod tmdb;
+pub mod trailers;
 
 pub use enricher::{Enricher, TmdbEnricher};
 pub use images::{ImageCache, ImageKind};

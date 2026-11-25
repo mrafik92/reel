@@ -3,7 +3,7 @@
 //! Local enrichment needs no network and no API key; TMDB is layered on top when a client is
 //! configured. Precedence: locked field (never touched) > local nfo/art > TMDB.
 //! Locked fields are column-ish names in `locked_fields_json`, e.g.
-//! `["title","overview","poster","backdrop","genres","credits"]`.
+//! `["title","overview","poster","backdrop","genres","credits","trailer"]`.
 
 use std::{
     collections::HashSet,
@@ -419,6 +419,10 @@ async fn apply_movie(
     };
     let merged = merge(item, nfo, lp, lb, remote);
     save(pool, &merged).await?;
+    if let Some(d) = &d {
+        let trailer = d.videos.as_ref().and_then(|v| v.youtube_trailer());
+        crate::trailers::store(pool, item.id, trailer.as_deref()).await?;
+    }
     apply_genres_and_cast(
         pool,
         item.id,
@@ -529,6 +533,10 @@ async fn apply_show(
     };
     let merged = merge(item, nfo, lp, lb, remote);
     save(pool, &merged).await?;
+    if let Some(d) = &d {
+        let trailer = d.videos.as_ref().and_then(|v| v.youtube_trailer());
+        crate::trailers::store(pool, item.id, trailer.as_deref()).await?;
+    }
     apply_genres_and_cast(
         pool,
         item.id,

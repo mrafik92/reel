@@ -860,3 +860,18 @@ async fn search_all_respects_library_access_and_auth() {
         assert_eq!(get(&raw, p).await.0, 401, "{p}");
     }
 }
+
+#[tokio::test]
+async fn item_detail_carries_the_trailer_only_when_known() {
+    let e = env(None).await;
+    seed_small(&e).await;
+    sqlx::query("UPDATE media_items SET trailer_youtube_id = 'aqz-KE-bpKQ' WHERE id = 1")
+        .execute(&e.db)
+        .await
+        .unwrap();
+    let (s, v) = get(&e.admin, "/api/v1/items/1").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["trailer_youtube_id"], "aqz-KE-bpKQ");
+    let (_, v) = get(&e.admin, "/api/v1/items/2").await;
+    assert!(v.get("trailer_youtube_id").is_none(), "{v}");
+}

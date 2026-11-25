@@ -36,7 +36,10 @@ async fn mock_movie(s: &MockServer) {
             "belongs_to_collection":{"id":726871,"name":"Dune Collection"},
             "credits":{"cast":cast,"crew":[{"id":5,"name":"Denis V","job":"Director"}]},
             "release_dates":{"results":[{"iso_3166_1":"US","release_dates":[{"certification":"PG-13"}]}]},
-            "external_ids":{"imdb_id":"tt1160419","tvdb_id":null}
+            "external_ids":{"imdb_id":"tt1160419","tvdb_id":null},
+            "videos":{"results":[
+                {"key":"n9xhJrPXop4","site":"YouTube","type":"Trailer","official":true,"published_at":"2020-09-09"},
+                {"key":"8g18jFHCLXk","site":"YouTube","type":"Trailer","official":true,"published_at":"2021-07-22"}]}
         })))
         .mount(s)
         .await;
@@ -82,6 +85,13 @@ async fn enriches_movie_with_lock_and_local_art() {
     assert_eq!(r.8.as_deref(), Some("/b.jpg"));
     assert_eq!(r.9, Some(155 * 60));
     assert_eq!(r.10, Some(7.8));
+    let (trailer, checked): (Option<String>, bool) = sqlx::query_as(
+        "SELECT trailer_youtube_id, trailer_checked_at IS NOT NULL FROM media_items WHERE id=1",
+    )
+    .fetch_one(&p)
+    .await
+    .unwrap();
+    assert_eq!((trailer.as_deref(), checked), (Some("n9xhJrPXop4"), true));
 
     let (g,): (i64,) = sqlx::query_as("SELECT count(*) FROM item_genres WHERE item_id=1")
         .fetch_one(&p)
@@ -153,7 +163,8 @@ async fn enriches_show_seasons_and_episodes() {
             "genres":[{"id":1,"name":"Drama"}],"seasons":[{"season_number":1}],
             "external_ids":{"imdb_id":"tt9","tvdb_id":77},
             "content_ratings":{"results":[{"iso_3166_1":"US","rating":"TV-MA"}]},
-            "credits":{"cast":[{"id":1,"name":"A","character":"X","order":0}],"crew":[]}
+            "credits":{"cast":[{"id":1,"name":"A","character":"X","order":0}],"crew":[]},
+            "videos":{"results":[{"key":"tvTrailer01","site":"YouTube","type":"Teaser","official":true}]}
         }))).mount(&s).await;
     Mock::given(method("GET")).and(path("/tv/42/season/1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -185,6 +196,12 @@ async fn enriches_show_seasons_and_episodes() {
         (t.as_str(), cr.as_deref(), tv),
         ("Show", Some("TV-MA"), Some(77))
     );
+    let trailer: Option<String> =
+        sqlx::query_scalar("SELECT trailer_youtube_id FROM media_items WHERE id=1")
+            .fetch_one(&p)
+            .await
+            .unwrap();
+    assert_eq!(trailer.as_deref(), Some("tvTrailer01"));
     let (t, ov, still): (String, Option<String>, Option<String>) =
         sqlx::query_as("SELECT title, overview, poster FROM media_items WHERE id=3")
             .fetch_one(&p)

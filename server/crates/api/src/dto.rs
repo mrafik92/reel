@@ -214,6 +214,10 @@ pub struct ItemDetail {
     pub cast: Vec<CastMember>,
     pub children_count: i64,
     pub files: Vec<MediaFile>,
+    /// YouTube id of the title's main trailer (movies and shows, from TMDB); embed it from
+    /// `youtube-nocookie.com`. Absent when TMDB has none or it hasn't been looked up yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailer_youtube_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

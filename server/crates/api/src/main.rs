@@ -75,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
             let tmdb = TmdbClient::new(key);
             state = state.with_tmdb(tmdb.clone());
             reel_api::vod_genres::spawn(pool.clone(), tmdb.clone());
+            reel_metadata::trailers::spawn(pool.clone(), tmdb.clone());
             Enricher::new(tmdb)
         }
         None => {
