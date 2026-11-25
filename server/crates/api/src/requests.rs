@@ -245,6 +245,9 @@ pub struct DiscoverDetailDto {
     pub seasons: Vec<i64>,
     /// Top-billed cast (max 20).
     pub cast: Vec<crate::dto::CastMember>,
+    /// YouTube id of the title's main trailer on TMDB; embed it from `youtube-nocookie.com`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailer_youtube_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -448,6 +451,7 @@ pub async fn discover_detail(
                 })
                 .collect()
         },
+        trailer_youtube_id: d.trailer_youtube_id,
     }))
 }
 
