@@ -52,7 +52,7 @@ export function PairingPanel(props: { size?: number; onSignedIn: (me: Me) => voi
     } catch (e) {
       setPairing(undefined);
       const wait = e instanceof ApiError && e.retryAfter ? e.retryAfter : 15;
-      setError(e instanceof ApiError && e.status === 429 ? "Too many codes requested. Trying again shortly." : "Can't reach the server. Trying again.");
+      setError(e instanceof ApiError && e.status === 429 ? "Too many codes requested. Trying again shortly." : "Can’t reach the server. Trying again.");
       later(() => void start(), wait);
     }
   };
@@ -96,7 +96,7 @@ export function PairingPanel(props: { size?: number; onSignedIn: (me: Me) => voi
 export function DeviceLogin(): JSX.Element {
   const navigate = useNavigate();
   return (
-    <Layout eyebrow="Sign in" title="Use your phone" lede="Scan the code with a phone that's signed in to Reel, or open the address and enter the code.">
+    <Layout eyebrow="Sign in" title="Use your phone" lede="Scan the code with a phone that’s signed in to Reel, or open the address and enter the code.">
       <div class="auth__form auth__form--center">
         <PairingPanel onSignedIn={(me) => navigate(afterLogin(me, "/"), { replace: true })} />
         <a class="btn btn--quiet btn--sm" href={href("/login")} data-autofocus>
@@ -125,7 +125,7 @@ export function DeviceLink(): JSX.Element {
       await fn();
     } catch (e) {
       setInfo(undefined);
-      setError(e instanceof Error ? e.message : "That didn't work.");
+      setError(e instanceof Error ? e.message : "That didn’t work.");
     } finally {
       setBusy(false);
     }
@@ -163,7 +163,7 @@ export function DeviceLink(): JSX.Element {
                 <span>Approve this device</span>
               </button>
               <button type="button" class="btn btn--lg btn--block" aria-disabled={busy() ? "true" : undefined} onClick={() => void act(async () => { await api.linkDeny(code().trim()); setResult("denied"); })}>
-                <span>It's not mine</span>
+                <span>It’s not mine</span>
               </button>
             </>
           )}

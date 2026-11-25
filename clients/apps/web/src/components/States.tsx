@@ -46,7 +46,7 @@ export function ErrorState(props: { error: unknown; onRetry?: () => void; title?
         </div>
         <h2 class="state__title">
           {props.title ??
-            (noNetwork() ? "You're offline" : offline() ? "Can't reach Reel" : notFound() ? "This title isn't here anymore" : "Something went wrong")}
+            (noNetwork() ? "You’re offline" : offline() ? "Can’t reach Reel" : notFound() ? "This title isn’t here anymore" : "Something went wrong")}
         </h2>
         <p class="state__body">
           <Show when={offline()} fallback={message()}>
@@ -114,7 +114,7 @@ export function FirstRun(): JSX.Element {
       <p class="state__body">
         {isAdmin()
           ? "Point Reel at the folders holding your films and series. It scans them, matches each title on TMDB and fetches artwork."
-          : "Your server doesn't have any libraries you can see yet. Ask the person who invited you to share one."}
+          : "Your server doesn’t have any libraries you can see yet. Ask the person who invited you to share one."}
       </p>
       <Show when={isAdmin()}>
         <div class="actions">

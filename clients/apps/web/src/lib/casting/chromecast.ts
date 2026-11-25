@@ -51,7 +51,7 @@ export function loadCastSdk(): Promise<boolean> {
       return resolve(true);
     }
     setStatus("loading");
-    const timer = setTimeout(() => fail("Couldn't load Google Cast"), 10_000);
+    const timer = setTimeout(() => fail("Couldn’t load Google Cast"), 10_000);
     window.__onGCastApiAvailable = (ok) => {
       clearTimeout(timer);
       if (!ok || !window.cast?.framework) return fail("Use Google Chrome to cast");
@@ -59,7 +59,7 @@ export function loadCastSdk(): Promise<boolean> {
         init();
         resolve(true);
       } catch {
-        fail("Google Cast didn't start");
+        fail("Google Cast didn’t start");
       }
     };
     const s = document.createElement("script");
@@ -67,7 +67,7 @@ export function loadCastSdk(): Promise<boolean> {
     s.async = true;
     s.onerror = () => {
       clearTimeout(timer);
-      fail("Couldn't load Google Cast");
+      fail("Couldn’t load Google Cast");
     };
     document.head.appendChild(s);
   });
@@ -96,7 +96,7 @@ export function castContext(): Any {
 
 /** Chrome's device picker (needs a user gesture). Resolves the session, rejects on cancel. */
 export async function requestCastSession(): Promise<Any> {
-  if (!(await loadCastSdk())) throw new Error(unavailableWhy() || "Google Cast isn't available");
+  if (!(await loadCastSdk())) throw new Error(unavailableWhy() || "Google Cast isn’t available");
   const ctx = castContext();
   const cur = ctx.getCurrentSession();
   if (cur) return cur;
@@ -172,5 +172,5 @@ export async function loadOnReceiver(session: Any, m: CastLoad): Promise<void> {
   } catch (e) {
     err = e || "load_failed";
   }
-  if (err) throw new Error(`The TV couldn't play this (${String((err as { code?: string }).code ?? err)})`);
+  if (err) throw new Error(`The TV couldn’t play this (${String((err as { code?: string }).code ?? err)})`);
 }

@@ -135,7 +135,7 @@ export function CastSheet(props: {
               <Show when={!devices.loading || devices()} fallback={<p class="sheet__status" role="status"><span class="spinner" /> Looking for TVs…</p>}>
                 <Show
                   when={!devices.error}
-                  fallback={<p class="sheet__status" role="status">Couldn't look for TVs right now.</p>}
+                  fallback={<p class="sheet__status" role="status">Couldn’t look for TVs right now.</p>}
                 >
                   <For
                     each={devices() ?? []}

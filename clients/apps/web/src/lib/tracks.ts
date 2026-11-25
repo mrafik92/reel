@@ -125,7 +125,7 @@ export function subtitleQuickSave(s: Sub | null, p: PlaybackPrefs, audioLang: st
         patch: { audio_languages: p.audio_languages.concat(audioLang) },
       };
     }
-    return { text: "Only turn subtitles on when the audio is in a language you don't know?", patch: { subtitle_mode: "auto" } };
+    return { text: "Only turn subtitles on when the audio is in a language you don’t know?", patch: { subtitle_mode: "auto" } };
   }
   if (s.forced) return undefined;
   const lang = subLanguage(s);

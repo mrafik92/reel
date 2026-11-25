@@ -47,9 +47,9 @@ export function vodPlayError(e: unknown, o: { takeover?: () => void } = {}): Pla
     if (isMine(h, msg)) {
       const canStop = !!h?.session_id;
       return {
-        title: "You're already watching IPTV on another screen",
+        title: "You’re already watching IPTV on another screen",
         body:
-          (h ? `You're watching ${describe(h)}. ` : msg ? msg.replace(/\.?$/, ". ") : "") +
+          (h ? `You’re watching ${describe(h)}. ` : msg ? msg.replace(/\.?$/, ". ") : "") +
           "Your provider only allows one stream at a time" + (canStop ? " — stop that one and this starts right away." : ". Stop it there, then try again."),
         retry: true,
         action: canStop ? { label: "Stop the other stream", run: () => vod.stopHolder(h!) } : undefined,
@@ -78,7 +78,7 @@ export function vodPlayError(e: unknown, o: { takeover?: () => void } = {}): Pla
   }
   if (e.status === 404) return { title: "No longer on your provider", body: "Your IPTV provider removed this title. It may come back after the next catalogue refresh.", retry: false };
   if (e.status === 502 || e.status === 503 || e.status === 504)
-    return { title: "Your IPTV provider didn't answer", body: `${e.message.replace(/\.?$/, ".")} Providers drop out now and then — try again in a moment.`, retry: true };
-  if (e.status === 0) return { title: "Can't reach Reel", body: "Check your connection and try again.", retry: true };
-  return { title: "Couldn't start this title", body: e.message, retry: true };
+    return { title: "Your IPTV provider didn’t answer", body: `${e.message.replace(/\.?$/, ".")} Providers drop out now and then — try again in a moment.`, retry: true };
+  if (e.status === 0) return { title: "Can’t reach Reel", body: "Check your connection and try again.", retry: true };
+  return { title: "Couldn’t start this title", body: e.message, retry: true };
 }

@@ -47,7 +47,7 @@ describe("request", () => {
     expect(e).toBeInstanceOf(ApiError);
     expect(e.status).toBe(0);
     expect(e.network).toBe("network");
-    expect(e.message).toBe("Can't reach Reel");
+    expect(e.message).toBe("Can’t reach Reel");
     expect(isAborted(e)).toBe(false);
     expect(s.calls).toBe(2);
   });

@@ -320,7 +320,7 @@ export default function Library(props: { kind: LibraryKind }): JSX.Element {
                 when={error() instanceof ApiError && (error() as ApiError).status === 400}
                 fallback={<ErrorState error={error()} onRetry={() => { setError(undefined); void loadMore(); }} />}
               >
-                <EmptyState title="Those filters don't add up" body={(error() as ApiError).message}>
+                <EmptyState title="Those filters don’t add up" body={(error() as ApiError).message}>
                   <button type="button" class="btn btn--primary" onClick={() => { clearFilters(); setParams({ sort: undefined, seed: undefined }, { replace: true }); }} data-autofocus>
                     <Icon name="x" /> <span>Clear filters</span>
                   </button>

@@ -23,18 +23,18 @@ function RecoveryCodes(props: { codes: string[]; onDone: () => void }): JSX.Elem
       await navigator.clipboard.writeText(props.codes.join("\n"));
       toast("Recovery codes copied", "success", 2000);
     } catch {
-      toast("Couldn't copy. Write them down instead.", "error");
+      toast("Couldn’t copy. Write them down instead.", "error");
     }
   };
   return (
     <div class="account__codes" role="status">
-      <p><strong>Save these recovery codes now.</strong> Each works once if you lose your device, and Reel can't show them again.</p>
+      <p><strong>Save these recovery codes now.</strong> Each works once if you lose your device, and Reel can’t show them again.</p>
       <ul class="account__codelist">
         <For each={props.codes}>{(c) => <li><code>{c}</code></li>}</For>
       </ul>
       <div class="account__row">
         <button type="button" class="btn btn--sm" onClick={copy}><Icon name="copy" /> <span>Copy</span></button>
-        <button type="button" class="btn btn--primary btn--sm" data-autofocus onClick={props.onDone}><span>I've saved them</span></button>
+        <button type="button" class="btn btn--primary btn--sm" data-autofocus onClick={props.onDone}><span>I’ve saved them</span></button>
       </div>
     </div>
   );
@@ -82,7 +82,7 @@ export default function SettingsAccount(): JSX.Element {
   const startTotp = () => needPassword() && run(async () => {
     setEnrolling(await api.totpStart(password()));
     setCode("");
-  }, "Couldn't start the setup.");
+  }, "Couldn’t start the setup.");
 
   const confirmTotp = (e: Event) => {
     e.preventDefault();
@@ -92,7 +92,7 @@ export default function SettingsAccount(): JSX.Element {
       setPassword("");
       if (r.recovery_codes) setCodes(r.recovery_codes);
       toast("Authenticator app added", "success");
-    }, "That code didn't work.");
+    }, "That code didn’t work.");
   };
 
   const addPasskey = () => {
@@ -105,7 +105,7 @@ export default function SettingsAccount(): JSX.Element {
       setPassword("");
       if (r.recovery_codes) setCodes(r.recovery_codes);
       toast("Passkey added", "success");
-    }, "Couldn't add the passkey.");
+    }, "Couldn’t add the passkey.");
   };
 
   const changePassword = (e: Event) => {
@@ -118,7 +118,7 @@ export default function SettingsAccount(): JSX.Element {
       setNewPassword("");
       void devicesCtl.refetch();
       toast("Password changed. Other devices were signed out.", "success");
-    }, "Couldn't change the password.");
+    }, "Couldn’t change the password.");
   };
 
   return (
@@ -129,7 +129,7 @@ export default function SettingsAccount(): JSX.Element {
         </p>
       </Show>
       <Show when={currentUser()?.role === "admin" && currentUser()?.admin_powers === false && !sec()?.must_enroll}>
-        <p class="account__notice"><Icon name="alert" /> <span>You're on a public address, so admin actions are off. Everything else works as usual.</span></p>
+        <p class="account__notice"><Icon name="alert" /> <span>You’re on a public address, so admin actions are off. Everything else works as usual.</span></p>
       </Show>
 
       <Show when={passwordWaitsForPasskey()}>
@@ -142,7 +142,7 @@ export default function SettingsAccount(): JSX.Element {
       <Show when={codes()}>{(c) => <RecoveryCodes codes={c()} onDone={() => setCodes(undefined)} />}</Show>
 
       <Show when={manageFactors()}>
-      <Panel title="Confirm it's you" icon="key">
+      <Panel title="Confirm it’s you" icon="key">
         <Show
           when={passwordless()}
           fallback={<PasswordField label="Current password" hint="Needed to change your password or sign-in methods" value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="current-password" />}
@@ -183,13 +183,13 @@ export default function SettingsAccount(): JSX.Element {
         >
           <div class="account__row">
             <p class="state__body"><Icon name="check" /> On</p>
-            <ConfirmButton label="Remove" onConfirm={() => { if (needPassword()) return run(async () => { await api.totpRemove(password()); setPassword(""); toast("Authenticator app removed", "success"); }, "Couldn't remove it."); }} />
+            <ConfirmButton label="Remove" onConfirm={() => { if (needPassword()) return run(async () => { await api.totpRemove(password()); setPassword(""); toast("Authenticator app removed", "success"); }, "Couldn’t remove it."); }} />
           </div>
         </Show>
       </Panel>
 
       <Panel title="Passkeys" icon="key">
-        <Show when={sec()?.passkeys_available} fallback={<p class="state__body">Passkeys need the server's public address (<code>REEL_PUBLIC_URL</code>) to be set.</p>}>
+        <Show when={sec()?.passkeys_available} fallback={<p class="state__body">Passkeys need the server’s public address (<code>REEL_PUBLIC_URL</code>) to be set.</p>}>
           <ul class="list">
             <For each={sec()?.passkeys ?? []}>
               {(k) => (
@@ -199,13 +199,13 @@ export default function SettingsAccount(): JSX.Element {
                     <span class="list__sub">Added {when(k.created_at)} · last used {when(k.last_used_at)}</span>
                   </div>
                   <div class="list__actions">
-                    <ConfirmButton label="Remove" onConfirm={() => { if (needPassword()) return run(async () => { await api.passkeyRemove(k.id, password()); setPassword(""); toast("Passkey removed", "success"); }, "Couldn't remove it."); }} />
+                    <ConfirmButton label="Remove" onConfirm={() => { if (needPassword()) return run(async () => { await api.passkeyRemove(k.id, password()); setPassword(""); toast("Passkey removed", "success"); }, "Couldn’t remove it."); }} />
                   </div>
                 </li>
               )}
             </For>
           </ul>
-          <Show when={passkeysSupported()} fallback={<p class="state__body">This device can't create passkeys. Add one from a phone or computer.</p>}>
+          <Show when={passkeysSupported()} fallback={<p class="state__body">This device can’t create passkeys. Add one from a phone or computer.</p>}>
             <div class="account__row">
               <Field label="Name for a new passkey" placeholder="MacBook" value={keyName()} onInput={(e) => setKeyName(e.currentTarget.value)} maxLength={64} />
               <button type="button" class="btn btn--sm" onClick={addPasskey}><Icon name="plus" /> <span>Add passkey</span></button>
@@ -220,7 +220,7 @@ export default function SettingsAccount(): JSX.Element {
         <Panel title="Recovery codes" icon="key">
           <div class="account__row">
             <p class="state__body">{sec()?.recovery_codes_left ?? 0} left</p>
-            <ConfirmButton label="Make new codes" confirm="Replace all codes?" onConfirm={() => { if (needPassword()) return run(async () => { const r = await api.newRecoveryCodes(password()); setPassword(""); if (r.recovery_codes) setCodes(r.recovery_codes); }, "Couldn't make new codes."); }} />
+            <ConfirmButton label="Make new codes" confirm="Replace all codes?" onConfirm={() => { if (needPassword()) return run(async () => { const r = await api.newRecoveryCodes(password()); setPassword(""); if (r.recovery_codes) setCodes(r.recovery_codes); }, "Couldn’t make new codes."); }} />
           </div>
         </Panel>
       </Show>
@@ -236,7 +236,7 @@ export default function SettingsAccount(): JSX.Element {
                     <span class="list__sub">{i.label ? `${i.label} · ` : ""}last used {when(i.last_used_at)}</span>
                   </div>
                   <div class="list__actions">
-                    <ConfirmButton label="Unlink" onConfirm={() => { if (needPassword()) return run(async () => { await api.identityRemove(i.id, password()); setPassword(""); await identitiesCtl.refetch(); toast("Unlinked", "success"); }, "Couldn't unlink it."); }} />
+                    <ConfirmButton label="Unlink" onConfirm={() => { if (needPassword()) return run(async () => { await api.identityRemove(i.id, password()); setPassword(""); await identitiesCtl.refetch(); toast("Unlinked", "success"); }, "Couldn’t unlink it."); }} />
                   </div>
                 </li>
               )}
@@ -246,7 +246,7 @@ export default function SettingsAccount(): JSX.Element {
             <div class="auth__methods">
               <For each={providers() ?? []}>
                 {(p) => (
-                  <button type="button" class="btn btn--sm" onClick={() => { if (needPassword()) void run(() => startOidcLink(p, password()), `Couldn't reach ${p.name}.`); }}>
+                  <button type="button" class="btn btn--sm" onClick={() => { if (needPassword()) void run(() => startOidcLink(p, password()), `Couldn’t reach ${p.name}.`); }}>
                     <Icon name="plus" /> <span>Link {p.name}</span>
                   </button>
                 )}
@@ -280,7 +280,7 @@ export default function SettingsAccount(): JSX.Element {
                       try {
                         await api.revokeMySession(d.id);
                       } catch (e) {
-                        if (!(e instanceof ApiError && e.status === 404)) toast(message(e, "Couldn't sign that device out."), "error");
+                        if (!(e instanceof ApiError && e.status === 404)) toast(message(e, "Couldn’t sign that device out."), "error");
                       }
                       void devicesCtl.refetch();
                     }} />

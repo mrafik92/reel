@@ -20,7 +20,7 @@ export default function VodMovie(): JSX.Element {
 
   return (
     <div class="page detail vdetail" ref={el}>
-      <Show when={!m.error} fallback={<ErrorState error={m.error} title="Couldn't open this IPTV title" onRetry={refetch} />}>
+      <Show when={!m.error} fallback={<ErrorState error={m.error} title="Couldn’t open this IPTV title" onRetry={refetch} />}>
         <Show when={m()} fallback={<VodSkeleton />}>
           {(x) => <MovieBody m={x()} />}
         </Show>

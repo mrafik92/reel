@@ -61,7 +61,7 @@ export function useRequestActions() {
       await retrySearch(requestId);
       toast(`Searching again${title ? ` for “${title}”` : ""}`);
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Couldn't retry", "error");
+      toast(e instanceof Error ? e.message : "Couldn’t retry", "error");
     }
   }
 
@@ -76,7 +76,7 @@ export function useRequestActions() {
     }
     const started = requestIds.length - failed;
     const summary = `Started ${started} ${started === 1 ? "retry" : "retries"}`;
-    toast(failed ? `${summary}. Couldn't retry ${failed}.` : summary, failed ? "error" : "success");
+    toast(failed ? `${summary}. Couldn’t retry ${failed}.` : summary, failed ? "error" : "success");
   }
 
   async function play(c: { title: string; year?: number | null; media_type: MediaType; tmdb_id: number; library_item_id?: number | null }): Promise<void> {
@@ -96,7 +96,7 @@ export function useRequestActions() {
       }
       navigate(toPath(it.kind === "movie" ? playHref(it) : itemHref(it)));
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Couldn't open that title", "error");
+      toast(e instanceof Error ? e.message : "Couldn’t open that title", "error");
     }
   }
 
@@ -112,9 +112,9 @@ async function retrySearch(requestId: number | string): Promise<void> {
 export function requestError(e: unknown, title: string): string {
   if (e instanceof ApiError) {
     if (e.status === 409) return `“${title}” is already in your library or requested`;
-    if (e.status === 424) return "Requests aren't set up yet — an admin needs to connect Radarr/Sonarr";
-    if (e.status === 429) return "You've reached your request limit for now";
+    if (e.status === 424) return "Requests aren’t set up yet — an admin needs to connect Radarr/Sonarr";
+    if (e.status === 429) return "You’ve reached your request limit for now";
     return e.message;
   }
-  return "Couldn't add that title";
+  return "Couldn’t add that title";
 }

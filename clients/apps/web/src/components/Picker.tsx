@@ -146,8 +146,8 @@ export function FilterPanel(props: {
 
             <section class="fpanel__sec fpanel__sec--inline">
               <div>
-                <h3 class="fpanel__label">Only things I haven't seen</h3>
-                <p class="fpanel__hint">Hides anything you've finished.</p>
+                <h3 class="fpanel__label">Only things I haven’t seen</h3>
+                <p class="fpanel__hint">Hides anything you’ve finished.</p>
               </div>
               <button
                 type="button"
@@ -296,15 +296,15 @@ export function Spotlight(props: {
         <div class="spot__stage">
           <div class="spot__copy">
             <p class="eyebrow eyebrow--accent spot__eyebrow">
-              <Glyph name="dice" class="spot__dice" /> Tonight's pick
+              <Glyph name="dice" class="spot__dice" /> Tonight’s pick
             </p>
             <p class="spot__pool">From your {describePool(pool(), noun)}</p>
 
             <Show when={!none() && !error()} fallback={
               <div class="spot__none">
-                <h2 class="spot__title spot__title--none">{error() ? "Couldn't pick right now" : "Nothing fits all of that"}</h2>
+                <h2 class="spot__title spot__title--none">{error() ? "Couldn’t pick right now" : "Nothing fits all of that"}</h2>
                 <p class="spot__overview">
-                  {error() ? (error() instanceof Error ? (error() as Error).message : "Try again in a moment.") : activeCount(props.filters) === 0 ? "You've seen everything here — include watched titles to pick from the lot." : unwatched() ? "No unwatched titles match those filters. Include watched ones, or loosen the filters." : "Try fewer genres, a lower rating or a longer runtime."}
+                  {error() ? (error() instanceof Error ? (error() as Error).message : "Try again in a moment.") : activeCount(props.filters) === 0 ? "You’ve seen everything here — include watched titles to pick from the lot." : unwatched() ? "No unwatched titles match those filters. Include watched ones, or loosen the filters." : "Try fewer genres, a lower rating or a longer runtime."}
                 </p>
               </div>
             }>
@@ -359,7 +359,7 @@ export function Spotlight(props: {
               onClick={() => setUnwatched(!unwatched())}
             >
               <span class="spot__tick" aria-hidden="true">{unwatched() ? <Icon name="check" /> : null}</span>
-              Only ones I haven't seen
+              Only ones I haven’t seen
             </button>
           </div>
 

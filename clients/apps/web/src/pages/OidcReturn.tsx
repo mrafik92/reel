@@ -10,7 +10,7 @@ import { toast } from "../lib/toast";
 const REASONS: Record<string, string> = {
   denied: "The sign-in was cancelled.",
   expired: "That sign-in expired. Try again.",
-  failed: "The provider's answer couldn't be verified. Try again.",
+  failed: "The provider’s answer couldn’t be verified. Try again.",
 };
 
 /** The provider sent the browser back: finish whatever this trip was for (#149). */

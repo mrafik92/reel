@@ -50,11 +50,11 @@ export default function Discover(): JSX.Element {
       <Show when={!rows.error} fallback={
         <Show when={tmdbMissing()} fallback={<ErrorState error={rows.error} onRetry={refetch} />}>
           <div class="state">
-            <h2 class="state__title">Discover isn't connected yet</h2>
+            <h2 class="state__title">Discover isn’t connected yet</h2>
             <p class="state__body">
               {isAdmin()
                 ? "Add a TMDB API key to the server config (tmdb_api_key, or the REEL_TMDB_API_KEY environment variable) and restart it."
-                : "Your server's admin needs to connect it to TMDB first."}
+                : "Your server’s admin needs to connect it to TMDB first."}
             </p>
           </div>
         </Show>
