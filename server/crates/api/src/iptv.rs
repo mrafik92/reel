@@ -429,6 +429,7 @@ fn snake<T: Serialize>(v: &T) -> String {
 pub async fn tune(
     State(st): State<AppState>,
     u: AuthUser,
+    sender: crate::prefs::CastSender,
     Path(id): Path<i64>,
     body: Option<Json<TuneBody>>,
 ) -> ApiResult<Json<TuneResponse>> {
@@ -452,7 +453,7 @@ pub async fn tune(
             )));
         }
     }
-    let cast = crate::prefs::cast_ctx(&st, b.for_cast.unwrap_or(false))?;
+    let cast = crate::prefs::cast_ctx(&st, b.for_cast.unwrap_or(false), sender.0)?;
     let profile = match (b.profile, b.preset.as_deref()) {
         (Some(p), _) => Some(crate::prefs::sanitize_profile(&u.user, p)),
         (None, Some(name)) => Some(DeviceProfile::preset(name).ok_or_else(|| {

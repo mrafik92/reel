@@ -1209,6 +1209,7 @@ async fn probe_cached(
 pub async fn vod_play(
     State(st): State<AppState>,
     u: AuthUser,
+    sender: crate::prefs::CastSender,
     Json(req): Json<VodPlayRequest>,
 ) -> ApiResult<Json<DecideResponse>> {
     let kind: &'static str = match req.kind.as_str() {
@@ -1220,7 +1221,7 @@ pub async fn vod_play(
             )));
         }
     };
-    let cast = crate::prefs::cast_ctx(&st, req.for_cast.unwrap_or(false))?;
+    let cast = crate::prefs::cast_ctx(&st, req.for_cast.unwrap_or(false), sender.0)?;
     let profile = match (req.profile.clone(), req.preset.as_deref()) {
         (Some(p), _) => crate::prefs::sanitize_profile(&u.user, p),
         (None, name) => {

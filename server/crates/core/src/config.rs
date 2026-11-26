@@ -83,6 +83,14 @@ pub struct Config {
     /// Base URL TVs / Chromecasts use to reach this server (LAN address, e.g.
     /// `http://10.10.10.207:8420`). Used for cast URLs (`for_cast`, `POST /playback/{id}/cast-url`).
     pub cast_base_url: Option<String>,
+    /// `REEL_CAST_LAN_NETWORKS`: senders (the phone or laptop that starts a Chromecast / AirPlay
+    /// cast) on these networks get cast URLs on `cast_base_url`; everyone else gets them on
+    /// `public_url`, because their TV sits next to them, not next to the server (#309). CIDRs or
+    /// addresses, comma-separated; a `!` entry excludes, e.g. `10.10.10.0/24,!10.10.10.1` when
+    /// Tailscale clients arrive routed through the gateway. Empty (default) = private ranges
+    /// except Tailscale's.
+    #[serde(default, deserialize_with = "list_or_csv")]
+    pub cast_lan_networks: Vec<String>,
     /// `REEL_CAST_DISCOVERY`: look for DLNA TVs with SSDP multicast (default true). Set false
     /// to only use TVs added by IP (Settings or `POST /admin/cast/devices`): SSDP answers can
     /// come from any host on the LAN.
@@ -152,6 +160,7 @@ impl Default for Config {
             image_cache_max_mb: 4096,
             iptv_image_cache_max_mb: 1024,
             cast_base_url: None,
+            cast_lan_networks: Vec::new(),
             cast_discovery: true,
             allow_direct_live: false,
             require_admin_2fa: true,
@@ -306,6 +315,10 @@ mod tests {
             vec!["10.10.10.73", "fd00::/8"]
         );
         assert!(load("REEL_TRUSTED_PROXIES", "").trusted_proxies.is_empty());
+        assert_eq!(
+            load("REEL_CAST_LAN_NETWORKS", "10.10.10.0/24,!10.10.10.1").cast_lan_networks,
+            vec!["10.10.10.0/24", "!10.10.10.1"]
+        );
         assert_eq!(
             load("REEL_CORS_ORIGINS", "https://a.example,https://b.example").cors_origins,
             vec!["https://a.example", "https://b.example"]

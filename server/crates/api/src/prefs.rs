@@ -218,24 +218,58 @@ impl Cast {
     }
 }
 
-/// `Some` when `for_cast` is requested (400 if the server has no `cast_base_url`/`public_url`).
-pub(crate) fn cast_ctx(st: &AppState, for_cast: bool) -> ApiResult<Option<Cast>> {
+/// Which network a cast's sender is on, as far as its TV goes (#309). Chromecast and AirPlay
+/// receivers sit next to the sender, not next to the server: on the home LAN they can use
+/// `cast_base_url`; anywhere else (Tailscale, the internet) only the public name reaches Reel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CastFrom {
+    Lan,
+    Away,
+}
+
+/// The cast sender's network, from its real address (proxy headers believed only from trusted
+/// proxies). Unknown (in-process tests) counts as the LAN.
+pub struct CastSender(pub CastFrom);
+
+impl axum::extract::FromRequestParts<AppState> for CastSender {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        st: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let peer = crate::auth::peer_of(&parts.extensions);
+        let ip = crate::auth::resolve_client_ip(&st.config, peer, &parts.headers);
+        Ok(CastSender(match ip {
+            Some(ip) if !crate::netutil::on_cast_lan(&st.config.cast_lan_networks, ip) => {
+                CastFrom::Away
+            }
+            _ => CastFrom::Lan,
+        }))
+    }
+}
+
+/// `Some` when `for_cast` is requested: URLs on `cast_base_url` for a sender on the LAN, on
+/// `public_url` for one elsewhere, each falling back to the other (400 if neither is set).
+pub(crate) fn cast_ctx(st: &AppState, for_cast: bool, from: CastFrom) -> ApiResult<Option<Cast>> {
     if !for_cast {
         return Ok(None);
     }
-    let base = st
-        .config
-        .cast_base_url
-        .as_deref()
-        .or(st.config.public_url.as_deref())
-        .map(|b| b.trim().trim_end_matches('/').to_string())
-        .filter(|b| b.starts_with("http"))
-        .ok_or_else(|| {
-            ApiError::BadRequest(
-                "cast_base_url is not configured on the server (e.g. http://192.168.1.10:8420)"
-                    .into(),
-            )
-        })?;
+    let (lan, public) = (
+        st.config.cast_base_url.as_deref(),
+        st.config.public_url.as_deref(),
+    );
+    let base = match from {
+        CastFrom::Lan => lan.or(public),
+        CastFrom::Away => public.or(lan),
+    }
+    .map(|b| b.trim().trim_end_matches('/').to_string())
+    .filter(|b| b.starts_with("http"))
+    .ok_or_else(|| {
+        ApiError::BadRequest(
+            "cast_base_url is not configured on the server (e.g. http://192.168.1.10:8420)".into(),
+        )
+    })?;
     Ok(Some(Cast { base }))
 }
 
@@ -254,7 +288,7 @@ pub struct CastSubtitle {
 pub struct CastUrl {
     pub session_id: String,
     pub mode: PlaybackMode,
-    /// Absolute signed media URL on `cast_base_url` (HLS master playlist, or the direct/proxied file).
+    /// Absolute signed media URL on the cast base (`cast_base_url` or `public_url`, #309; HLS master playlist, or the direct/proxied file).
     pub url: String,
     pub content_type: String,
     pub base_url: String,
@@ -275,13 +309,14 @@ pub struct CastUrl {
 pub async fn cast_url(
     State(st): State<AppState>,
     u: AuthUser,
+    sender: CastSender,
     Path(sid): Path<String>,
 ) -> ApiResult<Json<CastUrl>> {
     let info = st.playback.session(&sid).await?;
     if info.user_id != u.id() && !u.is_admin() {
         return Err(ApiError::NotFound);
     }
-    let cast = cast_ctx(&st, true)?.expect("for_cast");
+    let cast = cast_ctx(&st, true, sender.0)?.expect("for_cast");
     let sg = st.signer(info.user_id);
     let ttl = Cast::ttl(&st);
     st.playback.touch_session(&sid);

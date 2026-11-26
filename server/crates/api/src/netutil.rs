@@ -69,8 +69,33 @@ pub fn is_private(ip: IpAddr) -> bool {
 /// Tailscale's IPv6 range is unique-local, so [`is_private`] already covers it.
 pub fn is_admin_network(ip: IpAddr) -> bool {
     let ip = normalize(ip);
-    is_private(ip)
-        || matches!(ip, IpAddr::V4(a) if a.octets()[0] == 100 && (a.octets()[1] & 0xc0) == 64)
+    is_private(ip) || is_tailscale(ip)
+}
+
+/// Tailscale's address ranges: CGNAT `100.64.0.0/10` and the unique-local `fd7a:115c:a1e0::/48`.
+pub fn is_tailscale(ip: IpAddr) -> bool {
+    match normalize(ip) {
+        IpAddr::V4(a) => a.octets()[0] == 100 && (a.octets()[1] & 0xc0) == 64,
+        IpAddr::V6(a) => a.segments()[..3] == [0xfd7a, 0x115c, 0xa1e0],
+    }
+}
+
+/// Is this cast sender on the server's own LAN, where TVs can reach `cast_base_url` (#309)?
+///
+/// `networks` empty: any private address except Tailscale's. Otherwise the address must match a
+/// plain entry and no `!` entry (unparsable entries are ignored).
+pub fn on_cast_lan(networks: &[String], ip: IpAddr) -> bool {
+    if networks.is_empty() {
+        return is_private(ip) && !is_tailscale(ip);
+    }
+    let (mut inside, mut excluded) = (false, false);
+    for n in networks {
+        match n.trim().strip_prefix('!') {
+            Some(x) => excluded |= Cidr::parse(x).is_some_and(|c| c.contains(ip)),
+            None => inside |= Cidr::parse(n).is_some_and(|c| c.contains(ip)),
+        }
+    }
+    inside && !excluded
 }
 
 pub fn parse_cidrs(list: &[String]) -> Vec<Cidr> {
@@ -104,6 +129,28 @@ mod tests {
         ] {
             assert!(!is_admin_network(ip.parse().unwrap()), "{ip}");
         }
+    }
+
+    #[test]
+    fn cast_lan_defaults_to_private_minus_tailscale_and_honours_exclusions() {
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        for lan in ["10.10.10.5", "192.168.1.2", "fd00::1", "::ffff:10.0.0.1"] {
+            assert!(on_cast_lan(&[], ip(lan)), "{lan}");
+        }
+        for away in [
+            "100.101.1.2",
+            "fd7a:115c:a1e0::5",
+            "85.144.240.8",
+            "2001:db8::1",
+        ] {
+            assert!(!on_cast_lan(&[], ip(away)), "{away}");
+        }
+        let home: Vec<String> = ["10.10.10.0/24", "!10.10.10.1", "junk"]
+            .map(String::from)
+            .into();
+        assert!(on_cast_lan(&home, ip("10.10.10.42")));
+        assert!(!on_cast_lan(&home, ip("10.10.10.1")), "Tailscale, routed");
+        assert!(!on_cast_lan(&home, ip("192.168.1.2")), "not listed");
     }
 
     #[test]
