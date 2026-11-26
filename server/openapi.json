@@ -2421,7 +2421,7 @@
     },
     "/api/v1/cast/devices/{id}/play": {
       "post": {
-        "summary": "Start something on a TV. Uses the TV-friendly `dlna` preset and absolute signed URLs on\n`cast_base_url`; provider-budget rules are those of the normal playback endpoints (same-user\nnewest wins, 429, admin 409 + `takeover`).",
+        "summary": "Start something on a TV. Uses the TV-friendly `dlna` preset and absolute signed URLs on\n`cast_base_url` (the TV is on the server's LAN); provider-budget rules are those of the normal playback endpoints (same-user\nnewest wins, 429, admin 409 + `takeover`).",
         "operationId": "play_on_device",
         "parameters": [
           {
@@ -8038,7 +8038,7 @@
           },
           "url": {
             "type": "string",
-            "description": "Absolute signed media URL on `cast_base_url` (HLS master playlist, or the direct/proxied file)."
+            "description": "Absolute signed media URL on the cast base (`cast_base_url` or `public_url`, #309; HLS master playlist, or the direct/proxied file)."
           }
         }
       },

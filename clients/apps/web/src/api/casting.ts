@@ -4,7 +4,9 @@
  *  - DLNA "Play on TV" is server-driven: the server discovers renderers (SSDP) and pushes
  *    the stream to them; the browser only sends commands and polls the state.
  *  - Chromecast / AirPlay receivers fetch media themselves: decide / vod play / tune with
- *    `for_cast: true` return absolute, long-lived URLs on a LAN-reachable base, and
+ *    `for_cast: true` return absolute, long-lived URLs the receiver can reach. The server picks
+ *    the base from where this device is (#309): the LAN address when it's on the home network,
+ *    the public name otherwise (the TV sits next to the sender, not the server). And
  *    `POST /playback/{id}/cast-url` converts an already running session.
  *
  * Hand-written until the server's OpenAPI includes these. `?mock=1` → in-memory fakes.

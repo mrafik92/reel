@@ -547,6 +547,115 @@ async fn cast_urls_are_absolute_long_lived_and_use_the_chromecast_profile() {
     let _ = &e.dir;
 }
 
+/// #309: the TV is next to the sender. A sender on the home LAN gets URLs on the LAN base; one
+/// on Tailscale (routed through the gateway) or the internet gets them on the public name.
+#[tokio::test]
+async fn cast_urls_follow_the_senders_network() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = reel_core::db::connect_url("sqlite::memory:").await.unwrap();
+    let cfg = reel_core::Config {
+        data_dir: dir.path().join("data"),
+        cast_base_url: Some("http://10.10.10.207:8420".into()),
+        public_url: Some("https://reel.example.com/".into()),
+        trusted_proxies: vec!["10.10.10.73".into()],
+        cast_lan_networks: vec!["10.10.10.0/24".into(), "!10.10.10.1".into()],
+        ..Default::default()
+    };
+    let state = AppState::new(db.clone(), cfg);
+    let raw = app(state.clone());
+    let admin = common::authed(&state, raw.clone()).await;
+    let e = Env {
+        state,
+        admin,
+        raw,
+        db,
+        dir,
+    };
+    let fid = library_file(&e, None).await;
+
+    // (socket peer, X-Forwarded-For) → expected base
+    let cases = [
+        ("10.10.10.42", None, "http://10.10.10.207:8420/"),
+        (
+            "10.10.10.73",
+            Some("10.10.10.42"),
+            "http://10.10.10.207:8420/",
+        ),
+        (
+            "10.10.10.73",
+            Some("10.10.10.1"),
+            "https://reel.example.com/",
+        ),
+        (
+            "10.10.10.73",
+            Some("85.144.1.2"),
+            "https://reel.example.com/",
+        ),
+        ("100.101.102.103", None, "https://reel.example.com/"),
+        // an untrusted peer can't claim to be on the LAN
+        (
+            "203.0.113.9",
+            Some("10.10.10.42"),
+            "https://reel.example.com/",
+        ),
+    ];
+    for (peer, xff, want) in cases {
+        let call = |uri: String, body: Option<Value>| {
+            let mut r = Request::builder().method("POST").uri(uri);
+            if let Some(x) = xff {
+                r = r.header("x-forwarded-for", x);
+            }
+            let b = match body {
+                Some(v) => {
+                    r = r.header(header::CONTENT_TYPE, "application/json");
+                    Body::from(v.to_string())
+                }
+                None => Body::empty(),
+            };
+            let mut req = r.body(b).unwrap();
+            req.extensions_mut()
+                .insert(axum::extract::ConnectInfo(std::net::SocketAddr::new(
+                    peer.parse().unwrap(),
+                    50000,
+                )));
+            let app = e.admin.clone();
+            async move {
+                let res = app.oneshot(req).await.unwrap();
+                let s = res.status();
+                let bytes = res.into_body().collect().await.unwrap().to_bytes();
+                (s, serde_json::from_slice::<Value>(&bytes).unwrap())
+            }
+        };
+        let (s, d) = call(
+            format!("/api/v1/playback/{fid}/decide"),
+            Some(json!({"for_cast": true})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{peer} {xff:?}: {d}");
+        let url = d["url"].as_str().unwrap();
+        assert!(url.starts_with(want), "{peer} {xff:?}: {url}");
+        assert!(
+            d["subtitles"][0]["url"].as_str().unwrap().starts_with(want),
+            "{peer} {xff:?}"
+        );
+        let sid = d["session_id"].as_str().unwrap().to_string();
+        let (s, c) = call(format!("/api/v1/playback/{sid}/cast-url"), None).await;
+        assert_eq!(s, StatusCode::OK, "{c}");
+        assert_eq!(
+            c["base_url"].as_str().unwrap(),
+            want.trim_end_matches('/'),
+            "{peer} {xff:?}"
+        );
+        // normal playback stays relative wherever the sender is
+        let (_, plain) = call(
+            format!("/api/v1/playback/{fid}/decide"),
+            Some(json!({"preset": "web_chrome"})),
+        )
+        .await;
+        assert!(plain["url"].as_str().unwrap().starts_with("/api/v1/"));
+    }
+}
+
 #[tokio::test]
 async fn signed_media_routes_answer_cors_and_expose_range_headers() {
     let e = env(Some("http://10.10.10.207:8420")).await;

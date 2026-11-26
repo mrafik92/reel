@@ -389,7 +389,7 @@ async function chromecastRemote(source: CastSource, o: CastOpen): Promise<Remote
   };
 }
 
-/** Our image URLs are relative to the web origin; the receiver needs the LAN cast base. */
+/** Our image URLs are relative to the web origin; the receiver needs the cast base the server picked. */
 function absoluteOn(path: string, mediaUrl: string): string {
   if (/^https?:/i.test(path)) return path;
   const m = /^(https?:\/\/[^/]+)/i.exec(mediaUrl);

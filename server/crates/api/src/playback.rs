@@ -268,10 +268,11 @@ pub(crate) async fn replace_previous(
 pub async fn decide_playback(
     State(st): State<AppState>,
     u: AuthUser,
+    sender: crate::prefs::CastSender,
     Path(file_id): Path<i64>,
     Json(req): Json<DecideRequest>,
 ) -> ApiResult<Json<DecideResponse>> {
-    let cast = crate::prefs::cast_ctx(&st, req.for_cast.unwrap_or(false))?;
+    let cast = crate::prefs::cast_ctx(&st, req.for_cast.unwrap_or(false), sender.0)?;
     let profile = match (req.profile, req.preset.as_deref()) {
         (Some(p), _) => crate::prefs::sanitize_profile(&u.user, p),
         (None, name) => {

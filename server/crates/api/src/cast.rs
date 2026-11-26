@@ -698,7 +698,7 @@ async fn one_str(st: &AppState, sql: &str, id: i64) -> Option<String> {
 }
 
 /// Start something on a TV. Uses the TV-friendly `dlna` preset and absolute signed URLs on
-/// `cast_base_url`; provider-budget rules are those of the normal playback endpoints (same-user
+/// `cast_base_url` (the TV is on the server's LAN); provider-budget rules are those of the normal playback endpoints (same-user
 /// newest wins, 429, admin 409 + `takeover`).
 #[utoipa::path(
     post,
@@ -721,7 +721,7 @@ pub async fn play_on_device(
     Json(req): Json<CastPlayRequest>,
 ) -> ApiResult<Json<CastPlayResponse>> {
     let dev = st.cast.device(&dev_id).ok_or(ApiError::NotFound)?;
-    crate::prefs::cast_ctx(&st, true)?;
+    crate::prefs::cast_ctx(&st, true, crate::prefs::CastFrom::Lan)?;
     let uid = u.id();
     // one cast per TV: the previous one makes room
     let old: Vec<String> = st
@@ -818,6 +818,8 @@ async fn resolve_request(st: &AppState, u: AuthUser, req: &CastPlayRequest) -> A
             let r = crate::playback::decide_playback(
                 State(st.clone()),
                 u,
+                // DLNA TVs are on the server's LAN, wherever the sender is.
+                crate::prefs::CastSender(crate::prefs::CastFrom::Lan),
                 Path(fid),
                 Json(crate::playback::DecideRequest {
                     profile: None,
@@ -871,6 +873,8 @@ async fn resolve_request(st: &AppState, u: AuthUser, req: &CastPlayRequest) -> A
             let r = crate::vod::vod_play(
                 State(st.clone()),
                 u,
+                // DLNA TVs are on the server's LAN, wherever the sender is.
+                crate::prefs::CastSender(crate::prefs::CastFrom::Lan),
                 Json(crate::vod::VodPlayRequest {
                     kind,
                     id,
@@ -908,6 +912,8 @@ async fn resolve_request(st: &AppState, u: AuthUser, req: &CastPlayRequest) -> A
             let t = crate::iptv::tune(
                 State(st.clone()),
                 u,
+                // DLNA TVs are on the server's LAN, wherever the sender is.
+                crate::prefs::CastSender(crate::prefs::CastFrom::Lan),
                 Path(id),
                 Some(Json(crate::iptv::TuneBody {
                     mode: Some(crate::iptv::LiveModeDto::Passthrough),
