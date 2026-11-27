@@ -119,6 +119,10 @@ async fn cast_carries_person_tmdb_id_in_library_and_discover() {
     assert!(cast[1].get("photo_url").is_none());
     assert_eq!(v["card"]["status"], "none");
     assert!(v["card"].get("library_item_id").is_none());
+    assert!(
+        v.get("trailer_youtube_id").is_none(),
+        "no videos, no trailer"
+    );
 
     // library item: people stored by enrichment keep tmdb ids
     let db = &e.state.db;
@@ -144,6 +148,31 @@ async fn cast_carries_person_tmdb_id_in_library_and_discover() {
     let (_, v) = get(&e.admin, "/api/v1/discover/movie/10").await;
     assert_eq!(v["card"]["library_item_id"], 5);
     assert_eq!(v["card"]["status"], "available");
+}
+
+#[tokio::test]
+async fn discover_detail_carries_the_tmdb_trailer() {
+    let tmdb = MockServer::start().await;
+    let mut body = movie_body();
+    body["videos"] = json!({"results": [
+        {"key": "clipAAAAAAA", "site": "YouTube", "type": "Clip", "official": true},
+        {"key": "8g18jFHCLXk", "site": "YouTube", "type": "Trailer", "official": true}
+    ]});
+    tmdb_json(&tmdb, "/movie/10", body).await;
+    tmdb_json(
+        &tmdb,
+        "/tv/20",
+        json!({"id": 20, "name": "Show", "seasons": [{"season_number": 1}],
+               "videos": {"results": [{"key": "tvTeaser001", "site": "YouTube", "type": "Teaser"}]}}),
+    )
+    .await;
+    let e = env(&tmdb, None, None).await;
+    let (s, v) = get(&e.admin, "/api/v1/discover/movie/10").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["trailer_youtube_id"], "8g18jFHCLXk");
+    let (s, v) = get(&e.admin, "/api/v1/discover/tv/20").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["trailer_youtube_id"], "tvTeaser001");
 }
 
 #[tokio::test]

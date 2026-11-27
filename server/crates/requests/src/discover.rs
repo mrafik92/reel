@@ -54,6 +54,8 @@ pub struct DiscoverDetail {
     pub seasons: Vec<i64>,
     /// Top-billed cast (max 20).
     pub cast: Vec<DiscoverCast>,
+    /// YouTube id of the title's main trailer on TMDB, if any.
+    pub trailer_youtube_id: Option<String>,
 }
 
 /// Cast entry of a discover detail.
@@ -372,7 +374,7 @@ impl Discovery {
 
     pub async fn detail(&self, media: MediaType, tmdb_id: i64) -> Result<DiscoverDetail> {
         let t = self.tmdb()?;
-        let (mut sr, genres, runtime, imdb, tvdb, seasons, credits) = match media {
+        let (mut sr, genres, runtime, imdb, tvdb, seasons, credits, trailer) = match media {
             MediaType::Movie => {
                 let m = t.movie(tmdb_id).await?;
                 (
@@ -392,6 +394,7 @@ impl Discovery {
                     None,
                     vec![],
                     m.credits.clone(),
+                    m.videos.as_ref().and_then(|v| v.youtube_trailer()),
                 )
             }
             MediaType::Tv => {
@@ -418,6 +421,7 @@ impl Discovery {
                         .filter(|n| *n > 0)
                         .collect(),
                     m.credits.clone(),
+                    m.videos.as_ref().and_then(|v| v.youtube_trailer()),
                 )
             }
         };
@@ -450,6 +454,7 @@ impl Discovery {
                         .collect()
                 })
                 .unwrap_or_default(),
+            trailer_youtube_id: trailer,
         })
     }
 

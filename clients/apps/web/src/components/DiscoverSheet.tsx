@@ -11,6 +11,7 @@ import { ErrorState } from "./States";
 import { RatingsStrip, ReviewsSection, useReviews } from "./Reviews";
 import { CastTile } from "./Cast";
 import { vodTwin } from "./vod/links";
+import { TrailerModal } from "./Trailer";
 
 /** TMDB title detail (SPEC §7.1): availability, live ring, season picker, Add / Play / Retry. */
 export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: DiscoverCard; onClose: () => void }): JSX.Element {
@@ -25,6 +26,7 @@ export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: 
   const failed = () => state() === "failed" || state() === "not_found";
   const seasons = () => d()?.seasons ?? [];
   const [picked, setPicked] = createSignal<number[] | null>(null); // null = all seasons
+  const [trailer, setTrailer] = createSignal(false);
   const toggleSeason = (n: number) => {
     const all = seasons();
     const cur = picked() ?? all.slice();
@@ -160,6 +162,11 @@ export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: 
                           </a>
                         )}
                       </Show>
+                      <Show when={d()?.trailer_youtube_id}>
+                        <button type="button" class="btn" onClick={() => setTrailer(true)}>
+                          <Icon name="film" /> <span>Trailer</span>
+                        </button>
+                      </Show>
                       <button type="button" class="btn" onClick={() => props.onClose()}>
                         <span>Close</span>
                       </button>
@@ -186,6 +193,9 @@ export function DiscoverSheet(props: { media: MediaType; tmdbId: number; seed?: 
           </div>
         </div>
       </div>
+      <Show when={trailer() && d()?.trailer_youtube_id}>
+        {(id) => <TrailerModal youtubeId={id()} title={card()?.title ?? "Trailer"} onClose={() => setTrailer(false)} />}
+      </Show>
     </Portal>
   );
 }
