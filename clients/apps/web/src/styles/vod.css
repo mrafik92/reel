@@ -291,6 +291,7 @@ html[data-input="pointer"] .cchip:focus:not(:hover):not([aria-pressed="true"]) .
   position: relative;
   flex: 0 0 auto;
   width: var(--poster-w);
+  container-type: inline-size;
 }
 .results-grid .dtile {
   width: auto;
@@ -301,12 +302,32 @@ html[data-input="pointer"] .cchip:focus:not(:hover):not([aria-pressed="true"]) .
 .dtile .dcard__action {
   min-height: 0;
 }
+/* Spans the poster and never wider: on phones the poster is 7rem and the
+   pill used to spill into the next tile. */
 .pill--iptv {
+  display: flex;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
   margin-top: 0.45rem;
+  padding: 0 0.6rem;
+  overflow: hidden;
   background: transparent;
   box-shadow: inset 0 0 0 1.5px rgba(var(--accent-hi-rgb), 0.55);
   color: var(--accent-hi);
   text-decoration: none;
+}
+.pill--iptv span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Too narrow for the tag: the live icon and the aria-label still say IPTV. */
+@container (max-width: 9rem) {
+  .pill--iptv small {
+    display: none;
+  }
 }
 .pill--iptv small {
   margin-left: 0.4rem;
